@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clínica Vitalis</title>
+    <link rel="icon" type="image/png" href="img/icons8-blue-heart-96.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+        .header-bg {
+            background-color: #2c3e50; /* Cor azul escuro */
+            color: white;
+        }
+        .navbar-bg {
+            background-color: #f8f9fa; /* Cinza claro */
+        }
+        .section-title {
+            font-size: 1.8rem;
+            color: #2c3e50;
+            margin-bottom: 20px;
+        }
+        .service-card {
+            background-color: #f8f9fa;
+            border: none;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .service-card i {
+            font-size: 3rem;
+            color: #2c3e50;
+        }
+    </style>
+</head>
+<body>
+
+    <header class="header-bg text-center py-3">
+        <h1><i class="bi bi-heart-pulse-fill"></i> Clínica Vitalis</h1>
+    </header>
+
+    <nav class="navbar navbar-expand-lg navbar-bg sticky-top shadow-sm">
+        <div class="container">
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse justify-content-center" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item"><a class="nav-link" href="#sobre">Sobre</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#servicos">Serviços</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#contato">Contato</a></li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container my-5">
+        <section id="sobre" class="mb-5">
+            <h2 class="section-title">Sobre a Clínica</h2>
+            <p class="lead">Atendimento humanizado e estrutura moderna. Cuidamos da sua saúde com dedicação e tecnologia de ponta.</p>
+        </section>
+
+        <section id="servicos" class="mb-5">
+            <h2 class="section-title">Nossos Serviços</h2>
+            <div class="row g-4">
+                <div class="col-md-6">
+                    <div class="service-card">
+                        <i class="bi bi-person-check-fill mb-3"></i>
+                        <h3>Consultas</h3>
+                        <p>Especialistas em diversas áreas médicas para você.</p>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="service-card">
+                        <i class="bi bi-clipboard2-pulse-fill mb-3"></i>
+                        <h3>Exames</h3>
+                        <p>Laboratório completo e diagnóstico por imagem.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="promocao" class="mb-5 text-center bg-light p-4 rounded">
+            <h2 class="section-title"><i class="bi bi-tag-fill"></i> Promoção</h2>
+            <p>Desconto para novos pacientes neste mês. Agende agora!</p>
+            <a href="login.html" class="btn btn-primary">Agendar Consulta</a>
+        </section>
+
+        <section id="contato" class="mb-5">
+            <h2 class="section-title">Fale Conosco</h2>
+            <form>
+                <div class="mb-3">
+                    <label for="nome" class="form-label">Nome:</label>
+                    <input type="text" class="form-control" id="nome" required>
+                </div>
+                <div class="mb-3">
+                    <label for="email" class="form-label">E-mail:</label>
+                    <input type="email" class="form-control" id="email" required>
+                </div>
+                <div class="mb-3">
+                    <label for="mensagem" class="form-label">Mensagem:</label>
+                    <textarea class="form-control" id="mensagem" rows="4" required></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary"><i class="bi bi-send-fill"></i> Enviar</button>
+            </form>
+        </section>
+
+        <section id="mapa">
+            <div class="text-center bg-secondary text-white p-5 rounded">
+            <iframe src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3674.015217730104!2d-50.6508926850334!3d-23.18181698492043!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x94eb43126e8a1563%3A0x8f7d9a1f5c6e8e8!2sAv.%20XV%20de%20Novembro%20-%20Corn%C3%A9lio%20Proc%C3%B3pio%2C%20PR!5e0!3m2!1spt-BR!2sbr!4v1663000000000!5m2!1spt-BR!2sbr" width="100%" height="450" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+
+            </div>
+        </section>
+    </main>
+<footer class="text-center bg-dark text-white p-3 mt-5">
+    <p>&copy; 2025 Clínica Vitalis. Todos os direitos reservados.</p>
+</footer>
+
+<footer class="bg-dark text-white pt-5 pb-4 mt-5">
+    <div class="container text-center text-md-start">
+        <div class="row">
+            <div class="col-md-4 mx-auto mb-4">
+                <h6 class="text-uppercase fw-bold">Clínica Vitalis</h6>
+                <hr class="mb-4 mt-0 d-inline-block mx-auto" style="width: 60px; background-color: #7c4dff; height: 2px"/>
+                <p>Cuidando da sua saúde com dedicação e tecnologia de ponta.</p>
+            </div>
+            <div class="col-md-4 mx-auto mb-4">
+                <h6 class="text-uppercase fw-bold">Contato</h6>
+                <hr class="mb-4 mt-0 d-inline-block mx-auto" style="width: 60px; background-color: #7c4dff; height: 2px"/>
+                <p><i class="bi bi-geo-alt-fill me-3"></i> Av. XV de Novembro, 123 - Cornélio Procópio, PR</p>
+                <p><a href="https://wa.me/5543999998888" target="_blank" class="text-white text-decoration-none"><i class="bi bi-whatsapp me-3"></i> (43) 99999-8888</a></p>
+                <p><a href="https://instagram.com/clinicavitalis" target="_blank" class="text-white text-decoration-none"><i class="bi bi-instagram me-3"></i> @clinicavitalis</a></p>
+            </div>
+        </div>
+    </div>
+    <div class="text-center p-3" style="background-color: rgba(0, 0, 0, 0.2);">
+        &copy; 2025 Clínica Vitalis. Todos os direitos reservados.
+    </div>
+</footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
