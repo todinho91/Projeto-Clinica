@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const { jwtSecret } = require('../config/environment');
 
 module.exports = (req, res, next) => {
     // Pega o token do cabeçalho 'Authorization'
@@ -20,7 +21,7 @@ module.exports = (req, res, next) => {
     }
 
     // Verifica se o token é válido
-    jwt.verify(token, 'SEU_SEGREDO_JWT', (err, decoded) => {
+    jwt.verify(token, jwtSecret, { algorithms: ['HS256'] }, (err, decoded) => {
         if (err) {
             return res.status(401).json({ error: 'Token inválido.' });
         }
