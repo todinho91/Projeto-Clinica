@@ -347,6 +347,30 @@ async function setupAdministracaoDashboard() {
     document.getElementById('dashboard-title').textContent = clinic.papel === 'administrador'
         ? 'Administração da clínica'
         : 'Painel da secretaria';
+    const summaryStatus = document.getElementById('resumo-status');
+    try {
+        const [professionals, appointments] = await Promise.all([
+            apiRequest('/profissionais'),
+            apiRequest('/consultas/minha-agenda')
+        ]);
+        const now = new Date();
+        const today = now.toLocaleDateString('en-CA');
+        const active = appointments.filter((item) => item.status !== 'cancelada');
+        const todayCount = active.filter((item) => {
+            const start = new Date(item.inicio_em);
+            return Number.isFinite(start.getTime()) && start.toLocaleDateString('en-CA') === today;
+        }).length;
+        const upcomingCount = active.filter((item) => {
+            const start = new Date(item.inicio_em);
+            return Number.isFinite(start.getTime()) && start > now;
+        }).length;
+        document.getElementById('total-profissionais').textContent = String(professionals.length);
+        document.getElementById('consultas-hoje').textContent = String(todayCount);
+        document.getElementById('proximas-consultas').textContent = String(upcomingCount);
+    } catch (error) {
+        showMessage(summaryStatus, `Não foi possível carregar o resumo: ${error.message}`);
+    }
+
     const form = document.getElementById('upload-documento-form');
     const status = document.getElementById('upload-status');
     form?.addEventListener('submit', async (event) => {
