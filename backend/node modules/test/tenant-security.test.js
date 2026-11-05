@@ -16,7 +16,8 @@ const tenantContext = require('../middleware/tenant');
 const authorize = require('../middleware/authorize');
 const { selectClinic } = require('../controllers/authController');
 const { getPacienteDetails } = require('../controllers/pacienteController');
-const { agendarConsulta } = require('../controllers/consultaController');
+const { agendarConsulta, getMinhaAgenda } = require('../controllers/consultaController');
+const router = require('../routes');
 
 function response() {
     return {
@@ -105,6 +106,48 @@ test('autorização permite somente papéis declarados pela rota', () => {
     let called = false;
     middleware({ tenant: { role: 'secretaria' } }, allowed, () => { called = true; });
     assert.equal(called, true);
+});
+
+test('rota de agenda permite os quatro papéis autenticados da clínica', () => {
+    const route = router.stack.find((layer) => layer.route?.path === '/consultas/minha-agenda');
+    assert.ok(route);
+    assert.equal(route.route.methods.get, true);
+    const routeAuthorization = route.route.stack[0].handle;
+
+    for (const role of ['administrador', 'secretaria', 'profissional', 'paciente']) {
+        const res = response();
+        let called = false;
+        routeAuthorization({ tenant: { role } }, res, () => { called = true; });
+        assert.equal(called, true, `papel ${role} deveria acessar a agenda`);
+    }
+
+    const denied = response();
+    routeAuthorization({ tenant: { role: 'superadmin' } }, denied, () => {});
+    assert.equal(denied.statusCode, 403);
+});
+
+test('agenda administrativa usa exclusivamente a clínica ativa', async (t) => {
+    let params;
+    t.mock.method(pool, 'execute', async (sql, values) => {
+        assert.match(sql, /WHERE c\.clinica_id = \?/);
+        params = values;
+        return [[{ id: 1, inicio_em: '2032-01-01T12:00:00.000Z', status: 'agendada' }]];
+    });
+    const res = response();
+
+    await getMinhaAgenda({
+        body: { clinica_id: 99 },
+        userId: 7,
+        tenant: { clinicId: 11, role: 'administrador' }
+    }, res);
+
+    assert.deepEqual(params, [11, 'administrador', 'administrador', 7, 'administrador', 7]);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.length, 1);
+});
+
+test('pool interpreta DATETIME clínico como UTC', () => {
+    assert.equal(pool.pool.config.connectionConfig.timezone, 'Z');
 });
 
 test('paciente de outra clínica não pode ser consultado', async (t) => {

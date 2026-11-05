@@ -52,6 +52,23 @@ test('agendamento converte o horário local com fuso para intervalo UTC', () => 
     assert.throws(() => core.appointmentPayload('', 45, 8), /inválidos/);
 });
 
+test('resumo conta somente datas válidas e status compatíveis com cada indicador', () => {
+    const summary = core.dashboardSummary(
+        [{ id: 1 }, { id: 2 }],
+        [
+            { inicio_em: '2032-01-01T09:00:00.000Z', status: 'realizada' },
+            { inicio_em: '2032-01-01T10:00:00.000Z', status: 'cancelada' },
+            { inicio_em: '2032-01-01T16:00:00.000Z', status: 'confirmada' },
+            { inicio_em: '2032-01-02T09:00:00.000Z', status: 'agendada' },
+            { inicio_em: '2032-01-02T10:00:00.000Z', status: 'nao_compareceu' },
+            { inicio_em: 'data-inválida', status: 'agendada' }
+        ],
+        new Date('2032-01-01T12:00:00.000Z')
+    );
+
+    assert.deepEqual(summary, { professionals: 2, today: 2, upcoming: 2 });
+});
+
 test('frontend usa sessionStorage e inclui o fluxo de seleção de clínica', async () => {
     const root = path.join(__dirname, '..', '..', '..');
     const main = await fs.readFile(path.join(root, 'js', 'main.js'), 'utf8');

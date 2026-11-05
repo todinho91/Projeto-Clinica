@@ -353,20 +353,10 @@ async function setupAdministracaoDashboard() {
             apiRequest('/profissionais'),
             apiRequest('/consultas/minha-agenda')
         ]);
-        const now = new Date();
-        const today = now.toLocaleDateString('en-CA');
-        const active = appointments.filter((item) => item.status !== 'cancelada');
-        const todayCount = active.filter((item) => {
-            const start = new Date(item.inicio_em);
-            return Number.isFinite(start.getTime()) && start.toLocaleDateString('en-CA') === today;
-        }).length;
-        const upcomingCount = active.filter((item) => {
-            const start = new Date(item.inicio_em);
-            return Number.isFinite(start.getTime()) && start > now;
-        }).length;
-        document.getElementById('total-profissionais').textContent = String(professionals.length);
-        document.getElementById('consultas-hoje').textContent = String(todayCount);
-        document.getElementById('proximas-consultas').textContent = String(upcomingCount);
+        const summary = VitalisCore.dashboardSummary(professionals, appointments);
+        document.getElementById('total-profissionais').textContent = String(summary.professionals);
+        document.getElementById('consultas-hoje').textContent = String(summary.today);
+        document.getElementById('proximas-consultas').textContent = String(summary.upcoming);
     } catch (error) {
         showMessage(summaryStatus, `Não foi possível carregar o resumo: ${error.message}`);
     }
