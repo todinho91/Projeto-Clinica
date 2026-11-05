@@ -69,6 +69,18 @@ test('resumo conta somente datas válidas e status compatíveis com cada indicad
     assert.deepEqual(summary, { professionals: 2, today: 2, upcoming: 2 });
 });
 
+test('agenda resumida ordena próximos horários e remove dados do paciente', () => {
+    const agenda = core.dashboardAgenda([
+        { id: 3, inicio_em: '2032-01-02T14:00:00.000Z', fim_em: '2032-01-02T15:00:00.000Z', status: 'confirmada', nome_profissional: 'Profissional B', nome_paciente: 'Não exibir' },
+        { id: 1, inicio_em: '2032-01-02T13:00:00.000Z', fim_em: '2032-01-02T14:00:00.000Z', status: 'agendada', nome_profissional: 'Profissional A', paciente_id: 99 },
+        { id: 2, inicio_em: '2032-01-02T12:00:00.000Z', fim_em: '2032-01-02T13:00:00.000Z', status: 'realizada', nome_profissional: 'Profissional C' }
+    ], new Date('2032-01-02T10:00:00.000Z'));
+
+    assert.deepEqual(agenda.map((item) => item.id), [1, 3]);
+    assert.equal('nome_paciente' in agenda[0], false);
+    assert.equal('paciente_id' in agenda[0], false);
+});
+
 test('frontend usa sessionStorage e inclui o fluxo de seleção de clínica', async () => {
     const root = path.join(__dirname, '..', '..', '..');
     const main = await fs.readFile(path.join(root, 'js', 'main.js'), 'utf8');

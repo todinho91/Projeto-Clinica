@@ -344,6 +344,9 @@ async function setupAdministracaoDashboard() {
     const clinic = requireClinicSession('dashboard-secretaria.html');
     if (!clinic) return;
     applyClinicIdentity(clinic);
+    document.getElementById('clinic-role').textContent = clinic.papel === 'administrador'
+        ? 'Administrador da clínica'
+        : 'Secretaria da clínica';
     document.getElementById('dashboard-title').textContent = clinic.papel === 'administrador'
         ? 'Administração da clínica'
         : 'Painel da secretaria';
@@ -357,9 +360,35 @@ async function setupAdministracaoDashboard() {
         document.getElementById('total-profissionais').textContent = String(summary.professionals);
         document.getElementById('consultas-hoje').textContent = String(summary.today);
         document.getElementById('proximas-consultas').textContent = String(summary.upcoming);
+        const agenda = VitalisCore.dashboardAgenda(appointments);
+        const agendaBody = document.getElementById('agenda-resumida');
+        agendaBody.replaceChildren();
+        if (agenda.length === 0) {
+            const row = document.createElement('tr');
+            const cell = tableCell('Nenhuma consulta futura agendada ou confirmada.');
+            cell.colSpan = 3;
+            cell.className = 'text-center py-4 text-muted';
+            row.append(cell);
+            agendaBody.append(row);
+        } else {
+            const statusLabels = { agendada: 'Agendada', confirmada: 'Confirmada' };
+            agenda.forEach((appointment) => {
+                const row = document.createElement('tr');
+                row.append(tableCell(formatDate(appointment.inicio_em)), tableCell(appointment.nome_profissional));
+                const statusCell = document.createElement('td');
+                const badge = document.createElement('span');
+                badge.className = `vitalis-status vitalis-status-${appointment.status}`;
+                badge.textContent = statusLabels[appointment.status];
+                statusCell.append(badge);
+                row.append(statusCell);
+                agendaBody.append(row);
+            });
+        }
     } catch (error) {
         showMessage(summaryStatus, `Não foi possível carregar o resumo: ${error.message}`);
     }
+
+    document.getElementById('refresh-dashboard')?.addEventListener('click', () => window.location.reload());
 
     const form = document.getElementById('upload-documento-form');
     const status = document.getElementById('upload-status');
