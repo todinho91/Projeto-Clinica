@@ -347,6 +347,20 @@ async function setupAdministracaoDashboard() {
     document.getElementById('dashboard-title').textContent = clinic.papel === 'administrador'
         ? 'Administração da clínica'
         : 'Painel da secretaria';
+    const summaryStatus = document.getElementById('resumo-status');
+    try {
+        const [professionals, appointments] = await Promise.all([
+            apiRequest('/profissionais'),
+            apiRequest('/consultas/minha-agenda')
+        ]);
+        const summary = VitalisCore.dashboardSummary(professionals, appointments);
+        document.getElementById('total-profissionais').textContent = String(summary.professionals);
+        document.getElementById('consultas-hoje').textContent = String(summary.today);
+        document.getElementById('proximas-consultas').textContent = String(summary.upcoming);
+    } catch (error) {
+        showMessage(summaryStatus, `Não foi possível carregar o resumo: ${error.message}`);
+    }
+
     const form = document.getElementById('upload-documento-form');
     const status = document.getElementById('upload-status');
     form?.addEventListener('submit', async (event) => {

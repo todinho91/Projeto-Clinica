@@ -87,5 +87,44 @@
         };
     }
 
-    return { KEYS, appointmentPayload, createSession, dashboardForRole, roleCanAccessPage };
+    function dashboardSummary(professionals, appointments, currentDate = new Date()) {
+        const now = currentDate instanceof Date ? currentDate : new Date(currentDate);
+        if (!Array.isArray(professionals) || !Array.isArray(appointments) || !Number.isFinite(now.getTime())) {
+            throw new Error('Dados do resumo inválidos.');
+        }
+
+        const localDateKey = (date) => [
+            date.getFullYear(),
+            String(date.getMonth() + 1).padStart(2, '0'),
+            String(date.getDate()).padStart(2, '0')
+        ].join('-');
+        const today = localDateKey(now);
+        const validAppointments = appointments
+            .map((appointment) => ({
+                ...appointment,
+                start: new Date(appointment.inicio_em)
+            }))
+            .filter((appointment) => Number.isFinite(appointment.start.getTime()));
+
+        return {
+            professionals: professionals.length,
+            today: validAppointments.filter((appointment) => (
+                appointment.status !== 'cancelada'
+                && localDateKey(appointment.start) === today
+            )).length,
+            upcoming: validAppointments.filter((appointment) => (
+                ['agendada', 'confirmada'].includes(appointment.status)
+                && appointment.start > now
+            )).length
+        };
+    }
+
+    return {
+        KEYS,
+        appointmentPayload,
+        createSession,
+        dashboardForRole,
+        dashboardSummary,
+        roleCanAccessPage
+    };
 }));
