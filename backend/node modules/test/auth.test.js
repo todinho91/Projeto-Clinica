@@ -17,7 +17,7 @@ const testConfig = {
 Object.assign(process.env, testConfig);
 
 const pool = require('../config/database');
-const { login } = require('../controllers/authController');
+const { login, register } = require('../controllers/authController');
 const authenticate = require('../middleware/auth');
 
 function response() {
@@ -35,27 +35,44 @@ function response() {
     };
 }
 
-test('login assina um token HS256 aceito pelo middleware', async (t) => {
+test('login emite token de identidade HS256 e lista vínculos ativos', async (t) => {
     const hash = await bcrypt.hash('fixture-login', 4);
-    t.mock.method(pool, 'query', async () => [[{ id: 42, tipo: 'paciente', senha: hash }]]);
+    t.mock.method(pool, 'execute', async (sql) => {
+        if (/FROM usuarios/.test(sql)) {
+            return [[{ id: 42, nome: 'Paciente Demo', email: 'fixture@example.test', senha_hash: hash }]];
+        }
+        if (/FROM clinica_usuarios/.test(sql)) {
+            return [[{ id: 7, nome: 'Clínica Demo', slug: 'demo', papel: 'paciente' }]];
+        }
+        throw new Error(`SQL inesperado: ${sql}`);
+    });
     const res = response();
 
-    await login({ body: { email: 'fixture@example.test', senha: 'fixture-login' } }, res);
+    await login({ body: { email: 'FIXTURE@example.test', senha: 'fixture-login' } }, res);
 
     assert.equal(res.statusCode, 200);
+    assert.equal(res.body.clinicas[0].id, 7);
     const decoded = jwt.verify(res.body.token, testConfig.JWT_SECRET, { algorithms: ['HS256'] });
+    assert.equal(decoded.sub, '42');
+    assert.equal(decoded.token_type, 'identity');
     assert.equal(decoded.exp - decoded.iat, 8 * 60 * 60);
+
     const req = { headers: { authorization: `Bearer ${res.body.token}` } };
     const next = t.mock.fn();
     authenticate(req, response(), next);
     assert.equal(next.mock.callCount(), 1);
     assert.equal(req.userId, 42);
-    assert.equal(req.userTipo, 'paciente');
+    assert.deepEqual(req.auth, { tokenType: 'identity', clinicId: null });
 });
 
 test('login com senha incorreta não emite token', async (t) => {
     const hash = await bcrypt.hash('fixture-login', 4);
-    t.mock.method(pool, 'query', async () => [[{ id: 42, tipo: 'paciente', senha: hash }]]);
+    t.mock.method(pool, 'execute', async () => [[{
+        id: 42,
+        nome: 'Paciente Demo',
+        email: 'fixture@example.test',
+        senha_hash: hash
+    }]]);
     const res = response();
 
     await login({ body: { email: 'fixture@example.test', senha: 'incorreta' } }, res);
@@ -64,7 +81,27 @@ test('login com senha incorreta não emite token', async (t) => {
     assert.equal(res.body.token, undefined);
 });
 
-const claims = { id: 42, tipo: 'paciente' };
+test('cadastro público rejeita papel privilegiado antes de acessar o banco', async (t) => {
+    const getConnection = t.mock.method(pool, 'getConnection', async () => {
+        throw new Error('não deveria acessar o banco');
+    });
+    const res = response();
+
+    await register({
+        body: {
+            nome: 'Usuário Demo',
+            email: 'novo@example.test',
+            senha: 'senha-ficticia-forte',
+            clinica_slug: 'demo',
+            papel: 'administrador'
+        }
+    }, res);
+
+    assert.equal(res.statusCode, 403);
+    assert.equal(getConnection.mock.callCount(), 0);
+});
+
+const claims = { sub: '42', token_type: 'identity' };
 const signed = jwt.sign(claims, testConfig.JWT_SECRET);
 const parts = signed.split('.');
 parts[2] = (parts[2][0] === 'A' ? 'B' : 'A') + parts[2].slice(1);
@@ -75,7 +112,8 @@ for (const [name, authorization] of [
     ['adulterado', `Bearer ${parts.join('.')}`],
     ['assinado com chave anterior', `Bearer ${jwt.sign(claims, randomBytes(32))}`],
     ['expirado', `Bearer ${jwt.sign(claims, testConfig.JWT_SECRET, { expiresIn: -1 })}`],
-    ['com algoritmo fora da lista', `Bearer ${jwt.sign(claims, testConfig.JWT_SECRET, { algorithm: 'HS384' })}`]
+    ['com algoritmo fora da lista', `Bearer ${jwt.sign(claims, testConfig.JWT_SECRET, { algorithm: 'HS384' })}`],
+    ['sem usuário válido', `Bearer ${jwt.sign({ token_type: 'identity' }, testConfig.JWT_SECRET)}`]
 ]) {
     test(`middleware rejeita token ${name}`, (t) => {
         const res = response();

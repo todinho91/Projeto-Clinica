@@ -1,16 +1,25 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 const multer = require('multer');
-const path = require('path');
+
+const uploadsRoot = path.resolve(__dirname, '..', '..', 'uploads');
 
 module.exports = {
+    limits: { fileSize: 10 * 1024 * 1024, files: 1 },
     storage: multer.diskStorage({
-        destination: (req, file, cb) => {
-            // Define a pasta onde os arquivos serão salvos
-            cb(null, path.resolve(__dirname, '..', '..', 'uploads'));
+        destination: (req, file, callback) => {
+            const clinicId = req.tenant?.clinicId;
+            if (!Number.isSafeInteger(clinicId) || clinicId <= 0) {
+                return callback(new Error('Clínica ativa ausente para o upload.'));
+            }
+            const destination = path.join(uploadsRoot, String(clinicId));
+            fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
+            return callback(null, destination);
         },
-        filename: (req, file, cb) => {
-            // Garante que cada arquivo tenha um nome único (timestamp + nome original)
-            const uniqueName = `${Date.now()}-${file.originalname}`;
-            cb(null, uniqueName);
+        filename: (req, file, callback) => {
+            const extension = path.extname(file.originalname).toLowerCase().slice(0, 10);
+            return callback(null, `${randomUUID()}${extension}`);
         }
     })
 };

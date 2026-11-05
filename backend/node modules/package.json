@@ -7,6 +7,7 @@
     "db:migrate": "node scripts/db/migrate.js",
     "db:seed": "node scripts/db/seed.js",
     "test:db:integration": "DB_INTEGRATION_TEST=1 node --test test/database.integration.test.js",
+    "test:backend:integration": "BACKEND_INTEGRATION_TEST=1 node --test test/backend.integration.test.js",
     "test": "node --test",
     "start": "node server.js"
   },

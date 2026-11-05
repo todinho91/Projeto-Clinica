@@ -1,111 +1,184 @@
 const pool = require('../config/database');
 
-exports.agendarConsulta = async (req, res) => {
-    // O ID do usuário (paciente) vem do token JWT verificado pelo middleware
-    const idUsuarioPaciente = req.userId; 
-    const { medico_id, data_hora } = req.body;
+function positiveId(value) {
+    const id = Number(value);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
 
-    if (!medico_id || !data_hora) {
-        return res.status(400).json({ error: 'Médico e data/hora são obrigatórios.' });
+function parsePeriod(start, end) {
+    if (typeof start !== 'string' || typeof end !== 'string') return null;
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    if (!Number.isFinite(startDate.getTime()) || !Number.isFinite(endDate.getTime())) return null;
+    if (endDate <= startDate) return null;
+    const toMysqlUtc = (date) => date.toISOString().slice(0, 23).replace('T', ' ');
+    return { start: toMysqlUtc(startDate), end: toMysqlUtc(endDate) };
+}
+
+exports.agendarConsulta = async (req, res) => {
+    const professionalId = positiveId(req.body?.profissional_id);
+    const requestedPatientId = positiveId(req.body?.paciente_id);
+    const { inicio_em: start, fim_em: end } = req.body ?? {};
+    const period = parsePeriod(start, end);
+
+    if (!professionalId || !period) {
+        return res.status(400).json({
+            error: 'Profissional, início e fim válidos são obrigatórios.'
+        });
+    }
+    if (req.tenant.role !== 'paciente' && !requestedPatientId) {
+        return res.status(400).json({ error: 'Paciente é obrigatório.' });
     }
 
+    const clinicId = req.tenant.clinicId;
     try {
-        // Primeiro, precisamos encontrar o ID do paciente correspondente ao ID do usuário
-        const [pacienteRows] = await pool.query('SELECT id FROM pacientes WHERE usuario_id = ?', [idUsuarioPaciente]);
-        
-        if (pacienteRows.length === 0) {
-            return res.status(404).json({ error: 'Perfil de paciente não encontrado para este usuário.' });
+        const [references] = await pool.execute(`
+            SELECT
+                (
+                    SELECT id FROM pacientes
+                    WHERE clinica_id = ?
+                      AND status = 'ativo'
+                      AND (? = 'paciente' AND usuario_id = ? OR ? <> 'paciente' AND id = ?)
+                    LIMIT 1
+                ) AS paciente_id,
+                (
+                    SELECT id FROM profissionais
+                    WHERE clinica_id = ? AND id = ? AND status = 'ativo'
+                    LIMIT 1
+                ) AS profissional_id
+        `, [
+            clinicId,
+            req.tenant.role,
+            req.userId,
+            req.tenant.role,
+            requestedPatientId,
+            clinicId,
+            professionalId
+        ]);
+
+        const patientId = references[0]?.paciente_id;
+        if (!patientId || !references[0]?.profissional_id) {
+            return res.status(404).json({ error: 'Paciente ou profissional não encontrado na clínica ativa.' });
         }
-        const paciente_id = pacienteRows[0].id;
 
-        // Agora, insere a nova consulta no banco
-        await pool.query(
-            'INSERT INTO consultas (paciente_id, medico_id, data_hora, status) VALUES (?, ?, ?, ?)',
-            [paciente_id, medico_id, data_hora, 'agendada']
-        );
+        const [result] = await pool.execute(`
+            INSERT INTO consultas (
+                clinica_id, paciente_id, profissional_id, inicio_em, fim_em,
+                status, criado_por_usuario_id
+            ) VALUES (?, ?, ?, ?, ?, 'agendada', ?)
+        `, [clinicId, patientId, professionalId, period.start, period.end, req.userId]);
 
-        res.status(201).json({ message: 'Consulta agendada com sucesso!' });
-
+        return res.status(201).json({
+            id: Number(result.insertId),
+            message: 'Consulta agendada com sucesso.'
+        });
     } catch (error) {
-        console.error("Erro ao agendar consulta:", error);
-        res.status(500).json({ error: 'Ocorreu um erro no servidor.' });
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ error: 'O profissional já possui consulta neste horário.' });
+        }
+        console.error('Erro ao agendar consulta:', error);
+        return res.status(500).json({ error: 'Erro ao agendar consulta.' });
     }
 };
-// ... (função agendarConsulta já existe aqui)
 
 exports.getMinhaAgenda = async (req, res) => {
-    // O ID do usuário (médico) vem do token
-    const idUsuarioMedico = req.userId;
-
+    const { clinicId, role } = req.tenant;
     try {
-        // Query complexa para buscar o nome do paciente e os detalhes da consulta
-        const [agenda] = await pool.query(`
-            SELECT c.id, c.data_hora, c.status, p_user.nome AS nome_paciente
+        const [agenda] = await pool.execute(`
+            SELECT
+                c.id, c.inicio_em, c.fim_em, c.status,
+                pa.id AS paciente_id, pa.nome AS nome_paciente,
+                pr.id AS profissional_id, pr.nome_exibicao AS nome_profissional
             FROM consultas c
-            JOIN medicos m ON c.medico_id = m.id
-            JOIN pacientes p ON c.paciente_id = p.id
-            JOIN usuarios p_user ON p.usuario_id = p_user.id
-            WHERE m.usuario_id = ?
-            ORDER BY c.data_hora ASC
-        `, [idUsuarioMedico]);
-
-        res.status(200).json(agenda);
-
+            JOIN pacientes pa
+              ON pa.clinica_id = c.clinica_id
+             AND pa.id = c.paciente_id
+            JOIN profissionais pr
+              ON pr.clinica_id = c.clinica_id
+             AND pr.id = c.profissional_id
+            WHERE c.clinica_id = ?
+              AND (
+                    ? IN ('administrador', 'secretaria')
+                 OR (? = 'profissional' AND pr.usuario_id = ?)
+                 OR (? = 'paciente' AND pa.usuario_id = ?)
+              )
+            ORDER BY c.inicio_em ASC
+        `, [clinicId, role, role, req.userId, role, req.userId]);
+        return res.status(200).json(agenda);
     } catch (error) {
-        console.error("Erro ao buscar agenda:", error);
-        res.status(500).json({ error: 'Erro ao buscar agenda do médico.' });
+        console.error('Erro ao buscar agenda:', error);
+        return res.status(500).json({ error: 'Erro ao buscar agenda.' });
     }
 };
-// ... (outras funções do controller)
-exports.updateStatusConsulta = async (req, res) => {
-    const { id } = req.params; // ID da consulta
-    const { status } = req.body; // Novo status: 'realizada' ou 'cancelada'
 
-    // Validação simples do status
-    const statusPermitidos = ['agendada', 'realizada', 'cancelada'];
-    if (!statusPermitidos.includes(status)) {
-        return res.status(400).json({ error: 'Status inválido.' });
+exports.updateStatusConsulta = async (req, res) => {
+    const appointmentId = positiveId(req.params.id);
+    const status = req.body?.status;
+    const allowedStatuses = new Set([
+        'agendada', 'confirmada', 'realizada', 'cancelada', 'nao_compareceu'
+    ]);
+    if (!appointmentId || !allowedStatuses.has(status)) {
+        return res.status(400).json({ error: 'Consulta ou status inválido.' });
     }
 
+    const { clinicId, role } = req.tenant;
     try {
-        const [result] = await pool.query('UPDATE consultas SET status = ? WHERE id = ?', [status, id]);
+        const [result] = await pool.execute(`
+            UPDATE consultas c
+            SET status = ?
+            WHERE c.clinica_id = ?
+              AND c.id = ?
+              AND (
+                    ? <> 'profissional'
+                 OR EXISTS (
+                        SELECT 1 FROM profissionais p
+                        WHERE p.clinica_id = c.clinica_id
+                          AND p.id = c.profissional_id
+                          AND p.usuario_id = ?
+                    )
+              )
+        `, [status, clinicId, appointmentId, role, req.userId]);
 
         if (result.affectedRows === 0) {
             return res.status(404).json({ error: 'Consulta não encontrada.' });
         }
-
-        res.status(200).json({ message: `Status da consulta atualizado para ${status}.` });
-
+        return res.status(200).json({ message: `Status atualizado para ${status}.` });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Erro ao atualizar status da consulta.' });
+        console.error('Erro ao atualizar consulta:', error);
+        return res.status(500).json({ error: 'Erro ao atualizar consulta.' });
     }
 };
-// ... (outras funções do controller)
+
 exports.cancelarConsulta = async (req, res) => {
-    const idConsulta = req.params.id;
-    const idUsuarioPaciente = req.userId; // ID do usuário logado
+    const appointmentId = positiveId(req.params.id);
+    if (!appointmentId) {
+        return res.status(400).json({ error: 'Consulta inválida.' });
+    }
 
+    const { clinicId, role } = req.tenant;
     try {
-        // Passo 1: Encontrar o ID do paciente associado ao usuário logado
-        const [pacienteRows] = await pool.query('SELECT id FROM pacientes WHERE usuario_id = ?', [idUsuarioPaciente]);
-        if (pacienteRows.length === 0) {
-            return res.status(403).json({ error: 'Acesso negado. Perfil de paciente não encontrado.' });
-        }
-        const idPaciente = pacienteRows[0].id;
+        const [result] = await pool.execute(`
+            UPDATE consultas c
+            SET status = 'cancelada'
+            WHERE c.clinica_id = ?
+              AND c.id = ?
+              AND (
+                    ? <> 'paciente'
+                 OR EXISTS (
+                        SELECT 1 FROM pacientes p
+                        WHERE p.clinica_id = c.clinica_id
+                          AND p.id = c.paciente_id
+                          AND p.usuario_id = ?
+                    )
+              )
+        `, [clinicId, appointmentId, role, req.userId]);
 
-        // Passo 2: Deletar a consulta APENAS SE ela pertencer ao paciente que fez a requisição
-        const [result] = await pool.query('DELETE FROM consultas WHERE id = ? AND paciente_id = ?', [idConsulta, idPaciente]);
-        
-        // Se nenhuma linha foi afetada, significa que a consulta não existe ou não pertence a este paciente
         if (result.affectedRows === 0) {
-            return res.status(404).json({ error: 'Consulta não encontrada ou você não tem permissão para cancelá-la.' });
+            return res.status(404).json({ error: 'Consulta não encontrada.' });
         }
-
-        res.status(200).json({ message: 'Consulta cancelada com sucesso.' });
+        return res.status(200).json({ message: 'Consulta cancelada com sucesso.' });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Erro ao cancelar a consulta.' });
+        console.error('Erro ao cancelar consulta:', error);
+        return res.status(500).json({ error: 'Erro ao cancelar consulta.' });
     }
 };
-// Adicione outras funções aqui, como getMinhaAgenda
