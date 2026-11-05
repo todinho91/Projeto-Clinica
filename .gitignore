@@ -5,3 +5,6 @@
 
 # Private clinical uploads are runtime data, never source files.
 backend/uploads/
+
+# Dependencies are reproduced from package-lock.json.
+backend/node modules/node_modules/
