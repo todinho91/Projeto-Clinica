@@ -1,43 +1,81 @@
 const pool = require('../config/database');
 
-// Função para buscar um paciente por ID com todos os seus dados
+function positiveId(value) {
+    const id = Number(value);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
 exports.getPacienteDetails = async (req, res) => {
-    const { id } = req.params; // Pega o ID da URL (ex: /api/pacientes/15)
+    const patientId = positiveId(req.params.id);
+    if (!patientId) {
+        return res.status(400).json({ error: 'Paciente inválido.' });
+    }
 
+    const clinicId = req.tenant.clinicId;
     try {
-        // Busca os dados básicos do paciente
-        const [pacienteInfo] = await pool.query(`
-            SELECT u.nome, u.email, p.telefone, p.data_nascimento
+        const [patientRows] = await pool.execute(`
+            SELECT p.id, p.nome, p.email, p.telefone, p.data_nascimento, p.status
             FROM pacientes p
-            JOIN usuarios u ON p.usuario_id = u.id
-            WHERE p.id = ?
-        `, [id]);
+            WHERE p.clinica_id = ?
+              AND p.id = ?
+              AND (
+                    ? IN ('administrador', 'secretaria')
+                 OR (? = 'paciente' AND p.usuario_id = ?)
+                 OR (
+                        ? = 'profissional'
+                    AND EXISTS (
+                            SELECT 1
+                            FROM consultas c
+                            JOIN profissionais pr
+                              ON pr.clinica_id = c.clinica_id
+                             AND pr.id = c.profissional_id
+                            WHERE c.clinica_id = p.clinica_id
+                              AND c.paciente_id = p.id
+                              AND pr.usuario_id = ?
+                        )
+                    )
+              )
+            LIMIT 1
+        `, [
+            clinicId,
+            patientId,
+            req.tenant.role,
+            req.tenant.role,
+            req.userId,
+            req.tenant.role,
+            req.userId
+        ]);
 
-        if (pacienteInfo.length === 0) {
+        if (patientRows.length === 0) {
             return res.status(404).json({ error: 'Paciente não encontrado.' });
         }
 
-        // Busca o histórico de consultas do paciente
-        const [consultas] = await pool.query(`
-            SELECT c.data_hora, c.status, u.nome AS nome_medico
+        const [consultas] = await pool.execute(`
+            SELECT
+                c.id, c.inicio_em, c.fim_em, c.status,
+                p.nome_exibicao AS nome_profissional
             FROM consultas c
-            JOIN medicos m ON c.medico_id = m.id
-            JOIN usuarios u ON m.usuario_id = u.id
-            WHERE c.paciente_id = ?
-            ORDER BY c.data_hora DESC
-        `, [id]);
+            JOIN profissionais p
+              ON p.clinica_id = c.clinica_id
+             AND p.id = c.profissional_id
+            WHERE c.clinica_id = ? AND c.paciente_id = ?
+            ORDER BY c.inicio_em DESC
+        `, [clinicId, patientId]);
 
-        // Busca os exames do paciente
-        const [exames] = await pool.query('SELECT id, titulo, caminho_arquivo, data_upload FROM exames WHERE paciente_id = ?', [id]);
+        const [documentos] = await pool.execute(`
+            SELECT id, titulo, mime_type, tamanho_bytes, status, criado_em
+            FROM documentos_clinicos
+            WHERE clinica_id = ? AND paciente_id = ?
+            ORDER BY criado_em DESC
+        `, [clinicId, patientId]);
 
-        res.status(200).json({
-            info: pacienteInfo[0],
+        return res.status(200).json({
+            info: patientRows[0],
             consultas,
-            exames
+            documentos
         });
-
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Erro ao buscar detalhes do paciente.' });
+        console.error('Erro ao buscar detalhes do paciente:', error);
+        return res.status(500).json({ error: 'Erro ao buscar detalhes do paciente.' });
     }
 };

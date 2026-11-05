@@ -147,7 +147,7 @@ Depois de preparar o banco:
 npm start
 ```
 
-O backend atual ainda não é compatível com as novas tabelas. Consulte `COMPATIBILITY.md` antes de testar login ou rotas clínicas.
+A branch de integração adapta o backend ao novo esquema, mas a compatibilidade só deve ser aceita após o teste real contra MySQL 8. Consulte `BACKEND_INTEGRATION.md` antes de testar login ou rotas clínicas.
 
 ## Segurança operacional
 

@@ -1,42 +1,73 @@
 const express = require('express');
-const router = express.Router();
-
-const authController = require('../controllers/authController');
-const medicoController = require('../controllers/medicoController');
-const consultaController = require('../controllers/consultaController');
 const multer = require('multer');
-const multerConfig = require('../config/multerConfig');
+const authController = require('../controllers/authController');
+const consultaController = require('../controllers/consultaController');
 const exameController = require('../controllers/exameController');
+const medicoController = require('../controllers/medicoController');
 const pacienteController = require('../controllers/pacienteController');
+const multerConfig = require('../config/multerConfig');
+const authenticate = require('../middleware/auth');
+const tenantContext = require('../middleware/tenant');
+const authorize = require('../middleware/authorize');
 
-const upload = multer(multerConfig); // Vamos criar este
-// ... importe outros controllers
+const router = express.Router();
+const upload = multer(multerConfig);
 
-const authMiddleware = require('../middleware/auth');
-
-// Rotas Públicas (não precisam de login)
 router.post('/auth/register', authController.register);
 router.post('/auth/login', authController.login);
 
-// --- A partir daqui, todas as rotas precisam de login ---
-router.use(authMiddleware);
-router.post('/consultas', consultaController.agendarConsulta);
+router.use(authenticate);
+router.get('/auth/clinics', authController.listClinics);
+router.post('/auth/select-clinic', authController.selectClinic);
 
-// Rotas de Médicos (exemplo de rota protegida)
-router.get('/medicos', medicoController.getAllMedicos);
-router.post('/exames/upload', upload.single('exame'), exameController.uploadExame);
-router.get('/consultas/minha-agenda', consultaController.getMinhaAgenda);
-router.get('/pacientes/:id', pacienteController.getPacienteDetails);
-router.put('/consultas/:id/status', consultaController.updateStatusConsulta);
-router.delete('/consultas/:id', consultaController.cancelarConsulta);
-// Dentro das rotas protegidas
+router.use(tenantContext);
 
-// router.post('/medicos', medicoController.createMedico); // Exemplo para secretária
-
-// Rotas de Consultas
-// router.post('/consultas', consultaController.agendarConsulta); // Rota para paciente agendar
-// router.get('/consultas/medico', consultaController.getConsultasMedico); // Rota para médico ver agenda
-
-// ... outras rotas protegidas
+router.get(
+    '/profissionais',
+    authorize('administrador', 'secretaria', 'profissional', 'paciente'),
+    medicoController.getAllMedicos
+);
+router.get(
+    '/medicos',
+    authorize('administrador', 'secretaria', 'profissional', 'paciente'),
+    medicoController.getAllMedicos
+);
+router.post(
+    '/consultas',
+    authorize('administrador', 'secretaria', 'paciente'),
+    consultaController.agendarConsulta
+);
+router.get(
+    '/consultas/minha-agenda',
+    authorize('administrador', 'secretaria', 'profissional', 'paciente'),
+    consultaController.getMinhaAgenda
+);
+router.put(
+    '/consultas/:id/status',
+    authorize('administrador', 'secretaria', 'profissional'),
+    consultaController.updateStatusConsulta
+);
+router.delete(
+    '/consultas/:id',
+    authorize('administrador', 'secretaria', 'paciente'),
+    consultaController.cancelarConsulta
+);
+router.get(
+    '/pacientes/:id',
+    authorize('administrador', 'secretaria', 'profissional', 'paciente'),
+    pacienteController.getPacienteDetails
+);
+router.post(
+    '/documentos/upload',
+    authorize('administrador', 'secretaria', 'profissional'),
+    upload.single('documento'),
+    exameController.uploadExame
+);
+router.post(
+    '/exames/upload',
+    authorize('administrador', 'secretaria', 'profissional'),
+    upload.single('exame'),
+    exameController.uploadExame
+);
 
 module.exports = router;

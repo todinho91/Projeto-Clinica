@@ -2,14 +2,12 @@ const jwt = require('jsonwebtoken');
 const { jwtSecret } = require('../config/environment');
 
 module.exports = (req, res, next) => {
-    // Pega o token do cabeçalho 'Authorization'
     const authHeader = req.headers.authorization;
 
     if (!authHeader) {
         return res.status(401).json({ error: 'Token não fornecido.' });
     }
 
-    // O token vem no formato "Bearer TOKEN_AQUI"
     const parts = authHeader.split(' ');
     if (parts.length !== 2) {
         return res.status(401).json({ error: 'Erro no formato do token.' });
@@ -20,15 +18,21 @@ module.exports = (req, res, next) => {
         return res.status(401).json({ error: 'Token mal formatado.' });
     }
 
-    // Verifica se o token é válido
     jwt.verify(token, jwtSecret, { algorithms: ['HS256'] }, (err, decoded) => {
         if (err) {
             return res.status(401).json({ error: 'Token inválido.' });
         }
 
-        // Se for válido, anexa as informações do usuário na requisição
-        req.userId = decoded.id;
-        req.userTipo = decoded.tipo;
+        const userId = Number(decoded.sub);
+        if (!Number.isSafeInteger(userId) || userId <= 0) {
+            return res.status(401).json({ error: 'Token inválido.' });
+        }
+
+        req.userId = userId;
+        req.auth = {
+            tokenType: decoded.token_type,
+            clinicId: decoded.clinic_id === undefined ? null : Number(decoded.clinic_id)
+        };
         return next();
     });
 };
