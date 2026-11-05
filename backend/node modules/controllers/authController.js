@@ -1,6 +1,7 @@
 const pool = require('../config/database');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { jwtSecret } = require('../config/environment');
 
 // Função para CADASTRAR um novo usuário
 exports.register = async (req, res) => {
@@ -52,8 +53,8 @@ exports.login = async (req, res) => {
         // 3. Gerar o Token JWT
         const token = jwt.sign(
             { id: usuario.id, tipo: usuario.tipo }, // Informações que estarão no token
-            'SEU_SEGREDO_JWT', // Substitua por uma chave segura no seu .env
-            { expiresIn: '8h' } // Token expira em 8 horas
+            jwtSecret,
+            { algorithm: 'HS256', expiresIn: '8h' } // Token expira em 8 horas
         );
 
         res.status(200).json({ token, tipo: usuario.tipo });
