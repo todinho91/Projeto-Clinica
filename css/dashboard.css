@@ -1,0 +1,91 @@
+:root {
+    --vitalis-navy: #102a43;
+    --vitalis-blue: #1677ff;
+    --vitalis-canvas: #f3f7fb;
+    --vitalis-border: #dce6f0;
+    --vitalis-text: #20364b;
+    --vitalis-muted: #6b7f92;
+}
+
+html { scroll-behavior: smooth; }
+.vitalis-dashboard-body { min-height: 100vh; background: var(--vitalis-canvas); color: var(--vitalis-text); }
+.vitalis-sidebar { --bs-offcanvas-width: 278px; width: 278px; color: #fff; background: linear-gradient(180deg, var(--vitalis-navy), #0a1f33); border: 0; }
+.vitalis-sidebar .offcanvas-title { margin: 0; padding: 0; color: #fff; border: 0; }
+.vitalis-brand { display: flex; align-items: center; gap: .85rem; padding: 1.6rem 1.35rem; color: #fff; text-decoration: none; }
+.vitalis-brand-mark { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 13px; background: linear-gradient(135deg, #32b8ff, var(--vitalis-blue)); box-shadow: 0 8px 24px rgb(22 119 255 / 30%); }
+.vitalis-brand strong, .vitalis-brand small, .vitalis-clinic-card span, .vitalis-clinic-card strong, .vitalis-clinic-card small { display: block; }
+.vitalis-brand strong { font-size: 1.15rem; }
+.vitalis-brand small { color: #a9bfd2; font-size: .75rem; }
+.vitalis-clinic-card { margin: 0 1rem 1.25rem; padding: 1rem; border: 1px solid rgb(255 255 255 / 10%); border-radius: 14px; background: rgb(255 255 255 / 6%); }
+.vitalis-clinic-card span { color: #9fb7ca; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; }
+.vitalis-clinic-card strong { margin: .25rem 0; }
+.vitalis-clinic-card small { color: #c4d3df; }
+.vitalis-nav { padding: .25rem .75rem; }
+.vitalis-nav a, .vitalis-sidebar-footer a, .vitalis-sidebar-footer button { display: flex; align-items: center; gap: .8rem; width: 100%; padding: .82rem 1rem; color: #b9cad8; text-decoration: none; border: 0; border-radius: 10px; background: transparent; text-align: left; }
+.vitalis-nav a:hover, .vitalis-nav a:focus-visible, .vitalis-nav a.active { color: #fff; background: rgb(45 156 255 / 16%); }
+.vitalis-nav a.active { box-shadow: inset 3px 0 #35a7ff; }
+.vitalis-sidebar-footer { margin-top: auto; padding: 1rem .75rem 1.25rem; border-top: 1px solid rgb(255 255 255 / 9%); }
+.vitalis-sidebar-footer a:hover, .vitalis-sidebar-footer button:hover { color: #fff; }
+.vitalis-dashboard-content { min-height: 100vh; }
+.vitalis-topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 1rem; min-height: 72px; padding: .75rem clamp(1rem, 3vw, 2.25rem); background: rgb(255 255 255 / 94%); border-bottom: 1px solid var(--vitalis-border); backdrop-filter: blur(12px); }
+.vitalis-topbar-title span, .vitalis-topbar-title strong { display: block; }
+.vitalis-topbar-title span { color: var(--vitalis-muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .07em; }
+.vitalis-topbar-title strong { font-size: .95rem; }
+.vitalis-menu-button { padding: .35rem .55rem; font-size: 1.45rem; color: var(--vitalis-navy); }
+.vitalis-switch-button { margin-left: auto; color: var(--vitalis-blue); border: 1px solid #bcd8fa; background: #f5faff; }
+.vitalis-main { max-width: 1500px; margin: 0 auto; padding: clamp(1.25rem, 3vw, 2.25rem); }
+.vitalis-welcome { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 2rem; }
+.vitalis-welcome h1 { margin: 0 0 .45rem; font-size: clamp(1.65rem, 3vw, 2.25rem); font-weight: 750; color: var(--vitalis-navy); }
+.vitalis-welcome p:last-child { margin: 0; color: var(--vitalis-muted); }
+.vitalis-eyebrow { margin: 0 0 .3rem; color: var(--vitalis-blue); font-size: .74rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; }
+.vitalis-refresh-button, .vitalis-primary-button { color: #fff; background: var(--vitalis-blue); border: 0; box-shadow: 0 8px 20px rgb(22 119 255 / 18%); }
+.vitalis-refresh-button:hover, .vitalis-primary-button:hover { color: #fff; background: #0867db; }
+.vitalis-section-heading, .vitalis-panel-header { display: flex; align-items: end; justify-content: space-between; gap: 1rem; }
+.vitalis-section-heading { margin-bottom: 1rem; }
+.vitalis-section-heading h2, .vitalis-panel-header h2 { margin: 0; padding: 0; color: var(--vitalis-navy); border: 0; font-size: 1.2rem; font-weight: 700; }
+.vitalis-section-heading > p, .vitalis-panel-header > span { margin: 0; color: var(--vitalis-muted); font-size: .82rem; }
+.vitalis-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+.vitalis-metric-card { display: flex; align-items: center; gap: 1rem; min-height: 142px; padding: 1.25rem; background: #fff; border: 1px solid var(--vitalis-border); border-radius: 17px; box-shadow: 0 10px 30px rgb(44 62 80 / 5%); }
+.vitalis-metric-icon { display: grid; width: 52px; height: 52px; flex: 0 0 52px; place-items: center; border-radius: 15px; font-size: 1.35rem; }
+.vitalis-metric-card p, .vitalis-metric-card small { margin: 0; color: var(--vitalis-muted); }
+.vitalis-metric-card p { font-size: .88rem; font-weight: 600; }
+.vitalis-metric-card strong { display: block; margin: .1rem 0; color: var(--vitalis-navy); font-size: 2rem; line-height: 1.1; }
+.vitalis-metric-card small { font-size: .76rem; }
+.vitalis-metric-blue .vitalis-metric-icon { color: #0873e6; background: #e9f3ff; }
+.vitalis-metric-green .vitalis-metric-icon { color: #087f5b; background: #e6f8f1; }
+.vitalis-metric-purple .vitalis-metric-icon { color: #7150c8; background: #f0ebff; }
+.vitalis-dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, .8fr); gap: 1rem; margin-top: 1rem; }
+.vitalis-panel { padding: 1.25rem; background: #fff; border: 1px solid var(--vitalis-border); border-radius: 17px; box-shadow: 0 10px 30px rgb(44 62 80 / 5%); }
+.vitalis-panel-header { margin-bottom: 1rem; }
+.vitalis-agenda-table th { color: var(--vitalis-muted); font-size: .73rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; border-bottom-color: var(--vitalis-border); }
+.vitalis-agenda-table td { color: var(--vitalis-text); border-bottom-color: #edf2f7; }
+.vitalis-status { display: inline-flex; padding: .3rem .58rem; border-radius: 999px; font-size: .73rem; font-weight: 700; }
+.vitalis-status-agendada { color: #1554a0; background: #e9f3ff; }
+.vitalis-status-confirmada { color: #087f5b; background: #e6f8f1; }
+.vitalis-privacy-note { margin: 1rem 0 0; color: var(--vitalis-muted); font-size: .78rem; }
+.vitalis-privacy-note i { color: #15926d; }
+.vitalis-actions a { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: .8rem; padding: .85rem 0; color: var(--vitalis-text); text-decoration: none; border-bottom: 1px solid #edf2f7; }
+.vitalis-actions a:last-child { border-bottom: 0; }
+.vitalis-actions a > span { display: grid; width: 40px; height: 40px; place-items: center; color: var(--vitalis-blue); background: #edf6ff; border-radius: 11px; }
+.vitalis-actions strong, .vitalis-actions small { display: block; }
+.vitalis-actions small { color: var(--vitalis-muted); font-size: .74rem; }
+.vitalis-actions a > i { color: #98a9b8; }
+.vitalis-upload-panel { margin-top: 1rem; }
+.vitalis-upload-panel .form-control { min-height: 45px; border-color: #cfdbe7; }
+.vitalis-upload-panel .form-control:focus { border-color: #68aefc; box-shadow: 0 0 0 .2rem rgb(22 119 255 / 12%); }
+
+@media (min-width: 992px) {
+    .vitalis-sidebar { position: fixed; inset: 0 auto 0 0; transform: none !important; visibility: visible !important; }
+    .vitalis-dashboard-content { margin-left: 278px; }
+}
+@media (max-width: 991.98px) {
+    .vitalis-sidebar .offcanvas-body { height: 100%; }
+    .vitalis-dashboard-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 767.98px) {
+    .vitalis-welcome, .vitalis-section-heading { align-items: flex-start; flex-direction: column; }
+    .vitalis-refresh-button { width: 100%; }
+    .vitalis-metrics { grid-template-columns: 1fr; }
+    .vitalis-metric-card { min-height: 112px; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }

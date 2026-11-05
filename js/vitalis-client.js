@@ -119,11 +119,36 @@
         };
     }
 
+    function dashboardAgenda(appointments, currentDate = new Date(), limit = 5) {
+        const now = currentDate instanceof Date ? currentDate : new Date(currentDate);
+        if (!Array.isArray(appointments) || !Number.isFinite(now.getTime()) || !Number.isInteger(limit) || limit < 1) {
+            throw new Error('Dados da agenda inválidos.');
+        }
+        return appointments
+            .map((appointment) => ({
+                id: appointment.id,
+                inicio_em: appointment.inicio_em,
+                fim_em: appointment.fim_em,
+                status: appointment.status,
+                nome_profissional: appointment.nome_profissional,
+                start: new Date(appointment.inicio_em)
+            }))
+            .filter((appointment) => (
+                Number.isFinite(appointment.start.getTime())
+                && appointment.start > now
+                && ['agendada', 'confirmada'].includes(appointment.status)
+            ))
+            .sort((first, second) => first.start - second.start)
+            .slice(0, limit)
+            .map(({ start, ...appointment }) => appointment);
+    }
+
     return {
         KEYS,
         appointmentPayload,
         createSession,
         dashboardForRole,
+        dashboardAgenda,
         dashboardSummary,
         roleCanAccessPage
     };
