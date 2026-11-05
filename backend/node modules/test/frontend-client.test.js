@@ -38,6 +38,9 @@ test('papéis são direcionados somente aos painéis permitidos', () => {
     assert.equal(core.dashboardForRole('paciente'), 'dashboard-paciente.html');
     assert.equal(core.roleCanAccessPage('paciente', 'dashboard-medico.html'), false);
     assert.equal(core.roleCanAccessPage('profissional', 'dashboard-medico.html'), true);
+    assert.equal(core.roleCanAccessPage('administrador', 'profissionais.html'), true);
+    assert.equal(core.roleCanAccessPage('secretaria', 'profissionais.html'), true);
+    assert.equal(core.roleCanAccessPage('profissional', 'profissionais.html'), false);
 });
 
 test('agendamento converte o horário local com fuso para intervalo UTC', () => {
@@ -89,4 +92,19 @@ test('frontend usa sessionStorage e inclui o fluxo de seleção de clínica', as
     assert.doesNotMatch(main, /localStorage/);
     assert.match(main, /\/auth\/select-clinic/);
     assert.match(selection, /id="clinica-select"/);
+});
+
+test('gestão de profissionais mantém menu, campos acessíveis e operações sem exclusão', async () => {
+    const root = path.join(__dirname, '..', '..', '..');
+    const dashboard = await fs.readFile(path.join(root, 'dashboard-secretaria.html'), 'utf8');
+    const page = await fs.readFile(path.join(root, 'profissionais.html'), 'utf8');
+    const main = await fs.readFile(path.join(root, 'js', 'main.js'), 'utf8');
+
+    assert.match(dashboard, /href="profissionais\.html"/);
+    assert.match(page, /aria-current="page"/);
+    assert.match(page, /for="profissional-nome"/);
+    assert.match(page, /id="profissionais-status"[^>]*aria-live="polite"/);
+    assert.match(main, /\/profissionais\/gestao/);
+    assert.match(main, /method: 'PATCH'/);
+    assert.doesNotMatch(main, /method: 'DELETE'[\s\S]{0,120}profissionais/);
 });
