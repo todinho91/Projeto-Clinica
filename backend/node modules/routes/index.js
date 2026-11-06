@@ -3,6 +3,7 @@ const multer = require('multer');
 const authController = require('../controllers/authController');
 const consultaController = require('../controllers/consultaController');
 const exameController = require('../controllers/exameController');
+const especialidadeController = require('../controllers/especialidadeController');
 const medicoController = require('../controllers/medicoController');
 const pacienteController = require('../controllers/pacienteController');
 const multerConfig = require('../config/multerConfig');
@@ -56,6 +57,26 @@ router.patch(
     '/profissionais/:id/status',
     authorize('administrador', 'secretaria'),
     medicoController.updateProfessionalStatus
+);
+router.get(
+    '/especialidades/gestao',
+    authorize('administrador', 'secretaria'),
+    especialidadeController.listForManagement
+);
+router.post(
+    '/especialidades',
+    authorize('administrador', 'secretaria'),
+    especialidadeController.createSpecialty
+);
+router.put(
+    '/especialidades/:id',
+    authorize('administrador', 'secretaria'),
+    especialidadeController.updateSpecialty
+);
+router.patch(
+    '/especialidades/:id/status',
+    authorize('administrador', 'secretaria'),
+    especialidadeController.updateSpecialtyStatus
 );
 router.post(
     '/consultas',

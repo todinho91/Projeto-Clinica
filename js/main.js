@@ -100,6 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (page === 'dashboard-medico.html') setupProfissionalDashboard();
     else if (page === 'dashboard-secretaria.html') setupAdministracaoDashboard();
     else if (page === 'profissionais.html') setupGestaoProfissionaisPage();
+    else if (page === 'especialidades.html') setupGestaoEspecialidadesPage();
 });
 
 function setupRegisterPage() {
@@ -537,7 +538,9 @@ async function setupGestaoProfissionaisPage() {
                     : 'Não informado'
             ));
             row.append(tableCell(
-                professional.especialidades.map((item) => item.nome).join(', ') || 'Sem especialidade'
+                professional.especialidades
+                    .map((item) => item.status === 'inativa' ? `${item.nome} (inativa)` : item.nome)
+                    .join(', ') || 'Sem especialidade'
             ));
             const statusCell = document.createElement('td');
             statusCell.append(statusBadge(professional.status));
@@ -600,6 +603,132 @@ async function setupGestaoProfissionaisPage() {
             const result = await apiRequest(editingId ? `/profissionais/${editingId}` : '/profissionais', {
                 method: editingId ? 'PUT' : 'POST',
                 body: JSON.stringify(payload)
+            });
+            await loadData();
+            resetForm();
+            showMessage(formStatus, result.message, 'success');
+        } catch (error) {
+            showMessage(formStatus, error.message);
+        }
+    });
+    cancelButton.addEventListener('click', resetForm);
+
+    try {
+        await loadData();
+    } catch (error) {
+        showMessage(listStatus, error.message);
+    }
+}
+
+async function setupGestaoEspecialidadesPage() {
+    const clinic = requireClinicSession('especialidades.html');
+    if (!clinic) return;
+    applyClinicIdentity(clinic);
+    document.getElementById('clinic-role').textContent = clinic.papel === 'administrador'
+        ? 'Administrador da clínica'
+        : 'Secretaria da clínica';
+
+    const form = document.getElementById('especialidade-form');
+    const nameInput = document.getElementById('especialidade-nome');
+    const formTitle = document.getElementById('especialidade-form-title');
+    const cancelButton = document.getElementById('cancelar-edicao-especialidade');
+    const formStatus = document.getElementById('especialidade-form-status');
+    const listStatus = document.getElementById('especialidades-status');
+    const table = document.getElementById('especialidades-lista');
+    let specialties = [];
+    let editingId = null;
+
+    function statusBadge(status) {
+        const badge = document.createElement('span');
+        badge.className = `vitalis-status ${status === 'ativa' ? 'vitalis-status-confirmada' : 'vitalis-status-inativo'}`;
+        badge.textContent = status === 'ativa' ? 'Ativa' : 'Inativa';
+        return badge;
+    }
+
+    function resetForm() {
+        editingId = null;
+        form.reset();
+        formTitle.textContent = 'Cadastrar especialidade';
+        cancelButton.hidden = true;
+        showMessage(formStatus, '', 'muted');
+    }
+
+    function startEdit(specialty) {
+        editingId = specialty.id;
+        formTitle.textContent = 'Editar especialidade';
+        nameInput.value = specialty.nome;
+        cancelButton.hidden = false;
+        nameInput.focus();
+        form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function renderSpecialties() {
+        table.replaceChildren();
+        if (specialties.length === 0) {
+            const row = document.createElement('tr');
+            const cell = tableCell('Nenhuma especialidade cadastrada nesta clínica.');
+            cell.colSpan = 4;
+            cell.className = 'text-center py-4 text-muted';
+            row.append(cell);
+            table.append(row);
+            return;
+        }
+        specialties.forEach((specialty) => {
+            const row = document.createElement('tr');
+            const name = document.createElement('td');
+            const strong = document.createElement('strong');
+            strong.textContent = specialty.nome;
+            name.append(strong);
+            row.append(name);
+            row.append(tableCell(String(specialty.total_profissionais)));
+            const statusCell = document.createElement('td');
+            statusCell.append(statusBadge(specialty.status));
+            row.append(statusCell);
+
+            const actions = document.createElement('td');
+            actions.className = 'vitalis-table-actions';
+            const editButton = document.createElement('button');
+            editButton.type = 'button';
+            editButton.className = 'btn btn-sm btn-outline-primary';
+            editButton.innerHTML = '<i class="bi bi-pencil"></i><span class="visually-hidden">Editar</span>';
+            editButton.setAttribute('aria-label', `Editar ${specialty.nome}`);
+            editButton.addEventListener('click', () => startEdit(specialty));
+            const statusButton = document.createElement('button');
+            statusButton.type = 'button';
+            statusButton.className = `btn btn-sm ${specialty.status === 'ativa' ? 'btn-outline-danger' : 'btn-outline-success'}`;
+            statusButton.textContent = specialty.status === 'ativa' ? 'Desativar' : 'Ativar';
+            statusButton.setAttribute('aria-label', `${statusButton.textContent} ${specialty.nome}`);
+            statusButton.addEventListener('click', async () => {
+                const nextStatus = specialty.status === 'ativa' ? 'inativa' : 'ativa';
+                if (!window.confirm(`${statusButton.textContent} a especialidade ${specialty.nome}? Os vínculos existentes serão preservados.`)) return;
+                try {
+                    const result = await apiRequest(`/especialidades/${specialty.id}/status`, {
+                        method: 'PATCH',
+                        body: JSON.stringify({ status: nextStatus })
+                    });
+                    showMessage(listStatus, result.message, 'success');
+                    await loadData();
+                } catch (error) {
+                    showMessage(listStatus, error.message);
+                }
+            });
+            actions.append(editButton, statusButton);
+            row.append(actions);
+            table.append(row);
+        });
+    }
+
+    async function loadData() {
+        specialties = await apiRequest('/especialidades/gestao');
+        renderSpecialties();
+    }
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        try {
+            const result = await apiRequest(editingId ? `/especialidades/${editingId}` : '/especialidades', {
+                method: editingId ? 'PUT' : 'POST',
+                body: JSON.stringify({ nome: nameInput.value })
             });
             await loadData();
             resetForm();

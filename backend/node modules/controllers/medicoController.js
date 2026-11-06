@@ -47,8 +47,14 @@ async function validateSpecialties(connection, clinicId, specialtyIds) {
 
 async function replaceSpecialties(connection, clinicId, professionalId, specialtyIds) {
     await connection.execute(`
-        DELETE FROM profissional_especialidades
-        WHERE clinica_id = ? AND profissional_id = ?
+        DELETE pe
+        FROM profissional_especialidades pe
+        JOIN especialidades e
+          ON e.clinica_id = pe.clinica_id
+         AND e.id = pe.especialidade_id
+        WHERE pe.clinica_id = ?
+          AND pe.profissional_id = ?
+          AND e.status = 'ativa'
     `, [clinicId, professionalId]);
     if (specialtyIds.length === 0) return;
     const values = specialtyIds.map(() => '(?, ?, ?)').join(', ');
@@ -118,7 +124,7 @@ exports.listForManagement = async (req, res) => {
                 ORDER BY p.nome_exibicao
             `, [clinicId]),
             pool.execute(`
-                SELECT pe.profissional_id, e.id, e.nome
+                SELECT pe.profissional_id, e.id, e.nome, e.status
                 FROM profissional_especialidades pe
                 JOIN especialidades e
                   ON e.clinica_id = pe.clinica_id
@@ -131,7 +137,7 @@ exports.listForManagement = async (req, res) => {
         specialties.forEach((item) => {
             const key = Number(item.profissional_id);
             if (!byProfessional.has(key)) byProfessional.set(key, []);
-            byProfessional.get(key).push({ id: Number(item.id), nome: item.nome });
+            byProfessional.get(key).push({ id: Number(item.id), nome: item.nome, status: item.status });
         });
         return res.status(200).json(professionals.map((professional) => ({
             ...professional,
