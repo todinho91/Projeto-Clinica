@@ -40,3 +40,34 @@ Todas as consultas usam `req.tenant.clinicId`; valores de `clinica_id` enviados 
 7. reativar o profissional com vínculo ativo;
 8. trocar de clínica e confirmar que a listagem muda sem reaproveitar registros anteriores;
 9. entrar como profissional ou paciente e confirmar que `profissionais.html` redireciona para o painel permitido e que as rotas administrativas retornam 403.
+
+## Integração real com MySQL 8
+
+A suíte `test/professional-management.integration.test.js` executa o ciclo completo contra um banco descartável e valida:
+
+- cadastro e edição sem aceitar troca de clínica ou usuário pelo payload;
+- ativação e desativação lógica;
+- preservação de consulta histórica após desativação;
+- remoção do profissional inativo da lista usada em agendamentos;
+- eventos de auditoria para criação, edição e mudanças de status;
+- bloqueio de edição, cadastro e listagem entre clínicas.
+
+Antes de qualquer `DROP TABLE`, a suíte:
+
+1. carrega a conexão exclusivamente das variáveis `TEST_DB_*`;
+2. exige um banco dedicado cujo nome comece com `vitalis_profissionais` e termine em `_test`;
+3. consulta `SELECT DATABASE()` e exige correspondência exata;
+4. consulta a versão e exige MySQL 8.
+
+Exemplo de execução local, sem gravar credenciais no repositório:
+
+```bash
+export TEST_DB_HOST=127.0.0.1
+export TEST_DB_PORT=3306
+export TEST_DB_USER='<usuario-local-de-teste>'
+export TEST_DB_PASSWORD='<senha-local-de-teste>'
+export TEST_DB_DATABASE=vitalis_profissionais_test
+npm run test:professionals:integration
+```
+
+O banco deve existir previamente e ser exclusivo para essa suíte. Não reutilize `vitalis_dev`, bancos de produção ou outro banco de teste compartilhado.

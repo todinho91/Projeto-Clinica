@@ -14,6 +14,7 @@ Object.assign(process.env, {
 const pool = require('../config/database');
 const controller = require('../controllers/medicoController');
 const router = require('../routes');
+const { assertDisposableDatabaseName } = require('../support/mysql-test-safety');
 
 function response() {
     return {
@@ -33,6 +34,19 @@ function transactionConnection(execute) {
         release() {}
     };
 }
+
+test('proteção destrutiva aceita somente nome explícito de banco descartável Vitalis', () => {
+    assert.equal(
+        assertDisposableDatabaseName('vitalis_profissionais_test'),
+        'vitalis_profissionais_test'
+    );
+    for (const unsafeName of [
+        'vitalis_dev', 'vitalis_producao', 'profissionais_test', 'vitalis_backend_test',
+        'vitalis_profissionais_test_backup', 'VITALIS_PROFISSIONAIS_TEST'
+    ]) {
+        assert.throws(() => assertDisposableDatabaseName(unsafeName), /Operação recusada/);
+    }
+});
 
 test('listagem administrativa agrega especialidades somente da clínica ativa', async (t) => {
     const seen = [];
