@@ -32,6 +32,31 @@ router.get(
     authorize('administrador', 'secretaria', 'profissional', 'paciente'),
     medicoController.getAllMedicos
 );
+router.get(
+    '/profissionais/gestao',
+    authorize('administrador', 'secretaria'),
+    medicoController.listForManagement
+);
+router.get(
+    '/profissionais/opcoes',
+    authorize('administrador', 'secretaria'),
+    medicoController.getManagementOptions
+);
+router.post(
+    '/profissionais',
+    authorize('administrador', 'secretaria'),
+    medicoController.createProfessional
+);
+router.put(
+    '/profissionais/:id',
+    authorize('administrador', 'secretaria'),
+    medicoController.updateProfessional
+);
+router.patch(
+    '/profissionais/:id/status',
+    authorize('administrador', 'secretaria'),
+    medicoController.updateProfessionalStatus
+);
 router.post(
     '/consultas',
     authorize('administrador', 'secretaria', 'paciente'),

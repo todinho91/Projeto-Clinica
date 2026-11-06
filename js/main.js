@@ -99,6 +99,7 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (page === 'dashboard-paciente.html') setupPacienteDashboard();
     else if (page === 'dashboard-medico.html') setupProfissionalDashboard();
     else if (page === 'dashboard-secretaria.html') setupAdministracaoDashboard();
+    else if (page === 'profissionais.html') setupGestaoProfissionaisPage();
 });
 
 function setupRegisterPage() {
@@ -405,4 +406,213 @@ async function setupAdministracaoDashboard() {
             showMessage(status, error.message);
         }
     });
+}
+
+async function setupGestaoProfissionaisPage() {
+    const clinic = requireClinicSession('profissionais.html');
+    if (!clinic) return;
+    applyClinicIdentity(clinic);
+    document.getElementById('clinic-role').textContent = clinic.papel === 'administrador'
+        ? 'Administrador da clínica'
+        : 'Secretaria da clínica';
+
+    const form = document.getElementById('profissional-form');
+    const formStatus = document.getElementById('profissional-form-status');
+    const listStatus = document.getElementById('profissionais-status');
+    const table = document.getElementById('profissionais-lista');
+    const userField = document.getElementById('profissional-usuario-field');
+    const userSelect = document.getElementById('profissional-usuario');
+    const specialtyContainer = document.getElementById('profissional-especialidades');
+    const formTitle = document.getElementById('profissional-form-title');
+    const cancelButton = document.getElementById('cancelar-edicao');
+    let professionals = [];
+    let options = { usuarios: [], especialidades: [] };
+    let editingId = null;
+
+    function selectedSpecialties() {
+        return [...specialtyContainer.querySelectorAll('input:checked')]
+            .map((input) => Number(input.value));
+    }
+
+    function renderOptions() {
+        userSelect.replaceChildren();
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = options.usuarios.length
+            ? 'Selecione um usuário com vínculo profissional'
+            : 'Nenhum vínculo profissional disponível';
+        placeholder.disabled = true;
+        placeholder.selected = true;
+        userSelect.append(placeholder);
+        options.usuarios.forEach((user) => {
+            const option = document.createElement('option');
+            option.value = user.id;
+            option.textContent = `${user.nome} — ${user.email}`;
+            userSelect.append(option);
+        });
+
+        specialtyContainer.replaceChildren();
+        if (options.especialidades.length === 0) {
+            const message = document.createElement('p');
+            message.className = 'text-muted small mb-0';
+            message.textContent = 'Nenhuma especialidade ativa cadastrada.';
+            specialtyContainer.append(message);
+            return;
+        }
+        options.especialidades.forEach((specialty) => {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'form-check';
+            const input = document.createElement('input');
+            input.className = 'form-check-input';
+            input.type = 'checkbox';
+            input.value = specialty.id;
+            input.id = `especialidade-${specialty.id}`;
+            const label = document.createElement('label');
+            label.className = 'form-check-label';
+            label.htmlFor = input.id;
+            label.textContent = specialty.nome;
+            wrapper.append(input, label);
+            specialtyContainer.append(wrapper);
+        });
+    }
+
+    function resetForm() {
+        editingId = null;
+        form.reset();
+        formTitle.textContent = 'Cadastrar profissional';
+        userField.hidden = false;
+        userSelect.required = true;
+        cancelButton.hidden = true;
+        specialtyContainer.querySelectorAll('input').forEach((input) => { input.checked = false; });
+        showMessage(formStatus, '', 'muted');
+    }
+
+    function startEdit(professional) {
+        editingId = professional.id;
+        formTitle.textContent = 'Editar profissional';
+        userField.hidden = true;
+        userSelect.required = false;
+        cancelButton.hidden = false;
+        document.getElementById('profissional-nome').value = professional.nome;
+        document.getElementById('profissional-conselho-tipo').value = professional.conselho_tipo ?? '';
+        document.getElementById('profissional-conselho-numero').value = professional.conselho_numero ?? '';
+        const specialtyIds = new Set(professional.especialidades.map((item) => item.id));
+        specialtyContainer.querySelectorAll('input').forEach((input) => {
+            input.checked = specialtyIds.has(Number(input.value));
+        });
+        form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function statusBadge(status) {
+        const badge = document.createElement('span');
+        badge.className = `vitalis-status ${status === 'ativo' ? 'vitalis-status-confirmada' : 'vitalis-status-inativo'}`;
+        badge.textContent = status === 'ativo' ? 'Ativo' : 'Inativo';
+        return badge;
+    }
+
+    function renderProfessionals() {
+        table.replaceChildren();
+        if (professionals.length === 0) {
+            const row = document.createElement('tr');
+            const cell = tableCell('Nenhum profissional cadastrado nesta clínica.');
+            cell.colSpan = 5;
+            cell.className = 'text-center py-4 text-muted';
+            row.append(cell);
+            table.append(row);
+            return;
+        }
+        professionals.forEach((professional) => {
+            const row = document.createElement('tr');
+            const identity = document.createElement('td');
+            const name = document.createElement('strong');
+            name.textContent = professional.nome;
+            const email = document.createElement('small');
+            email.className = 'd-block text-muted';
+            email.textContent = professional.email;
+            identity.append(name, email);
+            row.append(identity);
+            row.append(tableCell(
+                professional.conselho_tipo && professional.conselho_numero
+                    ? `${professional.conselho_tipo} ${professional.conselho_numero}`
+                    : 'Não informado'
+            ));
+            row.append(tableCell(
+                professional.especialidades.map((item) => item.nome).join(', ') || 'Sem especialidade'
+            ));
+            const statusCell = document.createElement('td');
+            statusCell.append(statusBadge(professional.status));
+            row.append(statusCell);
+
+            const actions = document.createElement('td');
+            actions.className = 'vitalis-table-actions';
+            const editButton = document.createElement('button');
+            editButton.type = 'button';
+            editButton.className = 'btn btn-sm btn-outline-primary';
+            editButton.innerHTML = '<i class="bi bi-pencil"></i><span class="visually-hidden">Editar</span>';
+            editButton.setAttribute('aria-label', `Editar ${professional.nome}`);
+            editButton.addEventListener('click', () => startEdit(professional));
+            const statusButton = document.createElement('button');
+            statusButton.type = 'button';
+            statusButton.className = `btn btn-sm ${professional.status === 'ativo' ? 'btn-outline-danger' : 'btn-outline-success'}`;
+            statusButton.textContent = professional.status === 'ativo' ? 'Desativar' : 'Ativar';
+            statusButton.setAttribute('aria-label', `${statusButton.textContent} ${professional.nome}`);
+            statusButton.addEventListener('click', async () => {
+                const nextStatus = professional.status === 'ativo' ? 'inativo' : 'ativo';
+                if (!window.confirm(`${statusButton.textContent} o profissional ${professional.nome}?`)) return;
+                try {
+                    const result = await apiRequest(`/profissionais/${professional.id}/status`, {
+                        method: 'PATCH',
+                        body: JSON.stringify({ status: nextStatus })
+                    });
+                    showMessage(listStatus, result.message, 'success');
+                    await loadData();
+                } catch (error) {
+                    showMessage(listStatus, error.message);
+                }
+            });
+            actions.append(editButton, statusButton);
+            row.append(actions);
+            table.append(row);
+        });
+    }
+
+    async function loadData() {
+        const [professionalData, optionData] = await Promise.all([
+            apiRequest('/profissionais/gestao'),
+            apiRequest('/profissionais/opcoes')
+        ]);
+        professionals = professionalData;
+        options = optionData;
+        renderOptions();
+        renderProfessionals();
+    }
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const payload = {
+            nome_exibicao: document.getElementById('profissional-nome').value,
+            conselho_tipo: document.getElementById('profissional-conselho-tipo').value,
+            conselho_numero: document.getElementById('profissional-conselho-numero').value,
+            especialidade_ids: selectedSpecialties()
+        };
+        if (!editingId) payload.usuario_id = Number(userSelect.value);
+        try {
+            const result = await apiRequest(editingId ? `/profissionais/${editingId}` : '/profissionais', {
+                method: editingId ? 'PUT' : 'POST',
+                body: JSON.stringify(payload)
+            });
+            await loadData();
+            resetForm();
+            showMessage(formStatus, result.message, 'success');
+        } catch (error) {
+            showMessage(formStatus, error.message);
+        }
+    });
+    cancelButton.addEventListener('click', resetForm);
+
+    try {
+        await loadData();
+    } catch (error) {
+        showMessage(listStatus, error.message);
+    }
 }
