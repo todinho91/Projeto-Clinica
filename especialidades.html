@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Especialidades — Vitalis</title>
+    <link rel="icon" type="image/png" href="img/icons8-blue-heart-96.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body class="vitalis-dashboard-body">
+    <aside class="offcanvas-lg offcanvas-start vitalis-sidebar" tabindex="-1" id="vitalis-sidebar" aria-labelledby="sidebar-title">
+        <div class="offcanvas-header d-lg-none">
+            <h2 class="offcanvas-title h5" id="sidebar-title">Menu Vitalis</h2>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" data-bs-target="#vitalis-sidebar" aria-label="Fechar menu"></button>
+        </div>
+        <div class="offcanvas-body d-flex flex-column p-0">
+            <a class="vitalis-brand" href="dashboard-secretaria.html" aria-label="Vitalis — visão geral">
+                <span class="vitalis-brand-mark"><i class="bi bi-heart-pulse-fill"></i></span>
+                <span><strong>Vitalis</strong><small>Gestão em saúde</small></span>
+            </a>
+            <div class="vitalis-clinic-card"><span>Clínica ativa</span><strong data-clinic-name>Clínica</strong><small id="clinic-role">Perfil autorizado</small></div>
+            <nav class="vitalis-nav" aria-label="Navegação do dashboard">
+                <a href="dashboard-secretaria.html"><i class="bi bi-grid-1x2-fill"></i> Visão geral</a>
+                <a href="profissionais.html"><i class="bi bi-person-badge"></i> Profissionais</a>
+                <a class="active" href="especialidades.html" aria-current="page"><i class="bi bi-tags"></i> Especialidades</a>
+                <a href="dashboard-secretaria.html#agenda"><i class="bi bi-calendar3"></i> Agenda</a>
+                <a href="dashboard-secretaria.html#documentos"><i class="bi bi-file-earmark-medical"></i> Documentos</a>
+            </nav>
+            <div class="vitalis-sidebar-footer">
+                <a href="select-clinic.html"><i class="bi bi-arrow-left-right"></i> Trocar clínica</a>
+                <button type="button" id="logout-button"><i class="bi bi-box-arrow-right"></i> Sair</button>
+            </div>
+        </div>
+    </aside>
+
+    <div class="vitalis-dashboard-content">
+        <header class="vitalis-topbar">
+            <button class="btn vitalis-menu-button d-lg-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#vitalis-sidebar" aria-controls="vitalis-sidebar" aria-label="Abrir menu"><i class="bi bi-list"></i></button>
+            <div class="vitalis-topbar-title"><span>Clínica ativa</span><strong data-clinic-name>Clínica</strong></div>
+            <a class="btn vitalis-switch-button" href="select-clinic.html"><i class="bi bi-arrow-left-right"></i><span class="d-none d-sm-inline"> Trocar clínica</span></a>
+        </header>
+
+        <main class="vitalis-main">
+            <section class="vitalis-welcome" aria-labelledby="page-title">
+                <div><p class="vitalis-eyebrow">M3 — Gestão da clínica</p><h1 id="page-title">Especialidades</h1><p>Organize as áreas de atuação disponíveis na clínica ativa.</p></div>
+            </section>
+
+            <div class="vitalis-management-grid">
+                <section class="vitalis-panel vitalis-management-form" aria-labelledby="especialidade-form-title">
+                    <div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Cadastro</p><h2 id="especialidade-form-title">Cadastrar especialidade</h2></div></div>
+                    <form id="especialidade-form">
+                        <div class="mb-3">
+                            <label class="form-label" for="especialidade-nome">Nome</label>
+                            <input class="form-control" id="especialidade-nome" minlength="2" maxlength="120" autocomplete="off" required>
+                            <div class="form-text">Use um nome claro e não duplicado nesta clínica.</div>
+                        </div>
+                        <div class="d-flex gap-2 flex-wrap">
+                            <button class="btn vitalis-primary-button flex-grow-1" type="submit"><i class="bi bi-check2-circle"></i> Salvar</button>
+                            <button class="btn btn-outline-secondary" type="button" id="cancelar-edicao-especialidade" hidden>Cancelar</button>
+                        </div>
+                        <div id="especialidade-form-status" role="status" aria-live="polite"></div>
+                    </form>
+                </section>
+
+                <section class="vitalis-panel" aria-labelledby="especialidades-title">
+                    <div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Catálogo</p><h2 id="especialidades-title">Especialidades da clínica</h2></div><span>Ativas e inativas</span></div>
+                    <div id="especialidades-status" role="status" aria-live="polite"></div>
+                    <div class="table-responsive">
+                        <table class="table vitalis-agenda-table vitalis-management-table mb-0">
+                            <thead><tr><th>Especialidade</th><th>Profissionais</th><th>Status</th><th class="text-end">Ações</th></tr></thead>
+                            <tbody id="especialidades-lista"><tr><td colspan="4" class="text-center py-4 text-muted">Carregando especialidades...</td></tr></tbody>
+                        </table>
+                    </div>
+                    <p class="vitalis-privacy-note"><i class="bi bi-shield-check"></i> Desativar impede novas associações e preserva vínculos históricos.</p>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="js/vitalis-client.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>

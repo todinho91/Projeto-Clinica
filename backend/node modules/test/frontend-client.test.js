@@ -41,6 +41,26 @@ test('papéis são direcionados somente aos painéis permitidos', () => {
     assert.equal(core.roleCanAccessPage('administrador', 'profissionais.html'), true);
     assert.equal(core.roleCanAccessPage('secretaria', 'profissionais.html'), true);
     assert.equal(core.roleCanAccessPage('profissional', 'profissionais.html'), false);
+    assert.equal(core.roleCanAccessPage('administrador', 'especialidades.html'), true);
+    assert.equal(core.roleCanAccessPage('secretaria', 'especialidades.html'), true);
+    assert.equal(core.roleCanAccessPage('paciente', 'especialidades.html'), false);
+});
+
+test('gestão de especialidades mantém menu, acessibilidade e desativação lógica', async () => {
+    const root = path.join(__dirname, '..', '..', '..');
+    const dashboard = await fs.readFile(path.join(root, 'dashboard-secretaria.html'), 'utf8');
+    const professionals = await fs.readFile(path.join(root, 'profissionais.html'), 'utf8');
+    const page = await fs.readFile(path.join(root, 'especialidades.html'), 'utf8');
+    const main = await fs.readFile(path.join(root, 'js', 'main.js'), 'utf8');
+
+    assert.match(dashboard, /href="especialidades\.html"/);
+    assert.match(professionals, /href="especialidades\.html"/);
+    assert.match(page, /aria-current="page"/);
+    assert.match(page, /for="especialidade-nome"/);
+    assert.match(page, /id="especialidades-status"[^>]*aria-live="polite"/);
+    assert.match(main, /\/especialidades\/gestao/);
+    assert.match(main, /Os vínculos existentes serão preservados/);
+    assert.doesNotMatch(main, /method: 'DELETE'[\s\S]{0,120}especialidades/);
 });
 
 test('agendamento converte o horário local com fuso para intervalo UTC', () => {

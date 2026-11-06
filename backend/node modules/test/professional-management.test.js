@@ -59,7 +59,7 @@ test('listagem administrativa agrega especialidades somente da clínica ativa', 
                 status: 'ativo', email: 'profissional@example.test'
             }]];
         }
-        return [[{ profissional_id: 8, id: 3, nome: 'Clínica geral' }]];
+        return [[{ profissional_id: 8, id: 3, nome: 'Clínica geral', status: 'ativa' }]];
     });
     const res = response();
 
@@ -68,7 +68,7 @@ test('listagem administrativa agrega especialidades somente da clínica ativa', 
     assert.equal(res.statusCode, 200);
     assert.deepEqual(seen.map((item) => item.params), [[11], [11]]);
     assert.ok(seen.every((item) => /clinica_id = \?/.test(item.sql)));
-    assert.deepEqual(res.body[0].especialidades, [{ id: 3, nome: 'Clínica geral' }]);
+    assert.deepEqual(res.body[0].especialidades, [{ id: 3, nome: 'Clínica geral', status: 'ativa' }]);
 });
 
 test('listagem usada em agendamentos exige profissional, vínculo e usuário ativos', async (t) => {
@@ -214,6 +214,8 @@ test('edição atualiza dados e especialidades sem trocar usuário ou clínica',
     const update = executions.find((item) => /UPDATE profissionais/.test(item.sql));
     assert.deepEqual(update.params, ['Nome Atualizado', 'CRM', '456/PR', 11, 8]);
     assert.equal(executions.some((item) => item.params?.includes(999) || item.params?.includes(888)), false);
+    const associationCleanup = executions.find((item) => /DELETE pe/.test(item.sql));
+    assert.match(associationCleanup.sql, /e\.status = 'ativa'/);
 });
 
 test('reativação exige vínculo profissional ativo', async (t) => {
