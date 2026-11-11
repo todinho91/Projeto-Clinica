@@ -10,6 +10,7 @@
     "test:backend:integration": "BACKEND_INTEGRATION_TEST=1 node --test test/backend.integration.test.js",
     "test:professionals:integration": "PROFESSIONAL_INTEGRATION_TEST=1 node --test test/professional-management.integration.test.js",
     "test:specialties:integration": "SPECIALTY_INTEGRATION_TEST=1 node --test test/specialty-management.integration.test.js",
+    "m3:diagnose": "node scripts/validation/m3-environment-check.js",
     "check:secrets": "node scripts/security/check-secrets.js",
     "test": "node --test",
     "start": "node server.js"
