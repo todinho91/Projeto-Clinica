@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { execFileSync, spawnSync } = require('node:child_process');
-const { mkdtemp, rm, writeFile } = require('node:fs/promises');
+const { access, mkdtemp, rm, writeFile } = require('node:fs/promises');
 const { randomBytes } = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
@@ -47,6 +47,9 @@ test('CORS aceita somente origens configuradas', async (t) => {
     });
     assert.equal(denied.status, 403);
     assert.equal(denied.headers.get('access-control-allow-origin'), null);
+
+    const anonymousUploadRead = await fetch(`http://127.0.0.1:${port}/uploads/arquivo-clinico.pdf`);
+    assert.equal(anonymousUploadRead.status, 404);
 });
 
 test('configuração recusa curinga de CORS antes de iniciar o servidor', () => {
@@ -107,6 +110,26 @@ test('upload com conteúdo forjado é removido antes de consultar o banco', asyn
 
     assert.equal(res.statusCode, 415);
     assert.equal(execute.mock.callCount(), 0);
+});
+
+test('falha do banco remove arquivo clínico já validado', async (t) => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'vitalis-upload-db-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const filePath = path.join(directory, 'documento.pdf');
+    await writeFile(filePath, '%PDF-1.7');
+    t.mock.method(pool, 'execute', async () => { throw new Error('falha sintética do banco'); });
+    t.mock.method(console, 'error', () => {});
+    const res = response();
+
+    await uploadExame({
+        body: { paciente_id: '1', titulo: 'Documento sintético' },
+        file: { path: filePath, mimetype: 'application/pdf', filename: 'documento.pdf', size: 8 },
+        tenant: { clinicId: 1, role: 'administrador' },
+        userId: 1
+    }, res);
+
+    assert.equal(res.statusCode, 500);
+    await assert.rejects(access(filePath), { code: 'ENOENT' });
 });
 
 test('repositório não rastreia dependências, uploads nem arquivos de ambiente', () => {
