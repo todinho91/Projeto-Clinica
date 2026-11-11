@@ -16,7 +16,12 @@ const tenantContext = require('../middleware/tenant');
 const authorize = require('../middleware/authorize');
 const { selectClinic } = require('../controllers/authController');
 const { getPacienteDetails } = require('../controllers/pacienteController');
-const { agendarConsulta, getMinhaAgenda } = require('../controllers/consultaController');
+const {
+    agendarConsulta,
+    cancelarConsulta,
+    getMinhaAgenda,
+    updateStatusConsulta
+} = require('../controllers/consultaController');
 const router = require('../routes');
 
 function response() {
@@ -228,6 +233,45 @@ test('agendamento rejeita paciente fora da clínica ativa antes do insert', asyn
     }, res);
 
     assert.equal(executions, 1);
+    assert.equal(res.statusCode, 404);
+});
+
+test('alteração de status não alcança consulta de outra clínica', async (t) => {
+    let params;
+    t.mock.method(pool, 'execute', async (sql, values) => {
+        assert.match(sql, /c\.clinica_id = \?/);
+        params = values;
+        return [{ affectedRows: 0 }];
+    });
+    const res = response();
+
+    await updateStatusConsulta({
+        params: { id: '99' },
+        body: { status: 'realizada' },
+        userId: 7,
+        tenant: { clinicId: 11, role: 'administrador' }
+    }, res);
+
+    assert.deepEqual(params, ['realizada', 11, 99, 'administrador', 7]);
+    assert.equal(res.statusCode, 404);
+});
+
+test('paciente não cancela consulta de terceiro nem de outra clínica', async (t) => {
+    let params;
+    t.mock.method(pool, 'execute', async (sql, values) => {
+        assert.match(sql, /p\.usuario_id = \?/);
+        params = values;
+        return [{ affectedRows: 0 }];
+    });
+    const res = response();
+
+    await cancelarConsulta({
+        params: { id: '99' },
+        userId: 7,
+        tenant: { clinicId: 11, role: 'paciente' }
+    }, res);
+
+    assert.deepEqual(params, [11, 99, 'paciente', 7]);
     assert.equal(res.statusCode, 404);
 });
 

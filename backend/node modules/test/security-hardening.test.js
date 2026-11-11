@@ -132,6 +132,31 @@ test('falha do banco remove arquivo clínico já validado', async (t) => {
     await assert.rejects(access(filePath), { code: 'ENOENT' });
 });
 
+test('upload para paciente de outra clínica é recusado e removido', async (t) => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'vitalis-upload-tenant-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const filePath = path.join(directory, 'documento.pdf');
+    await writeFile(filePath, '%PDF-1.7');
+    let params;
+    t.mock.method(pool, 'execute', async (sql, values) => {
+        assert.match(sql, /p\.clinica_id = \?/);
+        params = values;
+        return [[]];
+    });
+    const res = response();
+
+    await uploadExame({
+        body: { paciente_id: '99', titulo: 'Documento sintético' },
+        file: { path: filePath, mimetype: 'application/pdf', filename: 'documento.pdf', size: 8 },
+        tenant: { clinicId: 11, role: 'administrador' },
+        userId: 7
+    }, res);
+
+    assert.deepEqual(params, [11, 99, 'administrador', 'administrador', 7]);
+    assert.equal(res.statusCode, 404);
+    await assert.rejects(access(filePath), { code: 'ENOENT' });
+});
+
 test('repositório não rastreia dependências, uploads nem arquivos de ambiente', () => {
     const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
     const tracked = execFileSync('git', ['ls-files'], { cwd: repositoryRoot, encoding: 'utf8' })
