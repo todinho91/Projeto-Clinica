@@ -101,6 +101,43 @@ test('cadastro público rejeita papel privilegiado antes de acessar o banco', as
     assert.equal(getConnection.mock.callCount(), 0);
 });
 
+test('cadastro público desfaz a transação quando a criação do vínculo falha', async (t) => {
+    const connection = {
+        beginTransaction: t.mock.fn(async () => {}),
+        commit: t.mock.fn(async () => {}),
+        rollback: t.mock.fn(async () => {}),
+        release: t.mock.fn(),
+        execute: t.mock.fn(async (sql) => {
+            if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 7 }]];
+            if (/INSERT INTO usuarios/.test(sql)) return [{ insertId: 42 }];
+            if (/INSERT INTO clinica_usuarios/.test(sql)) {
+                const error = new Error('falha fictícia ao criar vínculo');
+                error.code = 'ER_TEST_FAILURE';
+                throw error;
+            }
+            throw new Error(`SQL inesperado: ${sql}`);
+        })
+    };
+    t.mock.method(pool, 'getConnection', async () => connection);
+    t.mock.method(console, 'error', () => {});
+    const res = response();
+
+    await register({
+        body: {
+            nome: 'Paciente Demo',
+            email: 'paciente@example.test',
+            senha: 'senha-ficticia-forte',
+            clinica_slug: 'demo'
+        }
+    }, res);
+
+    assert.equal(res.statusCode, 500);
+    assert.equal(connection.beginTransaction.mock.callCount(), 1);
+    assert.equal(connection.rollback.mock.callCount(), 1);
+    assert.equal(connection.commit.mock.callCount(), 0);
+    assert.equal(connection.release.mock.callCount(), 1);
+});
+
 const claims = { sub: '42', token_type: 'identity' };
 const signed = jwt.sign(claims, testConfig.JWT_SECRET);
 const parts = signed.split('.');
