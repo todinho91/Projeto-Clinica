@@ -126,6 +126,21 @@ test('rota de agenda permite os quatro papéis autenticados da clínica', () => 
     assert.equal(denied.statusCode, 403);
 });
 
+test('rotas de upload recusam paciente antes de processar o arquivo', () => {
+    for (const path of ['/documentos/upload', '/exames/upload']) {
+        const route = router.stack.find((layer) => layer.route?.path === path);
+        assert.ok(route);
+        const routeAuthorization = route.route.stack[0].handle;
+        const denied = response();
+        let called = false;
+
+        routeAuthorization({ tenant: { role: 'paciente' } }, denied, () => { called = true; });
+
+        assert.equal(denied.statusCode, 403);
+        assert.equal(called, false);
+    }
+});
+
 test('agenda administrativa usa exclusivamente a clínica ativa', async (t) => {
     let params;
     t.mock.method(pool, 'execute', async (sql, values) => {

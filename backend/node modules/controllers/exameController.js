@@ -1,5 +1,6 @@
 const { promises: fs } = require('node:fs');
 const pool = require('../config/database');
+const { hasExpectedSignature } = require('../support/file-signature');
 
 async function discardUpload(file) {
     if (file?.path) await fs.unlink(file.path).catch(() => {});
@@ -14,6 +15,16 @@ exports.uploadExame = async (req, res) => {
     if (!Number.isSafeInteger(patientId) || patientId <= 0 || typeof title !== 'string' || !title.trim()) {
         await discardUpload(req.file);
         return res.status(400).json({ error: 'Paciente e título são obrigatórios.' });
+    }
+
+    try {
+        if (!(await hasExpectedSignature(req.file.path, req.file.mimetype))) {
+            await discardUpload(req.file);
+            return res.status(415).json({ error: 'O conteúdo do arquivo não corresponde ao tipo permitido.' });
+        }
+    } catch {
+        await discardUpload(req.file);
+        return res.status(400).json({ error: 'Não foi possível validar o arquivo enviado.' });
     }
 
     const clinicId = req.tenant.clinicId;
