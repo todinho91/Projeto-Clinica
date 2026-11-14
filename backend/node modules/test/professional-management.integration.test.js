@@ -145,6 +145,40 @@ test('MySQL 8 valida ciclo completo e isolamento da gestão de profissionais', {
         const controller = require('../controllers/medicoController');
         const tenantA = { clinicId: fixtures.clinicA, role: 'administrador' };
 
+        const autonomousResponse = response();
+        await controller.createProfessionalAccount({
+            body: {
+                clinica_id: fixtures.clinicB,
+                nome_completo: 'Profissional Autônomo A',
+                nome_exibicao: 'Profissional Autônomo A',
+                email: 'autonomo.a@example.test',
+                tipo_profissional: 'Fisioterapeuta',
+                conselho_tipo: 'CREFITO',
+                conselho_numero: 'AUTO-A',
+                especialidade_ids: [fixtures.specialtyA],
+                status: 'ativo'
+            },
+            userId: fixtures.adminA,
+            tenant: tenantA
+        }, autonomousResponse);
+        assert.equal(autonomousResponse.statusCode, 201);
+        const [[autonomous]] = await connection.execute(`
+            SELECT p.clinica_id, p.tipo_profissional, p.status,
+                   u.status AS usuario_status, cu.papel, cu.status AS vinculo_status
+            FROM profissionais p
+            JOIN usuarios u ON u.id = p.usuario_id
+            JOIN clinica_usuarios cu
+              ON cu.clinica_id = p.clinica_id
+             AND cu.usuario_id = p.usuario_id
+            WHERE p.id = ?
+        `, [autonomousResponse.body.id]);
+        assert.equal(Number(autonomous.clinica_id), fixtures.clinicA);
+        assert.equal(autonomous.tipo_profissional, 'Fisioterapeuta');
+        assert.equal(autonomous.status, 'ativo');
+        assert.equal(autonomous.usuario_status, 'bloqueado');
+        assert.equal(autonomous.papel, 'profissional');
+        assert.equal(autonomous.vinculo_status, 'convite_pendente');
+
         const createResponse = response();
         await controller.createProfessional({
             body: {

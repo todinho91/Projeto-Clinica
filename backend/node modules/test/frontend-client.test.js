@@ -122,9 +122,15 @@ test('gestão de profissionais mantém menu, campos acessíveis e operações se
 
     assert.match(dashboard, /href="profissionais\.html"/);
     assert.match(page, /aria-current="page"/);
+    assert.match(page, /for="profissional-nome-completo"/);
+    assert.match(page, /for="profissional-email"/);
     assert.match(page, /for="profissional-nome"/);
+    assert.match(page, /for="profissional-tipo"/);
+    assert.match(page, /id="profissional-status"/);
     assert.match(page, /id="profissionais-status"[^>]*aria-live="polite"/);
     assert.match(main, /\/profissionais\/gestao/);
+    assert.match(main, /\/profissionais\/cadastro-completo/);
+    assert.doesNotMatch(page, /id="profissional-usuario"/);
     assert.match(main, /method: 'PATCH'/);
     assert.doesNotMatch(main, /method: 'DELETE'[\s\S]{0,120}profissionais/);
 });
