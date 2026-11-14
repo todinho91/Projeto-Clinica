@@ -50,24 +50,40 @@
 
             <div class="vitalis-management-grid">
                 <section class="vitalis-panel vitalis-management-form" aria-labelledby="profissional-form-title">
-                    <div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Cadastro</p><h2 id="profissional-form-title">Cadastrar profissional</h2></div></div>
+                    <div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Cadastro completo</p><h2 id="profissional-form-title">Cadastrar profissional</h2></div></div>
                     <form id="profissional-form">
-                        <div class="mb-3" id="profissional-usuario-field">
-                            <label class="form-label" for="profissional-usuario">Usuário vinculado</label>
-                            <select class="form-select" id="profissional-usuario" required><option value="" selected disabled>Carregando vínculos...</option></select>
-                            <div class="form-text">Somente usuários ativos com papel profissional nesta clínica.</div>
+                        <div id="profissional-identidade-fields">
+                            <div class="mb-3">
+                                <label class="form-label" for="profissional-nome-completo">Nome completo</label>
+                                <input class="form-control" id="profissional-nome-completo" minlength="2" maxlength="160" autocomplete="name" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label" for="profissional-email">E-mail</label>
+                                <input class="form-control" id="profissional-email" type="email" maxlength="254" autocomplete="email" required>
+                            </div>
                         </div>
-                        <div class="mb-3"><label class="form-label" for="profissional-nome">Nome de exibição</label><input class="form-control" id="profissional-nome" minlength="2" maxlength="160" autocomplete="name" required></div>
+                        <div class="row g-3 mb-3">
+                            <div class="col-sm-7"><label class="form-label" for="profissional-nome">Nome de exibição</label><input class="form-control" id="profissional-nome" minlength="2" maxlength="160" autocomplete="name" required></div>
+                            <div class="col-sm-5"><label class="form-label" for="profissional-tipo">Tipo de profissional</label><input class="form-control" id="profissional-tipo" minlength="2" maxlength="80" placeholder="Ex.: Médico, psicólogo" required></div>
+                        </div>
                         <div class="row g-3 mb-3">
                             <div class="col-sm-5"><label class="form-label" for="profissional-conselho-tipo">Conselho</label><input class="form-control" id="profissional-conselho-tipo" maxlength="30" placeholder="Ex.: CRM"></div>
                             <div class="col-sm-7"><label class="form-label" for="profissional-conselho-numero">Número</label><input class="form-control" id="profissional-conselho-numero" maxlength="40" placeholder="Número/UF"></div>
+                        </div>
+                        <div class="mb-3" id="profissional-status-field">
+                            <label class="form-label" for="profissional-status">Situação do cadastro</label>
+                            <select class="form-select" id="profissional-status">
+                                <option value="ativo">Ativo após liberação do acesso</option>
+                                <option value="inativo">Inativo</option>
+                            </select>
+                            <div class="form-text">A conta permanecerá bloqueada até a conclusão de um convite seguro.</div>
                         </div>
                         <fieldset class="mb-3">
                             <legend class="form-label fs-6">Especialidades</legend>
                             <div class="vitalis-checkbox-grid" id="profissional-especialidades"><p class="text-muted small mb-0">Carregando especialidades...</p></div>
                         </fieldset>
                         <div class="d-flex gap-2 flex-wrap">
-                            <button class="btn vitalis-primary-button flex-grow-1" type="submit"><i class="bi bi-check2-circle"></i> Salvar</button>
+                            <button class="btn vitalis-primary-button flex-grow-1" type="submit"><i class="bi bi-person-plus"></i> Salvar profissional</button>
                             <button class="btn btn-outline-secondary" type="button" id="cancelar-edicao" hidden>Cancelar</button>
                         </div>
                         <div id="profissional-form-status" role="status" aria-live="polite"></div>
@@ -79,8 +95,8 @@
                     <div id="profissionais-status" role="status" aria-live="polite"></div>
                     <div class="table-responsive">
                         <table class="table vitalis-agenda-table vitalis-management-table mb-0">
-                            <thead><tr><th>Profissional</th><th>Conselho</th><th>Especialidades</th><th>Status</th><th class="text-end">Ações</th></tr></thead>
-                            <tbody id="profissionais-lista"><tr><td colspan="5" class="text-center py-4 text-muted">Carregando profissionais...</td></tr></tbody>
+                            <thead><tr><th>Profissional</th><th>Tipo</th><th>Conselho</th><th>Especialidades</th><th>Cadastro</th><th>Acesso</th><th class="text-end">Ações</th></tr></thead>
+                            <tbody id="profissionais-lista"><tr><td colspan="7" class="text-center py-4 text-muted">Carregando profissionais...</td></tr></tbody>
                         </table>
                     </div>
                     <p class="vitalis-privacy-note"><i class="bi bi-shield-check"></i> Desativar preserva consultas e históricos existentes.</p>

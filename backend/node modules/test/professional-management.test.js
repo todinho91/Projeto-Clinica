@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { randomBytes } = require('node:crypto');
 const { test } = require('node:test');
+const bcrypt = require('bcryptjs');
 
 Object.assign(process.env, {
     DB_HOST: '127.0.0.1',
@@ -32,6 +33,21 @@ function transactionConnection(execute) {
         commit: async () => {},
         rollback: async () => {},
         release() {}
+    };
+}
+
+function autonomousBody(overrides = {}) {
+    return {
+        clinica_id: 999,
+        nome_completo: 'Dra. Ana Profissional',
+        nome_exibicao: 'Dra. Ana',
+        email: 'ANA.PROFISSIONAL@example.test',
+        tipo_profissional: 'Médica',
+        conselho_tipo: 'crm',
+        conselho_numero: '123/PR',
+        especialidade_ids: [3],
+        status: 'ativo',
+        ...overrides
     };
 }
 
@@ -144,6 +160,150 @@ test('cadastro usa o tenant do servidor e registra auditoria', async (t) => {
     assert.equal(executions.some((item) => item.params?.includes(999)), false);
 });
 
+for (const role of ['administrador', 'secretaria']) {
+    test(`${role} pré-cadastra identidade, vínculo e perfil em uma transação`, async (t) => {
+        const executions = [];
+        const connection = transactionConnection(async (sql, params) => {
+            executions.push({ sql, params });
+            if (/FROM usuarios\s+WHERE email/.test(sql)) return [[]];
+            if (/FROM especialidades/.test(sql)) return [[{ id: 3 }]];
+            if (/INSERT INTO usuarios/.test(sql)) return [{ insertId: 70 }];
+            if (/INSERT INTO profissionais/.test(sql)) return [{ insertId: 44 }];
+            return [{ affectedRows: 1 }];
+        });
+        const begin = t.mock.method(connection, 'beginTransaction');
+        const commit = t.mock.method(connection, 'commit');
+        const rollback = t.mock.method(connection, 'rollback');
+        t.mock.method(bcrypt, 'hash', async () => 'hash-sintetico-irrecuperavel');
+        t.mock.method(pool, 'getConnection', async () => connection);
+        const res = response();
+
+        await controller.createProfessionalAccount({
+            body: autonomousBody(),
+            userId: 7,
+            tenant: { clinicId: 11, role }
+        }, res);
+
+        assert.equal(res.statusCode, 201);
+        assert.equal(res.body.id, 44);
+        assert.equal(res.body.acesso_status, 'convite_pendente');
+        assert.equal('senha' in res.body, false);
+        assert.equal('token' in res.body, false);
+        assert.equal(begin.mock.callCount(), 1);
+        assert.equal(commit.mock.callCount(), 1);
+        assert.equal(rollback.mock.callCount(), 0);
+        const userInsert = executions.find((item) => /INSERT INTO usuarios/.test(item.sql));
+        assert.deepEqual(userInsert.params, [
+            'Dra. Ana Profissional', 'ana.profissional@example.test',
+            'hash-sintetico-irrecuperavel'
+        ]);
+        assert.match(userInsert.sql, /'bloqueado'/);
+        const linkInsert = executions.find((item) => /INSERT INTO clinica_usuarios/.test(item.sql));
+        assert.deepEqual(linkInsert.params, [11, 70]);
+        assert.match(linkInsert.sql, /'profissional', 'convite_pendente'/);
+        const professionalInsert = executions.find((item) => /INSERT INTO profissionais/.test(item.sql));
+        assert.deepEqual(professionalInsert.params, [
+            11, 70, 'Dra. Ana', 'Médica', 'CRM', '123/PR', 'ativo'
+        ]);
+        assert.equal(executions.some((item) => item.params?.includes(999)), false);
+        assert.ok(executions.some((item) => /INSERT INTO auditoria/.test(item.sql)));
+    });
+}
+
+test('pré-cadastro recusa conta existente sem criar vínculo', async (t) => {
+    const executions = [];
+    const connection = transactionConnection(async (sql, params) => {
+        executions.push({ sql, params });
+        return [[{ id: 70 }]];
+    });
+    const rollback = t.mock.method(connection, 'rollback');
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+
+    await controller.createProfessionalAccount({
+        body: autonomousBody(), userId: 7,
+        tenant: { clinicId: 11, role: 'secretaria' }
+    }, res);
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(rollback.mock.callCount(), 1);
+    assert.equal(executions.some((item) => /INSERT INTO/.test(item.sql)), false);
+});
+
+test('pré-cadastro recusa especialidade de outra clínica antes de criar usuário', async (t) => {
+    const executions = [];
+    const connection = transactionConnection(async (sql, params) => {
+        executions.push({ sql, params });
+        if (/FROM usuarios\s+WHERE email/.test(sql)) return [[]];
+        assert.match(sql, /WHERE clinica_id = \?/);
+        assert.deepEqual(params, [11, 3]);
+        return [[]];
+    });
+    const rollback = t.mock.method(connection, 'rollback');
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+
+    await controller.createProfessionalAccount({
+        body: autonomousBody(), userId: 7,
+        tenant: { clinicId: 11, role: 'administrador' }
+    }, res);
+
+    assert.equal(res.statusCode, 400);
+    assert.equal(rollback.mock.callCount(), 1);
+    assert.equal(executions.some((item) => /INSERT INTO usuarios/.test(item.sql)), false);
+});
+
+test('falha parcial no pré-cadastro desfaz usuário, vínculo e perfil', async (t) => {
+    const executions = [];
+    const connection = transactionConnection(async (sql, params) => {
+        executions.push({ sql, params });
+        if (/FROM usuarios\s+WHERE email/.test(sql)) return [[]];
+        if (/FROM especialidades/.test(sql)) return [[{ id: 3 }]];
+        if (/INSERT INTO usuarios/.test(sql)) return [{ insertId: 70 }];
+        if (/INSERT INTO clinica_usuarios/.test(sql)) {
+            const error = new Error('falha sintética no vínculo');
+            error.code = 'ER_TEST_FAILURE';
+            throw error;
+        }
+        throw new Error(`SQL inesperado: ${sql}`);
+    });
+    const commit = t.mock.method(connection, 'commit');
+    const rollback = t.mock.method(connection, 'rollback');
+    t.mock.method(bcrypt, 'hash', async () => 'hash-sintetico-irrecuperavel');
+    t.mock.method(pool, 'getConnection', async () => connection);
+    t.mock.method(console, 'error', () => {});
+    const res = response();
+
+    await controller.createProfessionalAccount({
+        body: autonomousBody(), userId: 7,
+        tenant: { clinicId: 11, role: 'secretaria' }
+    }, res);
+
+    assert.equal(res.statusCode, 500);
+    assert.equal(commit.mock.callCount(), 0);
+    assert.equal(rollback.mock.callCount(), 1);
+    assert.equal(executions.some((item) => /^\s*(?:DELETE|UPDATE)\b/.test(item.sql)), false);
+});
+
+test('e-mail e campos inválidos do pré-cadastro são rejeitados antes do banco', async (t) => {
+    const getConnection = t.mock.method(pool, 'getConnection', async () => {
+        throw new Error('não deveria acessar o banco');
+    });
+    for (const body of [
+        autonomousBody({ email: 'invalido' }),
+        autonomousBody({ nome_completo: 'A' }),
+        autonomousBody({ tipo_profissional: '' }),
+        autonomousBody({ status: 'administrador' })
+    ]) {
+        const res = response();
+        await controller.createProfessionalAccount({
+            body, userId: 7, tenant: { clinicId: 11, role: 'secretaria' }
+        }, res);
+        assert.equal(res.statusCode, 400);
+    }
+    assert.equal(getConnection.mock.callCount(), 0);
+});
+
 test('cadastro recusa usuário sem vínculo profissional na clínica ativa', async (t) => {
     const connection = transactionConnection(async (sql, params) => {
         assert.match(sql, /cu\.clinica_id = \?/);
@@ -212,7 +372,9 @@ test('edição atualiza dados e especialidades sem trocar usuário ou clínica',
     assert.equal(res.statusCode, 200);
     assert.equal(commit.mock.callCount(), 1);
     const update = executions.find((item) => /UPDATE profissionais/.test(item.sql));
-    assert.deepEqual(update.params, ['Nome Atualizado', 'CRM', '456/PR', 11, 8]);
+    assert.deepEqual(update.params, [
+        'Nome Atualizado', 'Profissional de saúde', 'CRM', '456/PR', 11, 8
+    ]);
     assert.equal(executions.some((item) => item.params?.includes(999) || item.params?.includes(888)), false);
     const associationCleanup = executions.find((item) => /DELETE pe/.test(item.sql));
     assert.match(associationCleanup.sql, /e\.status = 'ativa'/);
@@ -265,6 +427,7 @@ test('rotas de gestão permitem somente administrador e secretaria', () => {
         ['/profissionais/gestao', 'get'],
         ['/profissionais/opcoes', 'get'],
         ['/profissionais', 'post'],
+        ['/profissionais/cadastro-completo', 'post'],
         ['/profissionais/:id', 'put'],
         ['/profissionais/:id/status', 'patch']
     ]) {

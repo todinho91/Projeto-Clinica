@@ -62,3 +62,12 @@ test('consultas exigem período válido e evitam mesmo início para o profission
     assert.match(sql, /CHECK \(fim_em > inicio_em\)/);
     assert.match(sql, /UNIQUE KEY uk_consultas_inicio_profissional \(clinica_id, profissional_id, inicio_em\)/);
 });
+
+test('onboarding profissional adiciona tipo sem criar senha ou convite inseguro no SQL', async () => {
+    const sql = await fs.readFile(
+        path.join(migrationsDir, '004_professional_onboarding.sql'),
+        'utf8'
+    );
+    assert.match(sql, /ALTER TABLE profissionais[\s\S]*ADD COLUMN tipo_profissional VARCHAR\(80\)/);
+    assert.doesNotMatch(sql, /senha|token|convite/i);
+});

@@ -48,6 +48,11 @@ router.post(
     authorize('administrador', 'secretaria'),
     medicoController.createProfessional
 );
+router.post(
+    '/profissionais/cadastro-completo',
+    authorize('administrador', 'secretaria'),
+    medicoController.createProfessionalAccount
+);
 router.put(
     '/profissionais/:id',
     authorize('administrador', 'secretaria'),
