@@ -101,7 +101,91 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (page === 'dashboard-secretaria.html') setupAdministracaoDashboard();
     else if (page === 'profissionais.html') setupGestaoProfissionaisPage();
     else if (page === 'especialidades.html') setupGestaoEspecialidadesPage();
+    else if (page === 'equipe.html') setupEquipePage();
+    else if (page === 'aceitar-convite.html') setupAceiteConvitePage();
 });
+
+async function setupEquipePage() {
+    const clinic = requireClinicSession('equipe.html');
+    if (!clinic) return;
+    applyClinicIdentity(clinic);
+    const list = document.getElementById('equipe-lista');
+    const status = document.getElementById('equipe-status');
+    const roleSelect = document.getElementById('convite-papel');
+    if (clinic.papel === 'secretaria') [...roleSelect.options].forEach((option) => { option.hidden = option.value !== 'profissional'; });
+
+    async function action(path, method = 'POST', body) {
+        await apiRequest(path, { method, body: body ? JSON.stringify(body) : undefined });
+        await load();
+    }
+    async function load() {
+        try {
+            const members = await apiRequest('/equipe');
+            list.replaceChildren();
+            if (!members.length) {
+                const row = document.createElement('tr'); const cell = tableCell('Nenhum membro.'); cell.colSpan = 5; row.append(cell); list.append(row); return;
+            }
+            members.forEach((member) => {
+                const row = document.createElement('tr');
+                const person = document.createElement('td'); person.append(document.createTextNode(member.nome)); person.append(document.createElement('br')); const email = document.createElement('small'); email.textContent = member.email; person.append(email);
+                const roleCell = tableCell(member.papel);
+                if (clinic.papel === 'administrador' && member.status !== 'convite_pendente') {
+                    const select = document.createElement('select');
+                    select.className = 'form-select form-select-sm';
+                    ['administrador', 'secretaria', 'profissional', 'paciente'].forEach((role) => {
+                        const option = document.createElement('option');
+                        option.value = role; option.textContent = role; option.selected = role === member.papel;
+                        select.append(option);
+                    });
+                    select.addEventListener('change', () => action(
+                        `/equipe/vinculos/${member.id}/papel`, 'PATCH', { papel: select.value }
+                    ).catch((error) => { showMessage(status, error.message); load(); }));
+                    roleCell.replaceChildren(select);
+                }
+                row.append(person, roleCell, tableCell(member.status), tableCell(member.convite_status || '—'));
+                const actions = document.createElement('td'); actions.className = 'text-end';
+                const addButton = (label, css, handler) => { const button = document.createElement('button'); button.type='button'; button.className=`btn btn-sm ${css} ms-1 mb-1`; button.textContent=label; button.addEventListener('click', handler); actions.append(button); };
+                if (member.status === 'convite_pendente') {
+                    if (member.convite_id) {
+                        addButton('Reenviar', 'btn-outline-primary', () => action(`/equipe/convites/${member.convite_id}/reenviar`).catch((e) => showMessage(status,e.message)));
+                        if (member.convite_status === 'pendente') addButton('Revogar', 'btn-outline-danger', () => {
+                            if (window.confirm('Revogar este convite pendente?')) action(`/equipe/convites/${member.convite_id}/revogar`).catch((e) => showMessage(status,e.message));
+                        });
+                    } else addButton('Gerar convite', 'btn-outline-primary', () => action('/equipe/convites','POST',{ email: member.email, papel: member.papel, nome: member.nome }).catch((e) => showMessage(status,e.message)));
+                }
+                if (member.status === 'ativo') addButton('Desativar', 'btn-outline-danger', () => {
+                    if (window.confirm(`Desativar o acesso de ${member.nome}?`)) action(`/equipe/vinculos/${member.id}/status`,'PATCH',{status:'inativo'}).catch((e) => showMessage(status,e.message));
+                });
+                if (member.status === 'inativo') addButton('Reativar', 'btn-outline-success', () => action(`/equipe/vinculos/${member.id}/status`,'PATCH',{status:'ativo'}).catch((e) => showMessage(status,e.message)));
+                row.append(actions); list.append(row);
+            });
+        } catch (error) { showMessage(status, error.message); }
+    }
+    document.getElementById('convite-form').addEventListener('submit', async (event) => {
+        event.preventDefault(); const message = document.getElementById('convite-status');
+        try { const data = await apiRequest('/equipe/convites',{method:'POST',body:JSON.stringify({nome:document.getElementById('convite-nome').value,email:document.getElementById('convite-email').value,papel:roleSelect.value})}); showMessage(message,data.message,'success'); event.target.reset(); await load(); } catch(error) { showMessage(message,error.message); }
+    });
+    await load();
+}
+
+async function setupAceiteConvitePage() {
+    const token = new URLSearchParams(window.location.search).get('token');
+    const details = document.getElementById('aceite-detalhes'); const form = document.getElementById('aceite-form'); const status = document.getElementById('aceite-status');
+    if (!token) { showMessage(status, 'Link de convite inválido.'); return; }
+    let invitation;
+    try { invitation = await apiRequest(`/convites/${encodeURIComponent(token)}`, {}, null); details.textContent = `Convite para ${invitation.clinica}, papel ${invitation.papel}. Válido até ${formatDate(invitation.expira_em)}.`; document.getElementById('aceite-senha-campo').hidden = !invitation.requer_senha; form.hidden = false; } catch(error) { details.textContent = error.message; return; }
+    if (!invitation.requer_senha && !session.identityToken) {
+        form.hidden = true;
+        const link = document.createElement('a');
+        link.className = 'btn btn-primary w-100 mt-3';
+        link.textContent = 'Entrar para aceitar';
+        const returnTo = `aceitar-convite.html?token=${token}`;
+        link.href = `login.html?return=${encodeURIComponent(returnTo)}`;
+        status.replaceChildren(link);
+        return;
+    }
+    form.addEventListener('submit', async (event) => { event.preventDefault(); try { const authType = invitation.requer_senha ? null : 'identity'; const data = await apiRequest(`/convites/${encodeURIComponent(token)}/aceitar`,{method:'POST',body:JSON.stringify({senha:document.getElementById('aceite-senha').value})},authType); showMessage(status,data.message,'success'); form.hidden=true; } catch(error) { showMessage(status,error.message); } });
+}
 
 function setupRegisterPage() {
     const form = document.getElementById('register-form');
@@ -148,6 +232,11 @@ function setupLoginPage() {
             }, null);
             session.clear();
             session.saveIdentity(data);
+            const returnTo = new URLSearchParams(window.location.search).get('return');
+            if (returnTo && /^aceitar-convite\.html\?token=[A-Za-z0-9_-]+$/.test(returnTo)) {
+                window.location.assign(returnTo);
+                return;
+            }
             if (data.clinicas.length === 0) throw new Error('Nenhuma clínica ativa vinculada ao usuário.');
             window.location.assign('select-clinic.html');
         } catch (error) {
@@ -572,6 +661,14 @@ async function setupGestaoProfissionaisPage() {
                 }
             });
             actions.append(editButton, statusButton);
+            if (professional.acesso_status !== 'ativo') {
+                const invitationLink = document.createElement('a');
+                invitationLink.className = 'btn btn-sm btn-outline-primary';
+                invitationLink.href = 'equipe.html';
+                invitationLink.textContent = 'Convite';
+                invitationLink.setAttribute('aria-label', `Gerenciar convite de ${professional.nome}`);
+                actions.append(invitationLink);
+            }
             row.append(actions);
             table.append(row);
         });

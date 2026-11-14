@@ -6,22 +6,34 @@ const exameController = require('../controllers/exameController');
 const especialidadeController = require('../controllers/especialidadeController');
 const medicoController = require('../controllers/medicoController');
 const pacienteController = require('../controllers/pacienteController');
+const equipeController = require('../controllers/equipeController');
 const multerConfig = require('../config/multerConfig');
 const authenticate = require('../middleware/auth');
 const tenantContext = require('../middleware/tenant');
 const authorize = require('../middleware/authorize');
+const optionalAuth = require('../middleware/optionalAuth');
+const invitationRateLimit = require('../middleware/invitationRateLimit');
 
 const router = express.Router();
 const upload = multer(multerConfig);
 
 router.post('/auth/register', authController.register);
 router.post('/auth/login', authController.login);
+router.get('/convites/:token', invitationRateLimit, equipeController.inspectInvitation);
+router.post('/convites/:token/aceitar', invitationRateLimit, optionalAuth, equipeController.acceptInvitation);
 
 router.use(authenticate);
 router.get('/auth/clinics', authController.listClinics);
 router.post('/auth/select-clinic', authController.selectClinic);
 
 router.use(tenantContext);
+
+router.get('/equipe', authorize('administrador', 'secretaria'), equipeController.list);
+router.post('/equipe/convites', authorize('administrador', 'secretaria'), equipeController.createInvitation);
+router.post('/equipe/convites/:id/reenviar', authorize('administrador', 'secretaria'), equipeController.reissue);
+router.post('/equipe/convites/:id/revogar', authorize('administrador', 'secretaria'), equipeController.revoke);
+router.patch('/equipe/vinculos/:id/status', authorize('administrador', 'secretaria'), equipeController.updateStatus);
+router.patch('/equipe/vinculos/:id/papel', authorize('administrador'), equipeController.updateRole);
 
 router.get(
     '/profissionais',

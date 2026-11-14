@@ -1,0 +1,355 @@
+const bcrypt = require('bcryptjs');
+const pool = require('../config/database');
+const mailer = require('../services/invitation-mailer');
+const { createInvitationToken, hashInvitationToken } = require('../support/invitation-token');
+const { invitation } = require('../config/environment');
+
+const ROLES = new Set(['administrador', 'secretaria', 'profissional', 'paciente']);
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function id(value) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizedEmail(value) {
+    if (typeof value !== 'string') return null;
+    const email = value.trim().toLowerCase();
+    return email.length <= 254 && EMAIL.test(email) ? email : null;
+}
+
+function mayManage(actorRole, targetRole) {
+    return actorRole === 'administrador' || (actorRole === 'secretaria' && targetRole === 'profissional');
+}
+
+function logFailure(event, error) {
+    console.error(`[equipe] ${event}`, { code: error?.code || 'UNEXPECTED' });
+}
+
+async function invitationRateCheck(connection, clinicId, linkId, creatorId) {
+    const [recentLink] = await connection.execute(`
+        SELECT id, criado_em FROM convites_clinica
+        WHERE clinica_id = ? AND clinica_usuario_id = ?
+          AND criado_em >= DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 HOUR)
+        ORDER BY id DESC LIMIT 6 FOR UPDATE
+    `, [clinicId, linkId]);
+    if (recentLink.length >= 5) return true;
+    if (recentLink[0] && new Date(recentLink[0].criado_em).getTime() > Date.now() - 60_000) return true;
+    const [recentActor] = await connection.execute(`
+        SELECT id FROM convites_clinica
+        WHERE clinica_id = ? AND criado_por_usuario_id = ?
+          AND criado_em >= DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 HOUR)
+        LIMIT 51 FOR UPDATE
+    `, [clinicId, creatorId]);
+    return recentActor.length >= 50;
+}
+
+async function audit(connection, req, action, entity, entityId, metadata = {}) {
+    await connection.execute(`
+        INSERT INTO auditoria (clinica_id, usuario_id, acao, entidade_tipo, entidade_id, metadados)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `, [req.tenant.clinicId, req.userId, action, entity, entityId, JSON.stringify(metadata)]);
+}
+
+async function issueInvitation(connection, req, link, email, role) {
+    const token = createInvitationToken();
+    const tokenHash = hashInvitationToken(token);
+    await connection.execute(`
+        UPDATE convites_clinica
+        SET status = 'revogado', revogado_em = UTC_TIMESTAMP(6)
+        WHERE clinica_id = ? AND clinica_usuario_id = ? AND status = 'pendente'
+    `, [req.tenant.clinicId, link.id]);
+    const [result] = await connection.execute(`
+        INSERT INTO convites_clinica (
+            clinica_id, clinica_usuario_id, email_normalizado, papel,
+            token_hash, expira_em, criado_por_usuario_id
+        ) VALUES (?, ?, ?, ?, ?, DATE_ADD(UTC_TIMESTAMP(6), INTERVAL ? HOUR), ?)
+    `, [req.tenant.clinicId, link.id, email, role, tokenHash, invitation.ttlHours, req.userId]);
+    return { id: Number(result.insertId), token };
+}
+
+exports.list = async (req, res) => {
+    try {
+        const [rows] = await pool.execute(`
+            SELECT cu.id, cu.usuario_id, u.nome, u.email, cu.papel, cu.status,
+                   i.id AS convite_id, i.status AS convite_status, i.expira_em, i.criado_em
+            FROM clinica_usuarios cu
+            JOIN usuarios u ON u.id = cu.usuario_id
+            LEFT JOIN convites_clinica i ON i.id = (
+                SELECT i2.id FROM convites_clinica i2
+                WHERE i2.clinica_id = cu.clinica_id AND i2.clinica_usuario_id = cu.id
+                ORDER BY i2.id DESC LIMIT 1
+            )
+            WHERE cu.clinica_id = ?
+            ORDER BY u.nome, cu.id
+        `, [req.tenant.clinicId]);
+        return res.status(200).json(rows.map((row) => ({ ...row, id: Number(row.id) })));
+    } catch (error) {
+        logFailure('list_failed', error);
+        return res.status(500).json({ error: 'Erro ao listar equipe.' });
+    }
+};
+
+exports.createInvitation = async (req, res) => {
+    const email = normalizedEmail(req.body?.email);
+    const role = req.body?.papel;
+    if (!email || !ROLES.has(role)) return res.status(400).json({ error: 'E-mail ou papel inválido.' });
+    if (!mayManage(req.tenant.role, role)) return res.status(403).json({ error: 'Papel não autorizado.' });
+    let connection;
+    let issued;
+    let clinicName;
+    try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        const [[clinicRows], [userRows]] = await Promise.all([
+            connection.execute('SELECT nome FROM clinicas WHERE id = ? FOR UPDATE', [req.tenant.clinicId]),
+            connection.execute('SELECT id, status FROM usuarios WHERE email = ? LIMIT 1 FOR UPDATE', [email])
+        ]);
+        clinicName = clinicRows[0]?.nome;
+        if (!clinicName) throw new Error('clinic missing');
+        const existingUser = userRows[0];
+        let userId = existingUser?.id;
+        if (!userId) {
+            const name = typeof req.body?.nome === 'string' ? req.body.nome.trim() : '';
+            if (name.length < 2 || name.length > 160) {
+                await connection.rollback();
+                return res.status(400).json({ error: 'Nome é obrigatório para uma nova conta.' });
+            }
+            const hash = await bcrypt.hash(createInvitationToken(), 12);
+            const [created] = await connection.execute(`
+                INSERT INTO usuarios (nome, email, senha_hash, status)
+                VALUES (?, ?, ?, 'bloqueado')
+            `, [name, email, hash]);
+            userId = created.insertId;
+        }
+        const [existing] = await connection.execute(`
+            SELECT id, papel, status FROM clinica_usuarios
+            WHERE clinica_id = ? AND usuario_id = ? FOR UPDATE
+        `, [req.tenant.clinicId, userId]);
+        if (existingUser?.status === 'inativo'
+            || (existingUser?.status === 'bloqueado' && existing[0]?.status !== 'convite_pendente')) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'A conta existente não está disponível para convite.' });
+        }
+        if (existing[0]?.status === 'ativo') {
+            await connection.rollback();
+            return res.status(409).json({ error: 'Usuário já possui vínculo ativo nesta clínica.' });
+        }
+        if (existing[0] && existing[0].papel !== role) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'Vínculo pendente já existe com outro papel.' });
+        }
+        let linkId = existing[0]?.id;
+        if (!linkId) {
+            const [link] = await connection.execute(`
+                INSERT INTO clinica_usuarios (clinica_id, usuario_id, papel, status)
+                VALUES (?, ?, ?, 'convite_pendente')
+            `, [req.tenant.clinicId, userId, role]);
+            linkId = link.insertId;
+        }
+        if (await invitationRateCheck(connection, req.tenant.clinicId, linkId, req.userId)) {
+            await connection.rollback();
+            return res.status(429).json({ error: 'Limite de convites atingido. Tente novamente mais tarde.' });
+        }
+        issued = await issueInvitation(connection, req, { id: linkId }, email, role);
+        await audit(connection, req, 'convite_criado', 'convite_clinica', issued.id, { papel: role });
+        await connection.commit();
+    } catch (error) {
+        if (connection) await connection.rollback().catch(() => {});
+        logFailure('create_invitation_failed', error);
+        return res.status(500).json({ error: 'Erro ao criar convite.' });
+    } finally { connection?.release(); }
+
+    const delivery = await mailer.sendInvitation({ recipient: email, clinicName, role, token: issued.token });
+    return res.status(201).json({
+        id: issued.id,
+        message: delivery.delivered ? 'Convite criado e entregue.' : 'Convite criado; entrega de e-mail não confirmada.',
+        entrega: delivery.delivered ? 'confirmada' : 'nao_confirmada'
+    });
+};
+
+exports.reissue = async (req, res) => {
+    const invitationId = id(req.params.id);
+    if (!invitationId) return res.status(400).json({ error: 'Convite inválido.' });
+    let connection;
+    let issued;
+    let target;
+    try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        const [rows] = await connection.execute(`
+            SELECT i.*, c.nome AS clinica_nome
+            FROM convites_clinica i JOIN clinicas c ON c.id = i.clinica_id
+            WHERE i.id = ? AND i.clinica_id = ? FOR UPDATE
+        `, [invitationId, req.tenant.clinicId]);
+        target = rows[0];
+        if (!target) { await connection.rollback(); return res.status(404).json({ error: 'Convite não encontrado.' }); }
+        if (!mayManage(req.tenant.role, target.papel)) { await connection.rollback(); return res.status(403).json({ error: 'Papel não autorizado.' }); }
+        if (await invitationRateCheck(
+            connection, req.tenant.clinicId, target.clinica_usuario_id, req.userId
+        )) {
+            await connection.rollback();
+            return res.status(429).json({ error: 'Limite de reenvios atingido. Tente novamente mais tarde.' });
+        }
+        const [linkRows] = await connection.execute(`
+            SELECT id, status FROM clinica_usuarios
+            WHERE id = ? AND clinica_id = ? FOR UPDATE
+        `, [target.clinica_usuario_id, req.tenant.clinicId]);
+        if (linkRows[0]?.status !== 'convite_pendente') {
+            await connection.rollback();
+            return res.status(409).json({ error: 'O vínculo não está pendente.' });
+        }
+        issued = await issueInvitation(connection, req, linkRows[0], target.email_normalizado, target.papel);
+        await audit(connection, req, 'convite_reenviado', 'convite_clinica', issued.id, { anterior_id: invitationId });
+        await connection.commit();
+    } catch (error) {
+        if (connection) await connection.rollback().catch(() => {});
+        logFailure('reissue_invitation_failed', error);
+        return res.status(500).json({ error: 'Erro ao reenviar convite.' });
+    } finally { connection?.release(); }
+    const delivery = await mailer.sendInvitation({ recipient: target.email_normalizado, clinicName: target.clinica_nome, role: target.papel, token: issued.token });
+    return res.status(201).json({ id: issued.id, entrega: delivery.delivered ? 'confirmada' : 'nao_confirmada' });
+};
+
+exports.revoke = async (req, res) => {
+    const invitationId = id(req.params.id);
+    if (!invitationId) return res.status(400).json({ error: 'Convite inválido.' });
+    let connection;
+    try {
+        connection = await pool.getConnection(); await connection.beginTransaction();
+        const [rows] = await connection.execute(`SELECT id, papel, status FROM convites_clinica WHERE id = ? AND clinica_id = ? FOR UPDATE`, [invitationId, req.tenant.clinicId]);
+        const target = rows[0];
+        if (!target) { await connection.rollback(); return res.status(404).json({ error: 'Convite não encontrado.' }); }
+        if (!mayManage(req.tenant.role, target.papel)) { await connection.rollback(); return res.status(403).json({ error: 'Papel não autorizado.' }); }
+        if (target.status !== 'pendente') { await connection.rollback(); return res.status(409).json({ error: 'Convite não está pendente.' }); }
+        await connection.execute(`UPDATE convites_clinica SET status='revogado', revogado_em=UTC_TIMESTAMP(6) WHERE id=?`, [invitationId]);
+        await audit(connection, req, 'convite_revogado', 'convite_clinica', invitationId);
+        await connection.commit();
+        return res.status(200).json({ message: 'Convite revogado.' });
+    } catch (error) {
+        if (connection) await connection.rollback().catch(() => {});
+        logFailure('revoke_invitation_failed', error);
+        return res.status(500).json({ error: 'Erro ao revogar convite.' });
+    } finally { connection?.release(); }
+};
+
+exports.inspectInvitation = async (req, res) => {
+    const hash = hashInvitationToken(req.params.token);
+    if (!hash) return res.status(404).json({ error: 'Convite inválido.' });
+    try {
+        const [rows] = await pool.execute(`
+            SELECT c.nome AS clinica, i.papel, i.expira_em, i.status,
+                   CASE WHEN u.status = 'bloqueado' THEN 1 ELSE 0 END AS requer_senha
+            FROM convites_clinica i
+            JOIN clinicas c ON c.id=i.clinica_id
+            JOIN clinica_usuarios cu ON cu.id=i.clinica_usuario_id AND cu.clinica_id=i.clinica_id
+            JOIN usuarios u ON u.id=cu.usuario_id
+            WHERE i.token_hash=? LIMIT 1
+        `, [hash]);
+        const item = rows[0];
+        if (!item || item.status !== 'pendente' || new Date(item.expira_em) <= new Date()) {
+            return res.status(410).json({ error: 'Convite expirado, revogado ou já utilizado.' });
+        }
+        return res.status(200).json({ clinica: item.clinica, papel: item.papel, expira_em: item.expira_em, requer_senha: Boolean(item.requer_senha) });
+    } catch (error) {
+        logFailure('inspect_invitation_failed', error);
+        return res.status(500).json({ error: 'Erro ao consultar convite.' });
+    }
+};
+
+exports.acceptInvitation = async (req, res) => {
+    const hash = hashInvitationToken(req.params.token);
+    const password = req.body?.senha;
+    if (!hash) return res.status(404).json({ error: 'Convite inválido.' });
+    let connection;
+    try {
+        connection = await pool.getConnection(); await connection.beginTransaction();
+        const [rows] = await connection.execute(`
+            SELECT i.id, i.clinica_id, i.papel, i.status, i.expira_em,
+                   cu.id AS vinculo_id, cu.usuario_id, cu.status AS vinculo_status,
+                   u.status AS usuario_status
+            FROM convites_clinica i
+            JOIN clinica_usuarios cu ON cu.id=i.clinica_usuario_id AND cu.clinica_id=i.clinica_id
+            JOIN usuarios u ON u.id=cu.usuario_id
+            WHERE i.token_hash=? FOR UPDATE
+        `, [hash]);
+        const target = rows[0];
+        if (!target || target.status !== 'pendente' || target.vinculo_status !== 'convite_pendente' || new Date(target.expira_em) <= new Date()) {
+            await connection.rollback(); return res.status(410).json({ error: 'Convite expirado, revogado ou já utilizado.' });
+        }
+        if (target.usuario_status === 'bloqueado') {
+            if (typeof password !== 'string' || password.length < 12 || password.length > 200) {
+                await connection.rollback(); return res.status(400).json({ error: 'Crie uma senha com pelo menos 12 caracteres.' });
+            }
+            const passwordHash = await bcrypt.hash(password, 12);
+            await connection.execute(`UPDATE usuarios SET senha_hash=?, status='ativo' WHERE id=?`, [passwordHash, target.usuario_id]);
+        } else if (req.userId !== Number(target.usuario_id)) {
+            await connection.rollback(); return res.status(401).json({ error: 'Entre na conta convidada para aceitar este convite.' });
+        }
+        await connection.execute(`UPDATE clinica_usuarios SET status='ativo' WHERE id=? AND clinica_id=?`, [target.vinculo_id, target.clinica_id]);
+        await connection.execute(`UPDATE convites_clinica SET status='aceito', aceito_em=UTC_TIMESTAMP(6) WHERE id=?`, [target.id]);
+        await connection.execute(`
+            INSERT INTO auditoria (clinica_id, usuario_id, acao, entidade_tipo, entidade_id, metadados)
+            VALUES (?, ?, 'convite_aceito', 'convite_clinica', ?, ?)
+        `, [target.clinica_id, target.usuario_id, target.id, JSON.stringify({ papel: target.papel })]);
+        await connection.commit();
+        return res.status(200).json({ message: 'Convite aceito. O acesso à clínica está ativo.' });
+    } catch (error) {
+        if (connection) await connection.rollback().catch(() => {});
+        logFailure('accept_invitation_failed', error);
+        return res.status(500).json({ error: 'Erro ao aceitar convite.' });
+    } finally { connection?.release(); }
+};
+
+async function changeLink(req, res, mode) {
+    const linkId = id(req.params.id);
+    const value = mode === 'role' ? req.body?.papel : req.body?.status;
+    if (!linkId || (mode === 'role' ? !ROLES.has(value) : !['ativo', 'inativo'].includes(value))) {
+        return res.status(400).json({ error: 'Alteração inválida.' });
+    }
+    if (mode === 'role' && req.tenant.role !== 'administrador') return res.status(403).json({ error: 'Somente administradores alteram papéis.' });
+    let connection;
+    try {
+        connection = await pool.getConnection(); await connection.beginTransaction();
+        await connection.execute('SELECT id FROM clinicas WHERE id=? FOR UPDATE', [req.tenant.clinicId]);
+        const [rows] = await connection.execute(`SELECT id, usuario_id, papel, status FROM clinica_usuarios WHERE id=? AND clinica_id=? FOR UPDATE`, [linkId, req.tenant.clinicId]);
+        const target = rows[0];
+        if (!target) { await connection.rollback(); return res.status(404).json({ error: 'Vínculo não encontrado.' }); }
+        if (!mayManage(req.tenant.role, target.papel) || (mode === 'role' && !mayManage(req.tenant.role, value))) {
+            await connection.rollback(); return res.status(403).json({ error: 'Alteração não autorizada.' });
+        }
+        if (mode === 'role' && ['profissional', 'paciente'].includes(value)) {
+            const table = value === 'profissional' ? 'profissionais' : 'pacientes';
+            const [profiles] = await connection.execute(
+                `SELECT id FROM ${table} WHERE clinica_id=? AND usuario_id=? LIMIT 1 FOR UPDATE`,
+                [req.tenant.clinicId, target.usuario_id]
+            );
+            if (profiles.length === 0) {
+                await connection.rollback();
+                return res.status(409).json({ error: `O usuário não possui perfil de ${value} nesta clínica.` });
+            }
+        }
+        const removesAdmin = target.papel === 'administrador' && target.status === 'ativo'
+            && ((mode === 'role' && value !== 'administrador') || (mode === 'status' && value !== 'ativo'));
+        if (removesAdmin) {
+            const [admins] = await connection.execute(`SELECT id FROM clinica_usuarios WHERE clinica_id=? AND papel='administrador' AND status='ativo' FOR UPDATE`, [req.tenant.clinicId]);
+            if (admins.length <= 1) { await connection.rollback(); return res.status(409).json({ error: 'A clínica deve manter ao menos um administrador ativo.' }); }
+        }
+        const column = mode === 'role' ? 'papel' : 'status';
+        await connection.execute(`UPDATE clinica_usuarios SET ${column}=? WHERE id=? AND clinica_id=?`, [value, linkId, req.tenant.clinicId]);
+        if (mode === 'status' && value === 'inativo') {
+            await connection.execute(`UPDATE convites_clinica SET status='revogado', revogado_em=UTC_TIMESTAMP(6) WHERE clinica_id=? AND clinica_usuario_id=? AND status='pendente'`, [req.tenant.clinicId, linkId]);
+        }
+        await audit(connection, req, mode === 'role' ? 'vinculo_papel_alterado' : 'vinculo_status_alterado', 'clinica_usuario', linkId, { valor: value });
+        await connection.commit();
+        return res.status(200).json({ message: 'Vínculo atualizado.' });
+    } catch (error) {
+        if (connection) await connection.rollback().catch(() => {});
+        logFailure('update_link_failed', error);
+        return res.status(500).json({ error: 'Erro ao atualizar vínculo.' });
+    } finally { connection?.release(); }
+}
+
+exports.updateStatus = (req, res) => changeLink(req, res, 'status');
+exports.updateRole = (req, res) => changeLink(req, res, 'role');
+exports._private = { mayManage, normalizedEmail };

@@ -23,6 +23,7 @@ test('migrations criam todas as tabelas previstas para DB-01', async () => {
         'consultas',
         'documentos_clinicos',
         'auditoria'
+        ,'convites_clinica'
     ]) {
         assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`));
     }
@@ -44,6 +45,7 @@ test('entidades clínicas possuem chave de tenant e referências compostas', asy
         'consultas',
         'documentos_clinicos',
         'auditoria'
+        ,'convites_clinica'
     ]) {
         const block = sql.match(new RegExp(
             `CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\) ENGINE=InnoDB`
@@ -55,6 +57,14 @@ test('entidades clínicas possuem chave de tenant e referências compostas', asy
     assert.match(sql, /FOREIGN KEY \(clinica_id, paciente_id\)[\s\S]*REFERENCES pacientes \(clinica_id, id\)/);
     assert.match(sql, /FOREIGN KEY \(clinica_id, profissional_id\)[\s\S]*REFERENCES profissionais \(clinica_id, id\)/);
     assert.match(sql, /FOREIGN KEY \(clinica_id, especialidade_id\)[\s\S]*REFERENCES especialidades \(clinica_id, id\)/);
+});
+
+test('convites persistem somente hash, expiram e referenciam vínculo da mesma clínica', async () => {
+    const sql = await fs.readFile(path.join(migrationsDir, '005_team_invitations.sql'), 'utf8');
+    assert.match(sql, /token_hash CHAR\(64\)/);
+    assert.doesNotMatch(sql, /token_plain|token_texto|senha/);
+    assert.match(sql, /expira_em DATETIME\(6\) NOT NULL/);
+    assert.match(sql, /FOREIGN KEY \(clinica_id, clinica_usuario_id\)[\s\S]*REFERENCES clinica_usuarios \(clinica_id, id\)/);
 });
 
 test('consultas exigem período válido e evitam mesmo início para o profissional', async () => {

@@ -29,21 +29,21 @@ Dentro de uma única transação, o backend:
 O `clinica_id` eventualmente enviado pelo navegador é ignorado. Administrador e
 secretaria podem usar a rota; paciente e profissional recebem `403`.
 
-## Credencial e dependência da issue #13
+## Credencial e ativação pela issue #13
 
-Não existe ainda fluxo de convite completo no Vitalis. Para não criar ou enviar
-senha temporária, o backend gera uma credencial aleatória de alta entropia,
+Para não criar ou enviar senha temporária, o backend gera uma credencial aleatória de alta entropia,
 armazena somente o hash bcrypt e descarta o valor. A identidade permanece
 bloqueada e o vínculo fica como `convite_pendente`.
 
-Nenhum token de convite é criado, devolvido ao navegador ou enviado por e-mail.
-O profissional somente poderá configurar senha e entrar quando a issue #13
-implementar convite de uso único, expiração, revogação e ativação atômica da
-identidade e do vínculo.
+O convite é gerado separadamente em **Equipe e acessos**, após o pré-cadastro.
+A implementação da issue #13 cria um token de uso único, persiste apenas seu
+hash SHA-256 e ativa identidade e vínculo de forma atômica quando o titular
+define a própria senha. Consulte `docs/M3_CONVITES_EQUIPE.md`.
 
-Contas com e-mail já existente são recusadas. Vincular uma identidade existente
-exigirá confirmação pelo titular no futuro fluxo de convite; administradores e
-secretarias não podem se apropriar dessa conta pelo cadastro atual.
+Contas com e-mail já existente continuam recusadas neste formulário. O fluxo de
+equipe permite convidá-las, mas exige autenticação do próprio titular e preserva
+a senha e os demais vínculos; administradores e secretarias não podem se
+apropriar da conta.
 
 ## Migration preparada
 

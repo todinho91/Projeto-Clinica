@@ -146,6 +146,19 @@ test('rotas de upload recusam paciente antes de processar o arquivo', () => {
     }
 });
 
+test('rotas de equipe recusam profissional e paciente', () => {
+    for (const path of ['/equipe', '/equipe/convites']) {
+        const route = router.stack.find((layer) => layer.route?.path === path);
+        assert.ok(route);
+        const authorizeTeam = route.route.stack[0].handle;
+        for (const role of ['profissional', 'paciente']) {
+            const res = response(); let called = false;
+            authorizeTeam({ tenant: { role } }, res, () => { called = true; });
+            assert.equal(res.statusCode, 403); assert.equal(called, false);
+        }
+    }
+});
+
 test('agenda administrativa usa exclusivamente a clínica ativa', async (t) => {
     let params;
     t.mock.method(pool, 'execute', async (sql, values) => {
