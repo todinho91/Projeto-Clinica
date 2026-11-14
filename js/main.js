@@ -421,8 +421,10 @@ async function setupGestaoProfissionaisPage() {
     const formStatus = document.getElementById('profissional-form-status');
     const listStatus = document.getElementById('profissionais-status');
     const table = document.getElementById('profissionais-lista');
-    const userField = document.getElementById('profissional-usuario-field');
-    const userSelect = document.getElementById('profissional-usuario');
+    const identityFields = document.getElementById('profissional-identidade-fields');
+    const fullNameInput = document.getElementById('profissional-nome-completo');
+    const emailInput = document.getElementById('profissional-email');
+    const statusField = document.getElementById('profissional-status-field');
     const specialtyContainer = document.getElementById('profissional-especialidades');
     const formTitle = document.getElementById('profissional-form-title');
     const cancelButton = document.getElementById('cancelar-edicao');
@@ -436,22 +438,6 @@ async function setupGestaoProfissionaisPage() {
     }
 
     function renderOptions() {
-        userSelect.replaceChildren();
-        const placeholder = document.createElement('option');
-        placeholder.value = '';
-        placeholder.textContent = options.usuarios.length
-            ? 'Selecione um usuário com vínculo profissional'
-            : 'Nenhum vínculo profissional disponível';
-        placeholder.disabled = true;
-        placeholder.selected = true;
-        userSelect.append(placeholder);
-        options.usuarios.forEach((user) => {
-            const option = document.createElement('option');
-            option.value = user.id;
-            option.textContent = `${user.nome} — ${user.email}`;
-            userSelect.append(option);
-        });
-
         specialtyContainer.replaceChildren();
         if (options.especialidades.length === 0) {
             const message = document.createElement('p');
@@ -481,8 +467,10 @@ async function setupGestaoProfissionaisPage() {
         editingId = null;
         form.reset();
         formTitle.textContent = 'Cadastrar profissional';
-        userField.hidden = false;
-        userSelect.required = true;
+        identityFields.hidden = false;
+        fullNameInput.required = true;
+        emailInput.required = true;
+        statusField.hidden = false;
         cancelButton.hidden = true;
         specialtyContainer.querySelectorAll('input').forEach((input) => { input.checked = false; });
         showMessage(formStatus, '', 'muted');
@@ -491,10 +479,13 @@ async function setupGestaoProfissionaisPage() {
     function startEdit(professional) {
         editingId = professional.id;
         formTitle.textContent = 'Editar profissional';
-        userField.hidden = true;
-        userSelect.required = false;
+        identityFields.hidden = true;
+        fullNameInput.required = false;
+        emailInput.required = false;
+        statusField.hidden = true;
         cancelButton.hidden = false;
         document.getElementById('profissional-nome').value = professional.nome;
+        document.getElementById('profissional-tipo').value = professional.tipo_profissional ?? 'Profissional de saúde';
         document.getElementById('profissional-conselho-tipo').value = professional.conselho_tipo ?? '';
         document.getElementById('profissional-conselho-numero').value = professional.conselho_numero ?? '';
         const specialtyIds = new Set(professional.especialidades.map((item) => item.id));
@@ -516,7 +507,7 @@ async function setupGestaoProfissionaisPage() {
         if (professionals.length === 0) {
             const row = document.createElement('tr');
             const cell = tableCell('Nenhum profissional cadastrado nesta clínica.');
-            cell.colSpan = 5;
+            cell.colSpan = 7;
             cell.className = 'text-center py-4 text-muted';
             row.append(cell);
             table.append(row);
@@ -532,6 +523,7 @@ async function setupGestaoProfissionaisPage() {
             email.textContent = professional.email;
             identity.append(name, email);
             row.append(identity);
+            row.append(tableCell(professional.tipo_profissional ?? 'Profissional de saúde'));
             row.append(tableCell(
                 professional.conselho_tipo && professional.conselho_numero
                     ? `${professional.conselho_tipo} ${professional.conselho_numero}`
@@ -545,6 +537,12 @@ async function setupGestaoProfissionaisPage() {
             const statusCell = document.createElement('td');
             statusCell.append(statusBadge(professional.status));
             row.append(statusCell);
+            const accessCell = document.createElement('td');
+            accessCell.append(statusBadge(professional.acesso_status === 'ativo' ? 'ativo' : 'inativo'));
+            accessCell.querySelector('.vitalis-status').textContent = professional.acesso_status === 'ativo'
+                ? 'Liberado'
+                : 'Convite pendente';
+            row.append(accessCell);
 
             const actions = document.createElement('td');
             actions.className = 'vitalis-table-actions';
@@ -594,16 +592,23 @@ async function setupGestaoProfissionaisPage() {
         event.preventDefault();
         const payload = {
             nome_exibicao: document.getElementById('profissional-nome').value,
+            tipo_profissional: document.getElementById('profissional-tipo').value,
             conselho_tipo: document.getElementById('profissional-conselho-tipo').value,
             conselho_numero: document.getElementById('profissional-conselho-numero').value,
             especialidade_ids: selectedSpecialties()
         };
-        if (!editingId) payload.usuario_id = Number(userSelect.value);
+        if (!editingId) {
+            payload.nome_completo = fullNameInput.value;
+            payload.email = emailInput.value;
+            payload.status = document.getElementById('profissional-status').value;
+        }
         try {
-            const result = await apiRequest(editingId ? `/profissionais/${editingId}` : '/profissionais', {
+            const result = await apiRequest(
+                editingId ? `/profissionais/${editingId}` : '/profissionais/cadastro-completo', {
                 method: editingId ? 'PUT' : 'POST',
                 body: JSON.stringify(payload)
-            });
+                }
+            );
             await loadData();
             resetForm();
             showMessage(formStatus, result.message, 'success');
