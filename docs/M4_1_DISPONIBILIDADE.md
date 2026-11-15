@@ -56,7 +56,7 @@ export TEST_DB_DATABASE=vitalis_disponibilidade_m4_test
 npm run test:availability:integration
 ```
 
-O teste opt-in confirma o banco selecionado antes de limpar o schema descartável. Ele aplica
+O teste opt-in confirma `SELECT DATABASE()` e `SELECT VERSION()` (MySQL 8) antes de limpar o schema descartável. Ele aplica
 as migrations 001–007, valida isolamento entre duas clínicas sintéticas, conversão de fuso,
 concorrência de bloqueios e rollback por restrição SQL real. Nenhuma credencial deve ser
 registrada em arquivo ou commit.

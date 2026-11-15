@@ -49,12 +49,26 @@ function assertAvailabilityDisposableDatabaseName(databaseName) {
     return databaseName;
 }
 
+async function confirmAvailabilityTestEnvironment(connection, databaseName) {
+    assertAvailabilityDisposableDatabaseName(databaseName);
+    const [[selected]] = await connection.query('SELECT DATABASE() AS database_name');
+    if (selected?.database_name !== databaseName) {
+        throw new Error('Conexão não aponta para o banco descartável autorizado.');
+    }
+    const [[server]] = await connection.query('SELECT VERSION() AS version');
+    if (!/^8\./.test(server?.version || '')) {
+        throw new Error('A integração de disponibilidade exige MySQL 8.');
+    }
+    return { database: selected.database_name, version: server.version };
+}
+
 module.exports = {
     assertDisposableDatabaseName,
     assertSpecialtyDisposableDatabaseName,
     assertTeamDisposableDatabaseName,
     assertProvisioningDisposableDatabaseName,
     assertAvailabilityDisposableDatabaseName,
+    confirmAvailabilityTestEnvironment,
     TEST_DATABASE_PATTERN,
     SPECIALTY_TEST_DATABASE_PATTERN,
     TEAM_TEST_DATABASE_PATTERN,

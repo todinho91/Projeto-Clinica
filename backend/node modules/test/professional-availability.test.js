@@ -1,5 +1,7 @@
 const assert = require('node:assert/strict');
 const { randomBytes } = require('node:crypto');
+const { readFileSync } = require('node:fs');
+const path = require('node:path');
 const { test } = require('node:test');
 
 Object.assign(process.env, {
@@ -11,7 +13,10 @@ const pool = require('../config/database');
 const controller = require('../controllers/disponibilidadeController');
 const router = require('../routes');
 const { utcToLocal, zonedLocalToUtc } = require('../support/clinic-time');
-const { assertAvailabilityDisposableDatabaseName } = require('../support/mysql-test-safety');
+const {
+    assertAvailabilityDisposableDatabaseName,
+    confirmAvailabilityTestEnvironment
+} = require('../support/mysql-test-safety');
 
 function response() {
     return {
@@ -39,6 +44,41 @@ test('integração destrutiva aceita somente banco exclusivo de disponibilidade'
     ]) {
         assert.throws(() => assertAvailabilityDisposableDatabaseName(unsafe), /Operação recusada/);
     }
+});
+
+test('integração confirma banco selecionado e MySQL 8 antes da limpeza', async () => {
+    const queries = [];
+    const environment = await confirmAvailabilityTestEnvironment({
+        async query(sql) {
+            queries.push(sql);
+            if (/DATABASE/.test(sql)) return [[{ database_name: 'vitalis_disponibilidade_m4_test' }]];
+            return [[{ version: '8.0.46-0ubuntu0.24.04.2' }]];
+        }
+    }, 'vitalis_disponibilidade_m4_test');
+    assert.deepEqual(queries, [
+        'SELECT DATABASE() AS database_name',
+        'SELECT VERSION() AS version'
+    ]);
+    assert.equal(environment.database, 'vitalis_disponibilidade_m4_test');
+    assert.match(environment.version, /^8\./);
+    await assert.rejects(
+        confirmAvailabilityTestEnvironment({
+            async query(sql) {
+                if (/DATABASE/.test(sql)) return [[{ database_name: 'vitalis_disponibilidade_m4_test' }]];
+                return [[{ version: '5.7.44' }]];
+            }
+        }, 'vitalis_disponibilidade_m4_test'),
+        /exige MySQL 8/
+    );
+});
+
+test('rollback MySQL usa restrição nova sem invalidar auditoria ou intervalos existentes', () => {
+    const integration = readFileSync(
+        path.join(__dirname, 'professional-availability.integration.test.js'), 'utf8'
+    );
+    assert.match(integration, /ALTER TABLE disponibilidades_profissional[\s\S]*ADD CONSTRAINT chk_disponibilidade_rollback_teste/);
+    assert.match(integration, /dia_semana = 2[\s\S]*inicio_local = '10:00:00'[\s\S]*fim_local = '16:00:00'/);
+    assert.doesNotMatch(integration, /ALTER TABLE auditoria ADD CONSTRAINT chk_disponibilidade_rollback_teste/);
 });
 
 test('grade semanal aceita períodos adjacentes e rejeita qualquer sobreposição', () => {
@@ -175,6 +215,48 @@ test('bloqueio válido converte o fuso, usa tenant do token e registra auditoria
     ]);
     assert.equal(executions.some((item) => item.params?.includes(999)), false);
     assert.ok(executions.some((item) => /INSERT INTO auditoria/.test(item.sql)));
+});
+
+test('consulta exige identidade, vínculo e perfil ativos da mesma clínica', async (t) => {
+    const executions = [];
+    t.mock.method(pool, 'execute', async (sql, params) => {
+        executions.push({ sql, params });
+        if (/SELECT p\.id, p\.nome_exibicao/.test(sql)) {
+            assert.match(sql, /JOIN clinica_usuarios cu/);
+            assert.match(sql, /cu\.papel = 'profissional'/);
+            assert.match(sql, /cu\.status = 'ativo'/);
+            assert.match(sql, /JOIN usuarios u ON u\.id = p\.usuario_id AND u\.status = 'ativo'/);
+            assert.match(sql, /p\.clinica_id = \?/);
+            assert.match(sql, /p\.status = 'ativo'/);
+            assert.deepEqual(params, [11, 8, 'profissional', 70]);
+            return [[{ id: 8, nome_exibicao: 'Profissional' }]];
+        }
+        if (/FROM disponibilidades_profissional/.test(sql)) return [[]];
+        if (/FROM bloqueios_profissional/.test(sql)) return [[]];
+        if (/SELECT timezone FROM clinicas/.test(sql)) return [[{ timezone: 'America/Sao_Paulo' }]];
+        throw new Error('SQL inesperado');
+    });
+    const res = response();
+    await controller.getProfessionalAvailability({
+        params: { professionalId: '8' }, userId: 70,
+        tenant: { clinicId: 11, role: 'profissional' }
+    }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(executions.length, 4);
+});
+
+test('consulta inativa encerra antes de ler horários ou bloqueios', async (t) => {
+    const execute = t.mock.method(pool, 'execute', async (sql) => {
+        assert.match(sql, /JOIN clinica_usuarios cu/);
+        return [[]];
+    });
+    const res = response();
+    await controller.getProfessionalAvailability({
+        params: { professionalId: '8' }, userId: 4,
+        tenant: { clinicId: 11, role: 'administrador' }
+    }, res);
+    assert.equal(res.statusCode, 404);
+    assert.equal(execute.mock.callCount(), 1);
 });
 
 test('profissional só alcança o próprio perfil e paciente não acessa as rotas', () => {

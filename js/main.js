@@ -321,12 +321,52 @@ async function setupAvailabilityPage() {
     const pageStatus = document.getElementById('disponibilidade-status');
     const content = document.getElementById('disponibilidade-conteudo');
     const intervalList = document.getElementById('disponibilidade-intervalos');
+    const weeklyForm = document.getElementById('disponibilidade-semanal-form');
+    const blockForm = document.getElementById('bloqueio-form');
+    const addIntervalButton = document.getElementById('adicionar-intervalo');
     const weeklyStatus = document.getElementById('disponibilidade-semanal-status');
     const blockStatus = document.getElementById('bloqueio-form-status');
     const blockList = document.getElementById('bloqueios-lista');
     const dayNames = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
     const typeLabels = { atendimento: 'Atendimento', descanso: 'Descanso' };
     const blockLabels = { ferias: 'Férias', feriado: 'Feriado', indisponibilidade: 'Indisponibilidade' };
+    const loadGate = VitalisCore.createLatestRequestGate();
+    let loadedProfessionalId = null;
+    let mutationInProgress = false;
+
+    function setProtectedControlsDisabled(disabled) {
+        content.setAttribute('aria-busy', String(disabled));
+        content.querySelectorAll('button, input, select').forEach((control) => {
+            control.disabled = disabled;
+        });
+    }
+
+    function mutationTarget(expectedId = null) {
+        const professionalId = VitalisCore.matchingSelectionId(
+            loadedProfessionalId, professionalSelect.value
+        );
+        if (!professionalId || (expectedId && professionalId !== expectedId) || mutationInProgress) {
+            showMessage(pageStatus, 'Aguarde o carregamento do profissional selecionado antes de alterar horários.');
+            return null;
+        }
+        return professionalId;
+    }
+
+    async function runMutation(expectedId, operation) {
+        const professionalId = mutationTarget(expectedId);
+        if (!professionalId) return false;
+        mutationInProgress = true;
+        professionalSelect.disabled = true;
+        setProtectedControlsDisabled(true);
+        try {
+            await operation(professionalId);
+            return true;
+        } finally {
+            mutationInProgress = false;
+            professionalSelect.disabled = clinic.papel === 'profissional';
+            if (loadedProfessionalId) setProtectedControlsDisabled(false);
+        }
+    }
 
     function option(value, label, selected = false) {
         const element = document.createElement('option');
@@ -386,7 +426,7 @@ async function setupAvailabilityPage() {
         return `${day}/${month}/${year} ${time}`;
     }
 
-    function renderBlocks(blocks) {
+    function renderBlocks(blocks, renderedProfessionalId) {
         blockList.replaceChildren();
         if (!blocks.length) {
             const empty = document.createElement('p');
@@ -421,10 +461,11 @@ async function setupAvailabilityPage() {
                 cancel.addEventListener('click', async () => {
                     if (!window.confirm('Cancelar este bloqueio e preservar seu histórico?')) return;
                     try {
-                        const professionalId = Number(professionalSelect.value);
-                        const data = await apiRequest(`/disponibilidade/profissionais/${professionalId}/bloqueios/${block.id}/cancelar`, { method: 'PATCH' });
-                        showMessage(blockStatus, data.message, 'success');
-                        await loadAvailability();
+                        await runMutation(renderedProfessionalId, async (professionalId) => {
+                            const data = await apiRequest(`/disponibilidade/profissionais/${professionalId}/bloqueios/${block.id}/cancelar`, { method: 'PATCH' });
+                            showMessage(blockStatus, data.message, 'success');
+                            await loadAvailability();
+                        });
                     } catch (error) {
                         showMessage(blockStatus, error.message);
                     }
@@ -438,54 +479,69 @@ async function setupAvailabilityPage() {
     async function loadAvailability() {
         const professionalId = Number(professionalSelect.value);
         if (!professionalId) {
+            loadGate.invalidate();
+            loadedProfessionalId = null;
             content.hidden = true;
             return;
         }
+        const ticket = loadGate.begin(professionalId);
+        loadedProfessionalId = null;
+        content.hidden = true;
+        setProtectedControlsDisabled(true);
+        showMessage(pageStatus, 'Carregando disponibilidade...', 'secondary');
         try {
             const data = await apiRequest(`/disponibilidade/profissionais/${professionalId}`);
+            if (!loadGate.isCurrent(ticket, professionalSelect.value)) return;
             intervalList.replaceChildren();
             data.intervalos.forEach(addInterval);
-            renderBlocks(data.bloqueios);
+            renderBlocks(data.bloqueios, professionalId);
             timezone.textContent = data.timezone;
+            loadedProfessionalId = professionalId;
+            setProtectedControlsDisabled(mutationInProgress);
             content.hidden = false;
             pageStatus.replaceChildren();
         } catch (error) {
+            if (!loadGate.isCurrent(ticket, professionalSelect.value)) return;
+            loadedProfessionalId = null;
             content.hidden = true;
             showMessage(pageStatus, error.message);
         }
     }
 
-    document.getElementById('adicionar-intervalo').addEventListener('click', () => addInterval());
+    addIntervalButton.addEventListener('click', () => addInterval());
     professionalSelect.addEventListener('change', loadAvailability);
-    document.getElementById('disponibilidade-semanal-form').addEventListener('submit', async (event) => {
+    weeklyForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         try {
-            const professionalId = Number(professionalSelect.value);
-            const data = await apiRequest(`/disponibilidade/profissionais/${professionalId}/semana`, {
-                method: 'PUT', body: JSON.stringify({ intervalos: intervalPayload() })
+            const payload = intervalPayload();
+            await runMutation(null, async (professionalId) => {
+                const data = await apiRequest(`/disponibilidade/profissionais/${professionalId}/semana`, {
+                    method: 'PUT', body: JSON.stringify({ intervalos: payload })
+                });
+                showMessage(weeklyStatus, data.message, 'success');
+                await loadAvailability();
             });
-            showMessage(weeklyStatus, data.message, 'success');
-            await loadAvailability();
         } catch (error) {
             showMessage(weeklyStatus, error.message);
         }
     });
-    document.getElementById('bloqueio-form').addEventListener('submit', async (event) => {
+    blockForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         try {
-            const professionalId = Number(professionalSelect.value);
-            const data = await apiRequest(`/disponibilidade/profissionais/${professionalId}/bloqueios`, {
-                method: 'POST',
-                body: JSON.stringify({
-                    tipo: document.getElementById('bloqueio-tipo').value,
-                    inicio_local: document.getElementById('bloqueio-inicio').value,
-                    fim_local: document.getElementById('bloqueio-fim').value,
-                    motivo: document.getElementById('bloqueio-motivo').value
-                })
+            const payload = {
+                tipo: document.getElementById('bloqueio-tipo').value,
+                inicio_local: document.getElementById('bloqueio-inicio').value,
+                fim_local: document.getElementById('bloqueio-fim').value,
+                motivo: document.getElementById('bloqueio-motivo').value
+            };
+            await runMutation(null, async (professionalId) => {
+                const data = await apiRequest(`/disponibilidade/profissionais/${professionalId}/bloqueios`, {
+                    method: 'POST', body: JSON.stringify(payload)
+                });
+                showMessage(blockStatus, data.message, 'success');
+                blockForm.reset();
+                await loadAvailability();
             });
-            showMessage(blockStatus, data.message, 'success');
-            event.currentTarget.reset();
-            await loadAvailability();
         } catch (error) {
             showMessage(blockStatus, error.message);
         }

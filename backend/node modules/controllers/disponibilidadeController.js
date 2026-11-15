@@ -72,8 +72,8 @@ async function clinicTimeZone(executor, clinicId) {
     return rows[0]?.timezone ?? null;
 }
 
-async function lockAccessibleProfessional(connection, req, professionalId) {
-    const [rows] = await connection.execute(`
+async function accessibleProfessional(executor, req, professionalId, lock = false) {
+    const [rows] = await executor.execute(`
         SELECT p.id, p.nome_exibicao
         FROM profissionais p
         JOIN clinica_usuarios cu
@@ -84,7 +84,7 @@ async function lockAccessibleProfessional(connection, req, professionalId) {
         JOIN usuarios u ON u.id = p.usuario_id AND u.status = 'ativo'
         WHERE p.clinica_id = ? AND p.id = ? AND p.status = 'ativo'
           AND (? <> 'profissional' OR p.usuario_id = ?)
-        FOR UPDATE
+        ${lock ? 'FOR UPDATE' : ''}
     `, [req.tenant.clinicId, professionalId, req.tenant.role, req.userId]);
     return rows[0] ?? null;
 }
@@ -124,14 +124,13 @@ exports.context = async (req, res) => {
 exports.getProfessionalAvailability = async (req, res) => {
     const professionalId = positiveId(req.params.professionalId);
     if (!professionalId) return res.status(400).json({ error: 'Profissional inválido.' });
-    const { clinicId, role } = req.tenant;
+    const { clinicId } = req.tenant;
     try {
-        const [[professionals], [intervals], [blocks], timeZone] = await Promise.all([
-            pool.execute(`
-                SELECT id FROM profissionais
-                WHERE clinica_id = ? AND id = ? AND status = 'ativo'
-                  AND (? <> 'profissional' OR usuario_id = ?)
-            `, [clinicId, professionalId, role, req.userId]),
+        const professional = await accessibleProfessional(pool, req, professionalId);
+        if (!professional) {
+            return res.status(404).json({ error: 'Profissional não encontrado na clínica ativa.' });
+        }
+        const [[intervals], [blocks], timeZone] = await Promise.all([
             pool.execute(`
                 SELECT id, dia_semana, tipo,
                        TIME_FORMAT(inicio_local, '%H:%i') AS inicio,
@@ -148,7 +147,6 @@ exports.getProfessionalAvailability = async (req, res) => {
             `, [clinicId, professionalId]),
             clinicTimeZone(pool, clinicId)
         ]);
-        if (!professionals[0]) return res.status(404).json({ error: 'Profissional não encontrado na clínica ativa.' });
         if (!timeZone) return res.status(409).json({ error: 'Fuso horário da clínica não disponível.' });
         return res.status(200).json({
             timezone: timeZone,
@@ -176,7 +174,7 @@ exports.replaceWeeklyAvailability = async (req, res) => {
     try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
-        const professional = await lockAccessibleProfessional(connection, req, professionalId);
+        const professional = await accessibleProfessional(connection, req, professionalId, true);
         if (!professional) {
             await connection.rollback();
             return res.status(404).json({ error: 'Profissional não encontrado na clínica ativa.' });
@@ -218,7 +216,7 @@ exports.createBlock = async (req, res) => {
     try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
-        const professional = await lockAccessibleProfessional(connection, req, professionalId);
+        const professional = await accessibleProfessional(connection, req, professionalId, true);
         if (!professional) {
             await connection.rollback();
             return res.status(404).json({ error: 'Profissional não encontrado na clínica ativa.' });
@@ -271,7 +269,7 @@ exports.cancelBlock = async (req, res) => {
     try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
-        const professional = await lockAccessibleProfessional(connection, req, professionalId);
+        const professional = await accessibleProfessional(connection, req, professionalId, true);
         if (!professional) {
             await connection.rollback();
             return res.status(404).json({ error: 'Profissional não encontrado na clínica ativa.' });

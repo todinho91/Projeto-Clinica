@@ -5,7 +5,10 @@ const { test } = require('node:test');
 const mysql = require('mysql2/promise');
 const { loadDatabaseConfig } = require('../scripts/db/config');
 const { runMigrations } = require('../scripts/db/migrator');
-const { assertAvailabilityDisposableDatabaseName } = require('../support/mysql-test-safety');
+const {
+    assertAvailabilityDisposableDatabaseName,
+    confirmAvailabilityTestEnvironment
+} = require('../support/mysql-test-safety');
 
 const enabled = process.env.AVAILABILITY_INTEGRATION_TEST === '1';
 const migrationsDir = path.join(__dirname, '..', '..', 'database', 'migrations');
@@ -15,9 +18,7 @@ function response() {
 }
 
 async function resetSchema(connection, database) {
-    assertAvailabilityDisposableDatabaseName(database);
-    const [[selected]] = await connection.query('SELECT DATABASE() AS database_name');
-    if (selected.database_name !== database) throw new Error('Conexão não aponta para o banco descartável autorizado.');
+    await confirmAvailabilityTestEnvironment(connection, database);
     const tables = [
         'auditoria_plataforma', 'convites_clinica', 'bloqueios_profissional',
         'disponibilidades_profissional', 'auditoria', 'documentos_clinicos', 'consultas',
@@ -126,8 +127,13 @@ test('MySQL 8 valida disponibilidade, fuso, concorrência, rollback e isolamento
         assert.equal(new Date(stored.fim_em).toISOString(), '2032-05-10T15:00:00.000Z');
 
         await setup.query(`
-            ALTER TABLE auditoria ADD CONSTRAINT chk_disponibilidade_rollback_teste
-            CHECK (acao <> 'disponibilidade_semanal_atualizada')
+            ALTER TABLE disponibilidades_profissional
+            ADD CONSTRAINT chk_disponibilidade_rollback_teste
+            CHECK (NOT (
+                dia_semana = 2
+                AND inicio_local = '10:00:00'
+                AND fim_local = '16:00:00'
+            ))
         `);
         const rollback = response();
         try {
@@ -145,7 +151,10 @@ test('MySQL 8 valida disponibilidade, fuso, concorrência, rollback e isolamento
             `, [northId, northProfessionalId]);
             assert.equal(Number(preserved.total), 3);
         } finally {
-            await setup.query('ALTER TABLE auditoria DROP CHECK chk_disponibilidade_rollback_teste');
+            await setup.query(`
+                ALTER TABLE disponibilidades_profissional
+                DROP CHECK chk_disponibilidade_rollback_teste
+            `);
         }
     } finally {
         await pool?.end();
