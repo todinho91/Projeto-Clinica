@@ -112,12 +112,47 @@ async function setupEquipePage() {
     const list = document.getElementById('equipe-lista');
     const status = document.getElementById('equipe-status');
     const roleSelect = document.getElementById('convite-papel');
-    if (clinic.papel === 'secretaria') [...roleSelect.options].forEach((option) => { option.hidden = option.value !== 'profissional'; });
-
-    async function action(path, method = 'POST', body) {
-        await apiRequest(path, { method, body: body ? JSON.stringify(body) : undefined });
-        await load();
+    const roleLabels = {
+        administrador: 'Administrador', secretaria: 'Secretaria',
+        profissional: 'Profissional', paciente: 'Paciente'
+    };
+    const linkLabels = {
+        convite_pendente: ['Convite pendente', 'vitalis-team-badge-pending'],
+        ativo: ['Acesso ativo', 'vitalis-team-badge-active'],
+        inativo: ['Acesso inativo', 'vitalis-team-badge-inactive']
+    };
+    const invitationLabels = {
+        pendente: ['Pendente', 'vitalis-team-badge-pending'],
+        aceito: ['Aceito', 'vitalis-team-badge-active'],
+        revogado: ['Revogado', 'vitalis-team-badge-inactive']
+    };
+    if (clinic.papel === 'secretaria') {
+        [...roleSelect.options].forEach((option) => {
+            if (option.value !== 'profissional') option.remove();
+        });
     }
+
+    function badge([label, css]) {
+        const element = document.createElement('span');
+        element.className = `vitalis-team-badge ${css}`;
+        element.textContent = label;
+        return element;
+    }
+
+    function setCellLabel(cell, label) {
+        cell.dataset.label = label;
+        return cell;
+    }
+
+    async function action(path, method = 'POST', body, successMessage) {
+        const data = await apiRequest(path, {
+            method,
+            body: body ? JSON.stringify(body) : undefined
+        });
+        await load();
+        showMessage(status, successMessage || data.message || 'Alteração realizada com sucesso.', 'success');
+    }
+
     async function load() {
         try {
             const members = await apiRequest('/equipe');
@@ -127,19 +162,37 @@ async function setupEquipePage() {
             }
             members.forEach((member) => {
                 const row = document.createElement('tr');
-                const person = document.createElement('td'); person.append(document.createTextNode(member.nome)); person.append(document.createElement('br')); const email = document.createElement('small'); email.textContent = member.email; person.append(email);
-                const roleCell = tableCell(member.papel);
+                const person = setCellLabel(document.createElement('td'), 'Pessoa');
+                person.className = 'vitalis-team-person';
+                const personName = document.createElement('strong');
+                personName.className = 'vitalis-team-person-name';
+                personName.textContent = member.nome;
+                const email = document.createElement('small');
+                email.className = 'vitalis-team-email';
+                email.textContent = member.email;
+                person.append(personName, email);
+
+                const roleCell = setCellLabel(tableCell(roleLabels[member.papel] || member.papel), 'Papel');
                 if (clinic.papel === 'administrador' && member.status !== 'convite_pendente') {
                     const select = document.createElement('select');
-                    select.className = 'form-select form-select-sm';
+                    select.className = 'form-select form-select-sm vitalis-team-role-select';
+                    select.setAttribute('aria-label', `Papel de ${member.nome}`);
                     ['administrador', 'secretaria', 'profissional', 'paciente'].forEach((role) => {
                         const option = document.createElement('option');
-                        option.value = role; option.textContent = role; option.selected = role === member.papel;
+                        option.value = role; option.textContent = roleLabels[role]; option.selected = role === member.papel;
                         select.append(option);
                     });
-                    select.addEventListener('change', () => action(
-                        `/equipe/vinculos/${member.id}/papel`, 'PATCH', { papel: select.value }
-                    ).catch((error) => { showMessage(status, error.message); load(); }));
+                    select.addEventListener('change', () => {
+                        const nextRole = select.value;
+                        if (!window.confirm(`Alterar o papel de ${member.nome} para ${roleLabels[nextRole]}?`)) {
+                            select.value = member.papel;
+                            return;
+                        }
+                        action(
+                            `/equipe/vinculos/${member.id}/papel`, 'PATCH', { papel: nextRole },
+                            `Papel de ${member.nome} atualizado.`
+                        ).catch((error) => { showMessage(status, error.message); load(); });
+                    });
                     roleCell.replaceChildren(select);
                 }
                 const deliveryLabel = {
@@ -149,24 +202,85 @@ async function setupEquipePage() {
                     delivered: 'Entrega confirmada',
                     failed: 'Falha no envio'
                 }[member.envio_status];
-                const invitationState = member.convite_status
-                    ? `${member.convite_status}${deliveryLabel ? ` · ${deliveryLabel}` : ''}`
-                    : '—';
-                row.append(person, roleCell, tableCell(member.status), tableCell(invitationState));
-                const actions = document.createElement('td'); actions.className = 'text-end';
-                const addButton = (label, css, handler) => { const button = document.createElement('button'); button.type='button'; button.className=`btn btn-sm ${css} ms-1 mb-1`; button.textContent=label; button.addEventListener('click', handler); actions.append(button); };
-                if (member.status === 'convite_pendente') {
-                    if (member.convite_id && member.convite_status === 'pendente') {
-                        addButton('Reenviar', 'btn-outline-primary', () => action(`/equipe/convites/${member.convite_id}/reenviar`).catch((e) => showMessage(status,e.message)));
-                        addButton('Revogar', 'btn-outline-danger', () => {
-                            if (window.confirm('Revogar este convite pendente?')) action(`/equipe/convites/${member.convite_id}/revogar`).catch((e) => showMessage(status,e.message));
-                        });
-                    } else addButton(member.convite_id ? 'Gerar novo convite' : 'Gerar convite', 'btn-outline-primary', () => action('/equipe/convites','POST',{ email: member.email, papel: member.papel, nome: member.nome }).catch((e) => showMessage(status,e.message)));
+                const linkCell = setCellLabel(document.createElement('td'), 'Vínculo');
+                linkCell.append(badge(linkLabels[member.status] || [member.status, 'vitalis-team-badge-neutral']));
+                const invitationCell = setCellLabel(document.createElement('td'), 'Convite');
+                invitationCell.className = 'vitalis-team-invitation';
+                if (member.convite_status) {
+                    invitationCell.append(badge(
+                        invitationLabels[member.convite_status]
+                            || [member.convite_status, 'vitalis-team-badge-neutral']
+                    ));
+                    if (deliveryLabel) {
+                        const delivery = document.createElement('small');
+                        delivery.textContent = deliveryLabel;
+                        invitationCell.append(delivery);
+                    }
+                } else {
+                    invitationCell.textContent = 'Ainda não gerado';
                 }
-                if (member.status === 'ativo') addButton('Desativar', 'btn-outline-danger', () => {
-                    if (window.confirm(`Desativar o acesso de ${member.nome}?`)) action(`/equipe/vinculos/${member.id}/status`,'PATCH',{status:'inativo'}).catch((e) => showMessage(status,e.message));
+                row.append(person, roleCell, linkCell, invitationCell);
+
+                const actions = setCellLabel(document.createElement('td'), 'Ações');
+                actions.className = 'vitalis-team-actions';
+                const addButton = (label, css, handler) => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = `btn btn-sm ${css}`;
+                    button.textContent = label;
+                    button.addEventListener('click', handler);
+                    actions.append(button);
+                };
+                const canManageMember = clinic.papel === 'administrador'
+                    || (clinic.papel === 'secretaria' && member.papel === 'profissional');
+                if (canManageMember && member.status === 'convite_pendente') {
+                    if (member.convite_id && member.convite_status === 'pendente') {
+                        addButton('Reenviar', 'btn-outline-primary', () => {
+                            if (window.confirm(`Reenviar o convite para ${member.email}? O link anterior será invalidado.`)) {
+                                action(
+                                    `/equipe/convites/${member.convite_id}/reenviar`, 'POST', undefined,
+                                    `Novo convite criado para ${member.nome}.`
+                                ).catch((error) => showMessage(status, error.message));
+                            }
+                        });
+                        addButton('Revogar', 'btn-outline-danger', () => {
+                            if (window.confirm(`Revogar o convite de ${member.nome}? O link deixará de funcionar imediatamente.`)) {
+                                action(
+                                    `/equipe/convites/${member.convite_id}/revogar`, 'POST', undefined,
+                                    `Convite de ${member.nome} revogado.`
+                                ).catch((error) => showMessage(status, error.message));
+                            }
+                        });
+                    } else {
+                        addButton(member.convite_id ? 'Gerar novo convite' : 'Gerar convite', 'btn-outline-primary', () => action(
+                            '/equipe/convites', 'POST',
+                            { email: member.email, papel: member.papel, nome: member.nome },
+                            `Convite criado para ${member.nome}.`
+                        ).catch((error) => showMessage(status, error.message)));
+                    }
+                }
+                if (canManageMember && member.status === 'ativo') addButton('Desativar', 'btn-outline-danger', () => {
+                    if (window.confirm(`Desativar o acesso de ${member.nome}? As sessões desse vínculo serão encerradas.`)) {
+                        action(
+                            `/equipe/vinculos/${member.id}/status`, 'PATCH', {status:'inativo'},
+                            `Acesso de ${member.nome} desativado.`
+                        ).catch((error) => showMessage(status, error.message));
+                    }
                 });
-                if (member.status === 'inativo') addButton('Reativar', 'btn-outline-success', () => action(`/equipe/vinculos/${member.id}/status`,'PATCH',{status:'ativo'}).catch((e) => showMessage(status,e.message)));
+                if (canManageMember && member.status === 'inativo') addButton('Reativar', 'btn-outline-success', () => {
+                    if (window.confirm(`Reativar o acesso de ${member.nome} como ${roleLabels[member.papel]}?`)) {
+                        action(
+                            `/equipe/vinculos/${member.id}/status`, 'PATCH', {status:'ativo'},
+                            `Acesso de ${member.nome} reativado.`
+                        ).catch((error) => showMessage(status, error.message));
+                    }
+                });
+                if (!actions.childElementCount) {
+                    const noActions = document.createElement('span');
+                    noActions.className = 'vitalis-team-no-actions';
+                    noActions.textContent = canManageMember ? 'Nenhuma ação disponível' : 'Somente visualização';
+                    actions.append(noActions);
+                }
                 row.append(actions); list.append(row);
             });
         } catch (error) { showMessage(status, error.message); }

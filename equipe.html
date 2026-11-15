@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
   <link rel="stylesheet" href="css/style.css"><link rel="stylesheet" href="css/dashboard.css">
 </head>
-<body class="vitalis-dashboard-body">
+<body class="vitalis-dashboard-body vitalis-team-page">
   <aside class="offcanvas-lg offcanvas-start vitalis-sidebar" tabindex="-1" id="vitalis-sidebar">
     <div class="offcanvas-body d-flex flex-column p-0">
       <a class="vitalis-brand" href="dashboard-secretaria.html"><span class="vitalis-brand-mark"><i class="bi bi-heart-pulse-fill"></i></span><span><strong>Vitalis</strong><small>Gestão em saúde</small></span></a>
@@ -36,7 +36,7 @@
           </form>
         </section>
         <section class="vitalis-panel"><div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Acessos</p><h2>Membros da clínica</h2></div></div><div id="equipe-status" role="status" aria-live="polite"></div>
-          <div class="table-responsive"><table class="table vitalis-agenda-table vitalis-management-table"><thead><tr><th>Pessoa</th><th>Papel</th><th>Vínculo</th><th>Convite</th><th class="text-end">Ações</th></tr></thead><tbody id="equipe-lista"><tr><td colspan="5" class="text-center">Carregando...</td></tr></tbody></table></div>
+          <div class="table-responsive vitalis-team-table-wrap"><table class="table vitalis-agenda-table vitalis-management-table vitalis-team-table"><thead><tr><th>Pessoa</th><th>Papel</th><th>Vínculo</th><th>Convite</th><th class="text-end">Ações</th></tr></thead><tbody id="equipe-lista"><tr><td colspan="5" class="text-center">Carregando...</td></tr></tbody></table></div>
           <p class="vitalis-privacy-note"><i class="bi bi-shield-check"></i> Um acesso revogado deixa de funcionar imediatamente, inclusive com token anterior.</p>
         </section>
       </div>
