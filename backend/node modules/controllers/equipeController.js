@@ -446,7 +446,8 @@ exports.acceptInvitation = async (req, res) => {
                 SET senha_hash=?, status='ativo', motivo_bloqueio='nenhum'
                 WHERE id=? AND status='bloqueado' AND motivo_bloqueio='ativacao_pendente'
             `, [passwordHash, target.usuario_id]);
-        } else if (req.userId !== Number(target.usuario_id)) {
+        } else if (req.auth?.tokenType !== 'identity'
+            || req.userId !== Number(target.usuario_id)) {
             await connection.rollback(); return res.status(401).json({ error: 'Entre na conta convidada para aceitar este convite.' });
         }
         await connection.execute(`

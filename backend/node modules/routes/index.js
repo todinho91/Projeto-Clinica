@@ -9,6 +9,7 @@ const pacienteController = require('../controllers/pacienteController');
 const equipeController = require('../controllers/equipeController');
 const multerConfig = require('../config/multerConfig');
 const authenticate = require('../middleware/auth');
+const identityOnly = require('../middleware/identityOnly');
 const tenantContext = require('../middleware/tenant');
 const authorize = require('../middleware/authorize');
 const optionalAuth = require('../middleware/optionalAuth');
@@ -23,8 +24,8 @@ router.get('/convites/:token', invitationRateLimit, equipeController.inspectInvi
 router.post('/convites/:token/aceitar', invitationRateLimit, optionalAuth, equipeController.acceptInvitation);
 
 router.use(authenticate);
-router.get('/auth/clinics', authController.listClinics);
-router.post('/auth/select-clinic', authController.selectClinic);
+router.get('/auth/clinics', identityOnly, authController.listClinics);
+router.post('/auth/select-clinic', identityOnly, authController.selectClinic);
 
 router.use(tenantContext);
 

@@ -17,8 +17,9 @@ const testConfig = {
 Object.assign(process.env, testConfig);
 
 const pool = require('../config/database');
-const { login, register, selectClinic } = require('../controllers/authController');
+const { clinicToken, login, register, selectClinic } = require('../controllers/authController');
 const authenticate = require('../middleware/auth');
+const identityOnly = require('../middleware/identityOnly');
 
 function response() {
     return {
@@ -92,6 +93,20 @@ test('seleção de clínica assina a versão atual do vínculo', async (t) => {
     const req={headers:{authorization:`Bearer ${res.body.token}`}};
     authenticate(req,response(),()=>{});
     assert.equal(req.auth.membershipVersion,9);
+});
+
+test('JWT de clínica revogado não pode obter novo token de clínica', (t) => {
+    const revokedClinicToken=clinicToken(42,7,3);
+    const req={headers:{authorization:`Bearer ${revokedClinicToken}`}};
+    const authNext=t.mock.fn();
+    authenticate(req,response(),authNext);
+    assert.equal(authNext.mock.callCount(),1);
+    assert.equal(req.auth.tokenType,'clinic');
+
+    const res=response(); const identityNext=t.mock.fn();
+    identityOnly(req,res,identityNext);
+    assert.equal(res.statusCode,403);
+    assert.equal(identityNext.mock.callCount(),0);
 });
 
 test('cadastro público rejeita papel privilegiado antes de acessar o banco', async (t) => {

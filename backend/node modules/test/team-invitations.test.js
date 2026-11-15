@@ -229,7 +229,10 @@ test('conta existente autenticada ativa apenas o novo vínculo e preserva creden
         return [{affectedRows:1}];
     });
     t.mock.method(pool,'getConnection',async()=>conn); const res=response();
-    await controller.acceptInvitation({params:{token},body:{senha:'ignorada-por-seguranca'},userId:70},res);
+    await controller.acceptInvitation({
+        params:{token},body:{senha:'ignorada-por-seguranca'},userId:70,
+        auth:{tokenType:'identity'}
+    },res);
     assert.equal(res.statusCode,200);
     assert.equal(executions.some(({sql})=>/UPDATE usuarios/.test(sql)),false);
     assert.ok(executions.some(({sql})=>/UPDATE clinica_usuarios[\s\S]*SET status='ativo'/.test(sql)));
@@ -256,6 +259,32 @@ test('convite não desbloqueia identidade bloqueada por segurança nem altera se
     assert.equal(res.statusCode,410);
     assert.equal(rollback.mock.callCount(),1);
     assert.equal(executions.some(({sql})=>/UPDATE usuarios|UPDATE clinica_usuarios/.test(sql)),false);
+});
+
+test('token de clínica não autentica titular de conta existente no aceite', async (t) => {
+    const token=createInvitationToken(); const executions=[];
+    const conn=connection(async(sql,params)=>{
+        executions.push({sql,params});
+        if (/FROM convites_clinica i/.test(sql)) return [[{
+            id:90,clinica_id:11,papel:'secretaria',status:'pendente',
+            expira_em:new Date(Date.now()+60000),vinculo_id:80,usuario_id:70,
+            vinculo_status:'convite_pendente',vinculo_papel:'secretaria',
+            usuario_status:'ativo',motivo_bloqueio:'nenhum',
+            usuario_email:'secretaria@example.test',email_normalizado:'secretaria@example.test',
+            clinica_status:'ativa'
+        }]];
+        return [{affectedRows:1}];
+    });
+    const rollback=t.mock.method(conn,'rollback');
+    t.mock.method(pool,'getConnection',async()=>conn);
+    const res=response();
+    await controller.acceptInvitation({
+        params:{token},body:{},userId:70,
+        auth:{tokenType:'clinic',clinicId:22,membershipVersion:1}
+    },res);
+    assert.equal(res.statusCode,401);
+    assert.equal(rollback.mock.callCount(),1);
+    assert.equal(executions.some(({sql})=>/UPDATE usuarios|UPDATE clinica_usuarios|UPDATE convites_clinica/.test(sql)),false);
 });
 
 test('convite recusa clínica inativa e identidade inativa', async (t) => {
@@ -321,7 +350,9 @@ test('conta existente exige autenticação da própria identidade e preserva sen
         return [{affectedRows:1}];
     });
     const rollback=t.mock.method(conn,'rollback'); t.mock.method(pool,'getConnection',async()=>conn);
-    const res=response(); await controller.acceptInvitation({params:{token},body:{senha:'nao-deve-usar'},userId:71},res);
+    const res=response(); await controller.acceptInvitation({
+        params:{token},body:{senha:'nao-deve-usar'},userId:71,auth:{tokenType:'identity'}
+    },res);
     assert.equal(res.statusCode,401); assert.equal(rollback.mock.callCount(),1);
     assert.equal(executions.some(({sql})=>/UPDATE usuarios/.test(sql)),false);
 });

@@ -109,6 +109,25 @@ test('seleção de clínica recusa vínculo de outro usuário', async (t) => {
     assert.equal(res.statusCode, 403);
 });
 
+test('listagem e seleção de clínicas exigem token de identidade', () => {
+    for (const path of ['/auth/clinics', '/auth/select-clinic']) {
+        const route = router.stack.find((layer) => layer.route?.path === path);
+        assert.ok(route);
+        const requireIdentity = route.route.stack[0].handle;
+
+        const denied = response();
+        let deniedNext = false;
+        requireIdentity({auth:{tokenType:'clinic',clinicId:11,membershipVersion:1}},denied,()=>{deniedNext=true;});
+        assert.equal(denied.statusCode,403);
+        assert.equal(deniedNext,false);
+
+        const allowed = response();
+        let allowedNext = false;
+        requireIdentity({auth:{tokenType:'identity'}},allowed,()=>{allowedNext=true;});
+        assert.equal(allowedNext,true);
+    }
+});
+
 test('autorização permite somente papéis declarados pela rota', () => {
     const middleware = authorize('administrador', 'secretaria');
     const denied = response();
