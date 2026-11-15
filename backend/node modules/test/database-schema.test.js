@@ -117,3 +117,13 @@ test('disponibilidade e bloqueios são aditivos, isolados por tenant e preparado
     assert.match(sql, /FOREIGN KEY \(clinica_id, profissional_id\)[\s\S]*REFERENCES profissionais \(clinica_id, id\)/);
     assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
 });
+
+test('gestão de pacientes adiciona índices tenant-aware sem destruir dados', async () => {
+    const sql = await fs.readFile(
+        path.join(migrationsDir, '008_patient_management.sql'), 'utf8'
+    );
+    assert.match(sql, /UNIQUE KEY uk_pacientes_email \(clinica_id, email\)/);
+    assert.match(sql, /KEY idx_pacientes_status_nome \(clinica_id, status, nome\)/);
+    assert.match(sql, /KEY idx_pacientes_nascimento_nome \(clinica_id, data_nascimento, nome\)/);
+    assert.doesNotMatch(sql, /DROP|TRUNCATE|DELETE|UPDATE|INSERT/i);
+});

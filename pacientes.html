@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pacientes — Vitalis</title>
+    <link rel="icon" type="image/png" href="img/icons8-blue-heart-96.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body class="vitalis-dashboard-body vitalis-patients-page">
+    <aside class="offcanvas-lg offcanvas-start vitalis-sidebar" tabindex="-1" id="vitalis-sidebar" aria-labelledby="sidebar-title">
+        <div class="offcanvas-header d-lg-none"><h2 class="offcanvas-title h5" id="sidebar-title">Menu Vitalis</h2><button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" data-bs-target="#vitalis-sidebar" aria-label="Fechar menu"></button></div>
+        <div class="offcanvas-body d-flex flex-column p-0">
+            <a class="vitalis-brand" href="dashboard-secretaria.html" aria-label="Vitalis — visão geral"><span class="vitalis-brand-mark"><i class="bi bi-heart-pulse-fill"></i></span><span><strong>Vitalis</strong><small>Gestão em saúde</small></span></a>
+            <div class="vitalis-clinic-card"><span>Clínica ativa</span><strong data-clinic-name>Clínica</strong><small id="clinic-role">Perfil autorizado</small></div>
+            <nav class="vitalis-nav" aria-label="Navegação do dashboard">
+                <a href="dashboard-secretaria.html"><i class="bi bi-grid-1x2-fill"></i> Visão geral</a>
+                <a class="active" href="pacientes.html" aria-current="page"><i class="bi bi-person-vcard"></i> Pacientes</a>
+                <a href="profissionais.html"><i class="bi bi-person-badge"></i> Profissionais</a>
+                <a href="disponibilidade.html"><i class="bi bi-calendar-week"></i> Disponibilidade</a>
+                <a href="especialidades.html"><i class="bi bi-tags"></i> Especialidades</a>
+                <a href="equipe.html"><i class="bi bi-people"></i> Equipe e acessos</a>
+                <a data-admin-only href="configuracoes-clinica.html"><i class="bi bi-gear"></i> Configurações</a>
+            </nav>
+            <div class="vitalis-sidebar-footer"><a href="select-clinic.html"><i class="bi bi-arrow-left-right"></i> Trocar clínica</a><button type="button" id="logout-button"><i class="bi bi-box-arrow-right"></i> Sair</button></div>
+        </div>
+    </aside>
+    <div class="vitalis-dashboard-content">
+        <header class="vitalis-topbar"><button class="btn vitalis-menu-button d-lg-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#vitalis-sidebar" aria-controls="vitalis-sidebar" aria-label="Abrir menu"><i class="bi bi-list"></i></button><div class="vitalis-topbar-title"><span>Clínica ativa</span><strong data-clinic-name>Clínica</strong></div><a class="btn vitalis-switch-button" href="select-clinic.html"><i class="bi bi-arrow-left-right"></i><span class="d-none d-sm-inline"> Trocar clínica</span></a></header>
+        <main class="vitalis-main">
+            <section class="vitalis-welcome" aria-labelledby="page-title"><div><p class="vitalis-eyebrow">M5 — Pacientes</p><h1 id="page-title">Cadastro de pacientes</h1><p>Gerencie dados essenciais na clínica ativa, com exposição mínima das informações pessoais.</p></div></section>
+            <div class="vitalis-management-grid">
+                <section class="vitalis-panel vitalis-management-form" aria-labelledby="paciente-form-title">
+                    <div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Perfil clínico</p><h2 id="paciente-form-title">Cadastrar paciente</h2></div></div>
+                    <form id="paciente-form">
+                        <div class="mb-3"><label class="form-label" for="paciente-nome">Nome completo</label><input class="form-control" id="paciente-nome" minlength="2" maxlength="160" autocomplete="name" required></div>
+                        <div class="mb-3"><label class="form-label" for="paciente-email">E-mail <span class="text-muted">(opcional)</span></label><input class="form-control" id="paciente-email" type="email" maxlength="254" autocomplete="email"></div>
+                        <div class="row g-3 mb-3"><div class="col-sm-6"><label class="form-label" for="paciente-telefone">Telefone <span class="text-muted">(opcional)</span></label><input class="form-control" id="paciente-telefone" type="tel" maxlength="30" autocomplete="tel"></div><div class="col-sm-6"><label class="form-label" for="paciente-nascimento">Nascimento <span class="text-muted">(opcional)</span></label><input class="form-control" id="paciente-nascimento" type="date" autocomplete="bday"></div></div>
+                        <div class="mb-3"><label class="form-label" for="paciente-status">Situação</label><select class="form-select" id="paciente-status"><option value="ativo">Ativo</option><option value="inativo">Inativo</option></select></div>
+                        <div class="d-flex gap-2 flex-wrap"><button class="btn vitalis-primary-button flex-grow-1" type="submit"><i class="bi bi-person-plus"></i> Salvar paciente</button><button class="btn btn-outline-secondary" type="button" id="cancelar-edicao-paciente" hidden>Cancelar</button></div>
+                        <div id="paciente-form-status" role="status" aria-live="polite"></div>
+                    </form>
+                    <p class="vitalis-privacy-note"><i class="bi bi-shield-lock"></i> Este cadastro não cria nem vincula automaticamente uma conta global.</p>
+                </section>
+                <section class="vitalis-panel" aria-labelledby="pacientes-title">
+                    <div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Clínica ativa</p><h2 id="pacientes-title">Pacientes</h2></div></div>
+                    <form id="pacientes-filtros" class="vitalis-patient-filters mb-3" role="search"><div><label class="visually-hidden" for="pacientes-busca">Buscar paciente</label><input class="form-control" id="pacientes-busca" maxlength="100" placeholder="Nome, e-mail ou telefone"></div><div><label class="visually-hidden" for="pacientes-filtro-status">Filtrar situação</label><select class="form-select" id="pacientes-filtro-status"><option value="todos">Todos</option><option value="ativo">Ativos</option><option value="inativo">Inativos</option></select></div><button class="btn btn-outline-primary" type="submit"><i class="bi bi-search"></i> Buscar</button></form>
+                    <div id="pacientes-status" role="status" aria-live="polite"></div>
+                    <div class="table-responsive vitalis-patient-table-wrap"><table class="table vitalis-agenda-table vitalis-management-table vitalis-patient-table mb-0"><thead><tr><th>Paciente</th><th>E-mail</th><th>Telefone</th><th>Nascimento</th><th>Situação</th><th class="text-end">Ações</th></tr></thead><tbody id="pacientes-lista"><tr><td colspan="6" class="text-center py-4 text-muted">Carregando pacientes...</td></tr></tbody></table></div>
+                    <div class="vitalis-pagination"><button class="btn btn-sm btn-outline-secondary" id="pacientes-anterior" type="button">Anterior</button><span id="pacientes-pagina">Página 1</span><button class="btn btn-sm btn-outline-secondary" id="pacientes-proximo" type="button">Próxima</button></div>
+                    <p class="vitalis-privacy-note"><i class="bi bi-eye-slash"></i> A listagem mascara e-mail e telefone. Dados completos aparecem somente durante a edição autorizada.</p>
+                </section>
+            </div>
+        </main>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script><script src="js/vitalis-client.js"></script><script src="js/main.js"></script>
+</body>
+</html>

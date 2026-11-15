@@ -14,6 +14,7 @@
     "test:team:integration": "TEAM_INTEGRATION_TEST=1 node --test test/team-invitations.integration.test.js",
     "test:provisioning:integration": "PROVISIONING_INTEGRATION_TEST=1 node --test test/clinic-provisioning.integration.test.js",
     "test:availability:integration": "AVAILABILITY_INTEGRATION_TEST=1 node --test test/professional-availability.integration.test.js",
+    "test:patients:integration": "PATIENT_INTEGRATION_TEST=1 node --test test/patient-management.integration.test.js",
     "check:secrets": "node scripts/security/check-secrets.js",
     "test": "node --test",
     "start": "node server.js"

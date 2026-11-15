@@ -61,6 +61,7 @@
             'dashboard-secretaria.html': ['administrador', 'secretaria'],
             'profissionais.html': ['administrador', 'secretaria'],
             'especialidades.html': ['administrador', 'secretaria'],
+            'pacientes.html': ['administrador', 'secretaria'],
             'equipe.html': ['administrador', 'secretaria'],
             'configuracoes-clinica.html': ['administrador'],
             'disponibilidade.html': ['administrador', 'secretaria', 'profissional'],

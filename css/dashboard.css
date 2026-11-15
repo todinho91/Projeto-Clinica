@@ -140,6 +140,14 @@ html { scroll-behavior: smooth; }
 .vitalis-block-card p { margin: .45rem 0 0; color: var(--vitalis-navy); font-size: .85rem; }
 .vitalis-block-card small { display: block; margin-top: .35rem; color: var(--vitalis-muted); }
 
+/* M5-01: cadastro e busca de pacientes */
+.vitalis-patient-filters { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(130px, .35fr) auto; gap: .65rem; }
+.vitalis-patient-table { table-layout: fixed; }
+.vitalis-patient-table th:first-child { width: 25%; }
+.vitalis-patient-table td { overflow-wrap: anywhere; }
+.vitalis-patient-name { color: var(--vitalis-navy); font-weight: 700; }
+.vitalis-pagination { display: flex; align-items: center; justify-content: flex-end; gap: .75rem; margin-top: 1rem; color: var(--vitalis-muted); font-size: .82rem; }
+
 /* PR50: responsividade e rolagem interna */
 html, body.vitalis-dashboard-body {
     overflow-x: clip;
@@ -190,6 +198,20 @@ html, body.vitalis-dashboard-body {
     .vitalis-timezone-note { min-width: 0; }
     .vitalis-availability-interval { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: .75rem; border: 1px solid var(--vitalis-border); border-radius: 12px; }
     .vitalis-availability-interval .btn { grid-column: 1 / -1; width: 100%; }
+    .vitalis-patient-filters { grid-template-columns: minmax(0, 1fr); }
+    .vitalis-patient-filters .btn { width: 100%; }
+    .vitalis-patient-table-wrap { overflow: visible; }
+    .vitalis-patient-table, .vitalis-patient-table tbody, .vitalis-patient-table tr, .vitalis-patient-table td { display: block; width: 100%; }
+    .vitalis-patient-table { table-layout: auto; }
+    .vitalis-patient-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+    .vitalis-patient-table tbody { display: grid; gap: .75rem; }
+    .vitalis-patient-table tr { border: 1px solid var(--vitalis-border); border-radius: 12px; overflow: hidden; }
+    .vitalis-patient-table td { display: grid; grid-template-columns: minmax(86px, .38fr) minmax(0, 1fr); gap: .6rem; padding: .7rem .8rem; text-align: left !important; }
+    .vitalis-patient-table td::before { content: attr(data-label); color: var(--vitalis-muted); font-size: .68rem; font-weight: 700; text-transform: uppercase; }
+    .vitalis-patient-table td[colspan] { display: block; }
+    .vitalis-patient-table td[colspan]::before { content: none; }
+    .vitalis-patient-table .vitalis-table-actions { flex-direction: row; justify-content: flex-start; }
+    .vitalis-pagination { justify-content: space-between; }
 
     .vitalis-team-page .vitalis-main { padding: 1rem; }
     .vitalis-team-page .vitalis-welcome { margin-bottom: 1.25rem; }
@@ -229,5 +251,8 @@ html, body.vitalis-dashboard-body {
     .vitalis-availability-interval .btn { grid-column: auto; }
     .vitalis-availability-page .vitalis-main { padding: .75rem; }
     .vitalis-availability-page .vitalis-panel { padding: .85rem; border-radius: 14px; }
+    .vitalis-patients-page .vitalis-main { padding: .75rem; }
+    .vitalis-patients-page .vitalis-panel { padding: .85rem; border-radius: 14px; }
+    .vitalis-patient-table td { grid-template-columns: minmax(76px, .35fr) minmax(0, 1fr); padding: .65rem; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
