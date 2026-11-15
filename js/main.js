@@ -101,7 +101,215 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (page === 'dashboard-secretaria.html') setupAdministracaoDashboard();
     else if (page === 'profissionais.html') setupGestaoProfissionaisPage();
     else if (page === 'especialidades.html') setupGestaoEspecialidadesPage();
+    else if (page === 'equipe.html') setupEquipePage();
+    else if (page === 'aceitar-convite.html') setupAceiteConvitePage();
 });
+
+async function setupEquipePage() {
+    const clinic = requireClinicSession('equipe.html');
+    if (!clinic) return;
+    applyClinicIdentity(clinic);
+    const list = document.getElementById('equipe-lista');
+    const status = document.getElementById('equipe-status');
+    const roleSelect = document.getElementById('convite-papel');
+    const roleLabels = {
+        administrador: 'Administrador', secretaria: 'Secretaria',
+        profissional: 'Profissional', paciente: 'Paciente'
+    };
+    const linkLabels = {
+        convite_pendente: ['Convite pendente', 'vitalis-team-badge-pending'],
+        ativo: ['Acesso ativo', 'vitalis-team-badge-active'],
+        inativo: ['Acesso inativo', 'vitalis-team-badge-inactive']
+    };
+    const invitationLabels = {
+        pendente: ['Pendente', 'vitalis-team-badge-pending'],
+        aceito: ['Aceito', 'vitalis-team-badge-active'],
+        revogado: ['Revogado', 'vitalis-team-badge-inactive']
+    };
+    if (clinic.papel === 'secretaria') {
+        [...roleSelect.options].forEach((option) => {
+            if (option.value !== 'profissional') option.remove();
+        });
+    }
+
+    function badge([label, css]) {
+        const element = document.createElement('span');
+        element.className = `vitalis-team-badge ${css}`;
+        element.textContent = label;
+        return element;
+    }
+
+    function setCellLabel(cell, label) {
+        cell.dataset.label = label;
+        return cell;
+    }
+
+    async function action(path, method = 'POST', body, successMessage) {
+        const data = await apiRequest(path, {
+            method,
+            body: body ? JSON.stringify(body) : undefined
+        });
+        await load();
+        showMessage(status, successMessage || data.message || 'Alteração realizada com sucesso.', 'success');
+    }
+
+    async function load() {
+        try {
+            const members = await apiRequest('/equipe');
+            list.replaceChildren();
+            if (!members.length) {
+                const row = document.createElement('tr'); const cell = tableCell('Nenhum membro.'); cell.colSpan = 5; row.append(cell); list.append(row); return;
+            }
+            members.forEach((member) => {
+                const row = document.createElement('tr');
+                const person = setCellLabel(document.createElement('td'), 'Pessoa');
+                person.className = 'vitalis-team-person';
+                const personName = document.createElement('strong');
+                personName.className = 'vitalis-team-person-name';
+                personName.textContent = member.nome;
+                const email = document.createElement('small');
+                email.className = 'vitalis-team-email';
+                email.textContent = member.email;
+                person.append(personName, email);
+
+                const roleCell = setCellLabel(tableCell(roleLabels[member.papel] || member.papel), 'Papel');
+                if (clinic.papel === 'administrador' && member.status !== 'convite_pendente') {
+                    const select = document.createElement('select');
+                    select.className = 'form-select form-select-sm vitalis-team-role-select';
+                    select.setAttribute('aria-label', `Papel de ${member.nome}`);
+                    ['administrador', 'secretaria', 'profissional', 'paciente'].forEach((role) => {
+                        const option = document.createElement('option');
+                        option.value = role; option.textContent = roleLabels[role]; option.selected = role === member.papel;
+                        select.append(option);
+                    });
+                    select.addEventListener('change', () => {
+                        const nextRole = select.value;
+                        if (!window.confirm(`Alterar o papel de ${member.nome} para ${roleLabels[nextRole]}?`)) {
+                            select.value = member.papel;
+                            return;
+                        }
+                        action(
+                            `/equipe/vinculos/${member.id}/papel`, 'PATCH', { papel: nextRole },
+                            `Papel de ${member.nome} atualizado.`
+                        ).catch((error) => { showMessage(status, error.message); load(); });
+                    });
+                    roleCell.replaceChildren(select);
+                }
+                const deliveryLabel = {
+                    not_requested: 'Envio pendente',
+                    not_configured: 'E-mail não configurado',
+                    accepted_by_provider: 'Aceito pelo provedor; entrega não confirmada',
+                    delivered: 'Entrega confirmada',
+                    failed: 'Falha no envio'
+                }[member.envio_status];
+                const linkCell = setCellLabel(document.createElement('td'), 'Vínculo');
+                linkCell.append(badge(linkLabels[member.status] || [member.status, 'vitalis-team-badge-neutral']));
+                const invitationCell = setCellLabel(document.createElement('td'), 'Convite');
+                invitationCell.className = 'vitalis-team-invitation';
+                if (member.convite_status) {
+                    invitationCell.append(badge(
+                        invitationLabels[member.convite_status]
+                            || [member.convite_status, 'vitalis-team-badge-neutral']
+                    ));
+                    if (deliveryLabel) {
+                        const delivery = document.createElement('small');
+                        delivery.textContent = deliveryLabel;
+                        invitationCell.append(delivery);
+                    }
+                } else {
+                    invitationCell.textContent = 'Ainda não gerado';
+                }
+                row.append(person, roleCell, linkCell, invitationCell);
+
+                const actions = setCellLabel(document.createElement('td'), 'Ações');
+                actions.className = 'vitalis-team-actions';
+                const addButton = (label, css, handler) => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = `btn btn-sm ${css}`;
+                    button.textContent = label;
+                    button.addEventListener('click', handler);
+                    actions.append(button);
+                };
+                const canManageMember = clinic.papel === 'administrador'
+                    || (clinic.papel === 'secretaria' && member.papel === 'profissional');
+                if (canManageMember && member.status === 'convite_pendente') {
+                    if (member.convite_id && member.convite_status === 'pendente') {
+                        addButton('Reenviar', 'btn-outline-primary', () => {
+                            if (window.confirm(`Reenviar o convite para ${member.email}? O link anterior será invalidado.`)) {
+                                action(
+                                    `/equipe/convites/${member.convite_id}/reenviar`, 'POST', undefined,
+                                    `Novo convite criado para ${member.nome}.`
+                                ).catch((error) => showMessage(status, error.message));
+                            }
+                        });
+                        addButton('Revogar', 'btn-outline-danger', () => {
+                            if (window.confirm(`Revogar o convite de ${member.nome}? O link deixará de funcionar imediatamente.`)) {
+                                action(
+                                    `/equipe/convites/${member.convite_id}/revogar`, 'POST', undefined,
+                                    `Convite de ${member.nome} revogado.`
+                                ).catch((error) => showMessage(status, error.message));
+                            }
+                        });
+                    } else {
+                        addButton(member.convite_id ? 'Gerar novo convite' : 'Gerar convite', 'btn-outline-primary', () => action(
+                            '/equipe/convites', 'POST',
+                            { email: member.email, papel: member.papel, nome: member.nome },
+                            `Convite criado para ${member.nome}.`
+                        ).catch((error) => showMessage(status, error.message)));
+                    }
+                }
+                if (canManageMember && member.status === 'ativo') addButton('Desativar', 'btn-outline-danger', () => {
+                    if (window.confirm(`Desativar o acesso de ${member.nome}? As sessões desse vínculo serão encerradas.`)) {
+                        action(
+                            `/equipe/vinculos/${member.id}/status`, 'PATCH', {status:'inativo'},
+                            `Acesso de ${member.nome} desativado.`
+                        ).catch((error) => showMessage(status, error.message));
+                    }
+                });
+                if (canManageMember && member.status === 'inativo') addButton('Reativar', 'btn-outline-success', () => {
+                    if (window.confirm(`Reativar o acesso de ${member.nome} como ${roleLabels[member.papel]}?`)) {
+                        action(
+                            `/equipe/vinculos/${member.id}/status`, 'PATCH', {status:'ativo'},
+                            `Acesso de ${member.nome} reativado.`
+                        ).catch((error) => showMessage(status, error.message));
+                    }
+                });
+                if (!actions.childElementCount) {
+                    const noActions = document.createElement('span');
+                    noActions.className = 'vitalis-team-no-actions';
+                    noActions.textContent = canManageMember ? 'Nenhuma ação disponível' : 'Somente visualização';
+                    actions.append(noActions);
+                }
+                row.append(actions); list.append(row);
+            });
+        } catch (error) { showMessage(status, error.message); }
+    }
+    document.getElementById('convite-form').addEventListener('submit', async (event) => {
+        event.preventDefault(); const message = document.getElementById('convite-status');
+        try { const data = await apiRequest('/equipe/convites',{method:'POST',body:JSON.stringify({nome:document.getElementById('convite-nome').value,email:document.getElementById('convite-email').value,papel:roleSelect.value})}); showMessage(message,data.message,'success'); event.target.reset(); await load(); } catch(error) { showMessage(message,error.message); }
+    });
+    await load();
+}
+
+async function setupAceiteConvitePage() {
+    const token = new URLSearchParams(window.location.search).get('token');
+    const details = document.getElementById('aceite-detalhes'); const form = document.getElementById('aceite-form'); const status = document.getElementById('aceite-status');
+    if (!token) { showMessage(status, 'Link de convite inválido.'); return; }
+    let invitation;
+    try { invitation = await apiRequest(`/convites/${encodeURIComponent(token)}`, {}, null); details.textContent = `Convite para ${invitation.clinica}, papel ${invitation.papel}. Válido até ${formatDate(invitation.expira_em)}.`; document.getElementById('aceite-senha-campo').hidden = !invitation.requer_senha; form.hidden = false; } catch(error) { details.textContent = error.message; return; }
+    if (!invitation.requer_senha && !session.identityToken) {
+        form.hidden = true;
+        const link = document.createElement('a');
+        link.className = 'btn btn-primary w-100 mt-3';
+        link.textContent = 'Entrar para aceitar';
+        const returnTo = `aceitar-convite.html?token=${token}`;
+        link.href = `login.html?return=${encodeURIComponent(returnTo)}`;
+        status.replaceChildren(link);
+        return;
+    }
+    form.addEventListener('submit', async (event) => { event.preventDefault(); try { const authType = invitation.requer_senha ? null : 'identity'; const data = await apiRequest(`/convites/${encodeURIComponent(token)}/aceitar`,{method:'POST',body:JSON.stringify({senha:document.getElementById('aceite-senha').value})},authType); showMessage(status,data.message,'success'); form.hidden=true; } catch(error) { showMessage(status,error.message); } });
+}
 
 function setupRegisterPage() {
     const form = document.getElementById('register-form');
@@ -148,6 +356,11 @@ function setupLoginPage() {
             }, null);
             session.clear();
             session.saveIdentity(data);
+            const returnTo = new URLSearchParams(window.location.search).get('return');
+            if (returnTo && /^aceitar-convite\.html\?token=[A-Za-z0-9_-]+$/.test(returnTo)) {
+                window.location.assign(returnTo);
+                return;
+            }
             if (data.clinicas.length === 0) throw new Error('Nenhuma clínica ativa vinculada ao usuário.');
             window.location.assign('select-clinic.html');
         } catch (error) {
@@ -572,6 +785,14 @@ async function setupGestaoProfissionaisPage() {
                 }
             });
             actions.append(editButton, statusButton);
+            if (professional.acesso_status !== 'ativo') {
+                const invitationLink = document.createElement('a');
+                invitationLink.className = 'btn btn-sm btn-outline-primary';
+                invitationLink.href = 'equipe.html';
+                invitationLink.textContent = 'Convite';
+                invitationLink.setAttribute('aria-label', `Gerenciar convite de ${professional.nome}`);
+                actions.append(invitationLink);
+            }
             row.append(actions);
             table.append(row);
         });

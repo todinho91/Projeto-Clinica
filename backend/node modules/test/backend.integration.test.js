@@ -27,7 +27,7 @@ function response() {
 
 async function resetTestSchema(connection) {
     const tables = [
-        'auditoria', 'documentos_clinicos', 'consultas', 'pacientes',
+        'convites_clinica', 'auditoria', 'documentos_clinicos', 'consultas', 'pacientes',
         'profissional_especialidades', 'profissionais', 'especialidades',
         'clinica_usuarios', 'usuarios', 'clinicas', 'schema_migrations'
     ];
@@ -124,7 +124,7 @@ test('backend seleciona tenant e bloqueia paciente de outra clínica no MySQL 8'
         const [[horizonte]] = await connection.query(
             "SELECT id FROM clinicas WHERE slug = 'horizonte-demo'"
         );
-        const forged = authController.clinicToken(identityRequest.userId, horizonte.id);
+        const forged = authController.clinicToken(identityRequest.userId, horizonte.id, 1);
         const forgedRequest = { headers: { authorization: `Bearer ${forged}` } };
         authenticate(forgedRequest, response(), () => {});
         const forgedResponse = response();

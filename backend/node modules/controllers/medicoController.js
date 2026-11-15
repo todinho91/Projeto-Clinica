@@ -312,12 +312,12 @@ exports.createProfessionalAccount = async (req, res) => {
         }
 
         // A credencial aleatória é descartada imediatamente. A conta permanece
-        // bloqueada até o futuro fluxo de convite de uso único (issue #13).
+        // bloqueada até que o convite de uso único seja aceito pelo titular.
         const unusableCredential = randomBytes(48).toString('base64url');
         const passwordHash = await bcrypt.hash(unusableCredential, 12);
         const [userResult] = await connection.execute(`
-            INSERT INTO usuarios (nome, email, senha_hash, status)
-            VALUES (?, ?, ?, 'bloqueado')
+            INSERT INTO usuarios (nome, email, senha_hash, status, motivo_bloqueio)
+            VALUES (?, ?, ?, 'bloqueado', 'ativacao_pendente')
         `, [payload.fullName, payload.email, passwordHash]);
         const userId = Number(userResult.insertId);
 
@@ -351,7 +351,7 @@ exports.createProfessionalAccount = async (req, res) => {
         return res.status(201).json({
             id: professionalId,
             acesso_status: 'convite_pendente',
-            message: 'Profissional pré-cadastrado. O acesso permanecerá bloqueado até o convite seguro ser concluído.'
+            message: 'Profissional pré-cadastrado. Gere o convite em Equipe e acessos para ativar a conta.'
         });
     } catch (error) {
         if (connection) await connection.rollback().catch(() => {});

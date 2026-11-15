@@ -31,7 +31,10 @@ module.exports = (req, res, next) => {
         req.userId = userId;
         req.auth = {
             tokenType: decoded.token_type,
-            clinicId: decoded.clinic_id === undefined ? null : Number(decoded.clinic_id)
+            clinicId: decoded.clinic_id === undefined ? null : Number(decoded.clinic_id),
+            membershipVersion: decoded.membership_version === undefined
+                ? null
+                : Number(decoded.membership_version)
         };
         return next();
     });

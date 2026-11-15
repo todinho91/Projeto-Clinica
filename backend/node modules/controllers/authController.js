@@ -13,9 +13,9 @@ function identityToken(userId) {
     );
 }
 
-function clinicToken(userId, clinicId) {
+function clinicToken(userId, clinicId, membershipVersion) {
     return jwt.sign(
-        { token_type: 'clinic', clinic_id: clinicId },
+        { token_type: 'clinic', clinic_id: clinicId, membership_version: membershipVersion },
         jwtSecret,
         { algorithm: 'HS256', expiresIn: '8h', subject: String(userId) }
     );
@@ -159,7 +159,7 @@ exports.selectClinic = async (req, res) => {
 
     try {
         const [rows] = await pool.execute(`
-            SELECT c.id, c.nome, c.slug, cu.papel
+            SELECT c.id, c.nome, c.slug, cu.papel, cu.sessao_versao
             FROM clinica_usuarios cu
             JOIN clinicas c ON c.id = cu.clinica_id
             JOIN usuarios u ON u.id = cu.usuario_id
@@ -176,7 +176,7 @@ exports.selectClinic = async (req, res) => {
         }
 
         return res.status(200).json({
-            token: clinicToken(req.userId, clinicId),
+            token: clinicToken(req.userId, clinicId, Number(rows[0].sessao_versao)),
             clinica: {
                 id: Number(rows[0].id),
                 nome: rows[0].nome,

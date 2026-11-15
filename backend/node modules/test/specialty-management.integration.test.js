@@ -28,7 +28,7 @@ async function resetTestSchema(connection, expectedDatabase) {
         );
     }
     const tables = [
-        'auditoria', 'documentos_clinicos', 'consultas', 'pacientes',
+        'convites_clinica', 'auditoria', 'documentos_clinicos', 'consultas', 'pacientes',
         'profissional_especialidades', 'profissionais', 'especialidades',
         'clinica_usuarios', 'usuarios', 'clinicas', 'schema_migrations'
     ];

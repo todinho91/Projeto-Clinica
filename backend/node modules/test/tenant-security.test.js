@@ -56,11 +56,12 @@ test('contexto usa somente a clínica assinada e revalida o vínculo no banco', 
     t.mock.method(pool, 'execute', async (sql, params) => {
         parameters = params;
         assert.match(sql, /cu\.clinica_id = \?/);
+        assert.match(sql, /cu\.sessao_versao = \?/);
         return [[{ clinica_id: 11, papel: 'secretaria', clinica_nome: 'Demo' }]];
     });
     const req = {
         userId: 3,
-        auth: { tokenType: 'clinic', clinicId: 11 },
+        auth: { tokenType: 'clinic', clinicId: 11, membershipVersion: 4 },
         body: { clinica_id: 99 }
     };
     const res = response();
@@ -68,9 +69,16 @@ test('contexto usa somente a clínica assinada e revalida o vínculo no banco', 
 
     await tenantContext(req, res, next);
 
-    assert.deepEqual(parameters, [11, 3]);
+    assert.deepEqual(parameters, [11, 3, 4]);
     assert.deepEqual(req.tenant, { clinicId: 11, clinicName: 'Demo', role: 'secretaria' });
     assert.equal(next.mock.callCount(), 1);
+});
+
+test('token de clínica sem versão de vínculo é recusado antes do banco', async (t) => {
+    const execute=t.mock.method(pool,'execute'); const res=response();
+    await tenantContext({userId:3,auth:{tokenType:'clinic',clinicId:11,membershipVersion:null}},res,()=>{});
+    assert.equal(res.statusCode,403);
+    assert.equal(execute.mock.callCount(),0);
 });
 
 test('token forjado para outra clínica é rejeitado sem vínculo ativo', async (t) => {
@@ -80,7 +88,7 @@ test('token forjado para outra clínica é rejeitado sem vínculo ativo', async 
 
     await tenantContext({
         userId: 3,
-        auth: { tokenType: 'clinic', clinicId: 99 }
+        auth: { tokenType: 'clinic', clinicId: 99, membershipVersion: 1 }
     }, res, next);
 
     assert.equal(res.statusCode, 403);
@@ -99,6 +107,25 @@ test('seleção de clínica recusa vínculo de outro usuário', async (t) => {
 
     assert.deepEqual(params, [3, 22]);
     assert.equal(res.statusCode, 403);
+});
+
+test('listagem e seleção de clínicas exigem token de identidade', () => {
+    for (const path of ['/auth/clinics', '/auth/select-clinic']) {
+        const route = router.stack.find((layer) => layer.route?.path === path);
+        assert.ok(route);
+        const requireIdentity = route.route.stack[0].handle;
+
+        const denied = response();
+        let deniedNext = false;
+        requireIdentity({auth:{tokenType:'clinic',clinicId:11,membershipVersion:1}},denied,()=>{deniedNext=true;});
+        assert.equal(denied.statusCode,403);
+        assert.equal(deniedNext,false);
+
+        const allowed = response();
+        let allowedNext = false;
+        requireIdentity({auth:{tokenType:'identity'}},allowed,()=>{allowedNext=true;});
+        assert.equal(allowedNext,true);
+    }
 });
 
 test('autorização permite somente papéis declarados pela rota', () => {
@@ -143,6 +170,19 @@ test('rotas de upload recusam paciente antes de processar o arquivo', () => {
 
         assert.equal(denied.statusCode, 403);
         assert.equal(called, false);
+    }
+});
+
+test('rotas de equipe recusam profissional e paciente', () => {
+    for (const path of ['/equipe', '/equipe/convites']) {
+        const route = router.stack.find((layer) => layer.route?.path === path);
+        assert.ok(route);
+        const authorizeTeam = route.route.stack[0].handle;
+        for (const role of ['profissional', 'paciente']) {
+            const res = response(); let called = false;
+            authorizeTeam({ tenant: { role } }, res, () => { called = true; });
+            assert.equal(res.statusCode, 403); assert.equal(called, false);
+        }
     }
 });
 
