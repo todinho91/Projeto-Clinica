@@ -23,7 +23,9 @@ test('migrations criam todas as tabelas previstas para DB-01', async () => {
         'consultas',
         'documentos_clinicos',
         'auditoria'
-        ,'convites_clinica'
+        ,'convites_clinica',
+        'operadores_plataforma',
+        'auditoria_plataforma'
     ]) {
         assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`));
     }
@@ -84,4 +86,16 @@ test('onboarding profissional adiciona tipo sem criar senha ou convite inseguro 
     );
     assert.match(sql, /ALTER TABLE profissionais[\s\S]*ADD COLUMN tipo_profissional VARCHAR\(80\)/);
     assert.doesNotMatch(sql, /senha|token|convite/i);
+});
+
+test('provisionamento usa operador explícito, auditoria e convite sem token puro', async () => {
+    const sql = await fs.readFile(
+        path.join(migrationsDir, '006_clinic_provisioning.sql'),
+        'utf8'
+    );
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS operadores_plataforma/);
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS auditoria_plataforma/);
+    assert.match(sql, /criado_por_operador_id BIGINT UNSIGNED NULL/);
+    assert.match(sql, /CHECK \(\(criado_por_usuario_id IS NOT NULL\) <> \(criado_por_operador_id IS NOT NULL\)\)/);
+    assert.doesNotMatch(sql, /INSERT INTO operadores_plataforma|senha|token_hash\s*=\s*['"]/i);
 });

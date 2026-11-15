@@ -77,6 +77,9 @@ function applyClinicIdentity(clinic) {
     document.querySelectorAll('[data-clinic-name]').forEach((element) => {
         element.textContent = clinic.nome;
     });
+    if (clinic.papel !== 'administrador') {
+        document.querySelectorAll('[data-admin-only]').forEach((element) => element.remove());
+    }
 }
 
 function formatDate(value) {
@@ -103,7 +106,118 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (page === 'especialidades.html') setupGestaoEspecialidadesPage();
     else if (page === 'equipe.html') setupEquipePage();
     else if (page === 'aceitar-convite.html') setupAceiteConvitePage();
+    else if (page === 'configuracoes-clinica.html') setupClinicSettingsPage();
+    else if (page === 'provisionamento-clinicas.html') setupClinicProvisioningPage();
 });
+
+async function setupClinicSettingsPage() {
+    const clinic = requireClinicSession('configuracoes-clinica.html');
+    if (!clinic) return;
+    applyClinicIdentity(clinic);
+    const form = document.getElementById('configuracoes-clinica-form');
+    const status = document.getElementById('configuracoes-clinica-status');
+    try {
+        const settings = await apiRequest('/clinica/configuracoes');
+        document.getElementById('config-clinica-nome').value = settings.nome;
+        document.getElementById('config-clinica-slug').value = settings.slug;
+        document.getElementById('config-clinica-timezone').value = settings.timezone;
+        document.getElementById('config-clinica-status').textContent = settings.status === 'ativa' ? 'Ativa' : 'Inativa';
+    } catch (error) {
+        showMessage(status, error.message);
+        form.hidden = true;
+        return;
+    }
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!window.confirm('Salvar nome e fuso horário da clínica ativa?')) return;
+        try {
+            const data = await apiRequest('/clinica/configuracoes', {
+                method: 'PATCH',
+                body: JSON.stringify({
+                    nome: document.getElementById('config-clinica-nome').value,
+                    timezone: document.getElementById('config-clinica-timezone').value
+                })
+            });
+            session.saveClinic({
+                token: session.clinicToken,
+                clinica: { ...clinic, nome: data.clinica.nome }
+            });
+            showMessage(status, data.message, 'success');
+            document.querySelectorAll('[data-clinic-name]').forEach((element) => {
+                element.textContent = data.clinica.nome;
+            });
+        } catch (error) {
+            showMessage(status, error.message);
+        }
+    });
+}
+
+async function setupClinicProvisioningPage() {
+    if (!session.identityToken) {
+        window.location.replace('login.html');
+        return;
+    }
+    const form = document.getElementById('provisionamento-form');
+    const status = document.getElementById('provisionamento-status-mensagem');
+    const listStatus = document.getElementById('provisionamento-lista-status');
+    const list = document.getElementById('provisionamento-lista');
+
+    async function loadClinics() {
+        const clinics = await apiRequest('/plataforma/clinicas', {}, 'identity');
+        list.replaceChildren();
+        clinics.forEach((clinic) => {
+            const card = document.createElement('article');
+            card.className = 'vitalis-provisioning-card';
+            const title = document.createElement('strong');
+            title.textContent = clinic.nome;
+            const detail = document.createElement('span');
+            detail.textContent = `${clinic.slug} · ${clinic.timezone}`;
+            const admin = document.createElement('small');
+            admin.textContent = clinic.administrador_email
+                ? `Administrador: ${clinic.administrador_email} · ${clinic.administrador_status}`
+                : 'Administrador ainda não definido';
+            card.append(title, detail, admin);
+            list.append(card);
+        });
+        if (!clinics.length) showMessage(listStatus, 'Nenhuma clínica provisionada.');
+        else listStatus.replaceChildren();
+    }
+
+    try {
+        const capabilities = await apiRequest('/plataforma/capacidades', {}, 'identity');
+        if (!capabilities.provisionar_clinicas) throw new Error('Operação restrita à plataforma.');
+        await loadClinics();
+    } catch (error) {
+        showMessage(status, error.message);
+        form.hidden = true;
+        return;
+    }
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const clinicName = document.getElementById('provisionamento-nome').value.trim();
+        const adminEmail = document.getElementById('provisionamento-admin-email').value.trim();
+        if (!window.confirm(`Criar ${clinicName} e convidar ${adminEmail} como primeiro administrador?`)) return;
+        try {
+            const data = await apiRequest('/plataforma/clinicas', {
+                method: 'POST',
+                body: JSON.stringify({
+                    nome: clinicName,
+                    slug: document.getElementById('provisionamento-slug').value,
+                    timezone: document.getElementById('provisionamento-timezone').value,
+                    status: document.getElementById('provisionamento-status').value,
+                    administrador_nome: document.getElementById('provisionamento-admin-nome').value,
+                    administrador_email: adminEmail
+                })
+            }, 'identity');
+            showMessage(status, data.message, 'success');
+            form.reset();
+            await loadClinics();
+        } catch (error) {
+            showMessage(status, error.message);
+        }
+    });
+}
 
 async function setupEquipePage() {
     const clinic = requireClinicSession('equipe.html');
@@ -361,7 +475,6 @@ function setupLoginPage() {
                 window.location.assign(returnTo);
                 return;
             }
-            if (data.clinicas.length === 0) throw new Error('Nenhuma clínica ativa vinculada ao usuário.');
             window.location.assign('select-clinic.html');
         } catch (error) {
             errorElement.textContent = error.message;
@@ -376,7 +489,12 @@ async function setupClinicSelectionPage() {
     }
     const select = document.getElementById('clinica-select');
     const status = document.getElementById('clinic-status');
+    const platformLink = document.getElementById('platform-provisioning-link');
+    let mayProvision = false;
     try {
+        const capabilities = await apiRequest('/plataforma/capacidades', {}, 'identity');
+        mayProvision = Boolean(capabilities.provisionar_clinicas);
+        platformLink.hidden = !mayProvision;
         const clinics = await apiRequest('/auth/clinics', {}, 'identity');
         select.replaceChildren();
         clinics.forEach((clinic) => {
@@ -387,7 +505,10 @@ async function setupClinicSelectionPage() {
         });
         if (clinics.length === 0) {
             select.disabled = true;
-            showMessage(status, 'Nenhuma clínica ativa vinculada ao usuário.');
+            document.querySelector('#clinic-form button[type="submit"]').disabled = true;
+            showMessage(status, mayProvision
+                ? 'Nenhuma clínica ativa vinculada. Você pode provisionar uma nova clínica.'
+                : 'Nenhuma clínica ativa vinculada ao usuário.');
         }
     } catch (error) {
         showMessage(status, error.message);

@@ -7,6 +7,7 @@ const especialidadeController = require('../controllers/especialidadeController'
 const medicoController = require('../controllers/medicoController');
 const pacienteController = require('../controllers/pacienteController');
 const equipeController = require('../controllers/equipeController');
+const clinicaController = require('../controllers/clinicaController');
 const multerConfig = require('../config/multerConfig');
 const authenticate = require('../middleware/auth');
 const identityOnly = require('../middleware/identityOnly');
@@ -26,8 +27,14 @@ router.post('/convites/:token/aceitar', invitationRateLimit, optionalAuth, equip
 router.use(authenticate);
 router.get('/auth/clinics', identityOnly, authController.listClinics);
 router.post('/auth/select-clinic', identityOnly, authController.selectClinic);
+router.get('/plataforma/capacidades', identityOnly, clinicaController.capabilities);
+router.get('/plataforma/clinicas', identityOnly, clinicaController.listPlatformClinics);
+router.post('/plataforma/clinicas', identityOnly, clinicaController.provision);
 
 router.use(tenantContext);
+
+router.get('/clinica/configuracoes', authorize('administrador'), clinicaController.getSettings);
+router.patch('/clinica/configuracoes', authorize('administrador'), clinicaController.updateSettings);
 
 router.get('/equipe', authorize('administrador', 'secretaria'), equipeController.list);
 router.post('/equipe/convites', authorize('administrador', 'secretaria'), equipeController.createInvitation);
