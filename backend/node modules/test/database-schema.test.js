@@ -65,6 +65,8 @@ test('convites persistem somente hash, expiram e referenciam vínculo da mesma c
     assert.doesNotMatch(sql, /token_plain|token_texto|senha/);
     assert.match(sql, /expira_em DATETIME\(6\) NOT NULL/);
     assert.match(sql, /FOREIGN KEY \(clinica_id, clinica_usuario_id\)[\s\S]*REFERENCES clinica_usuarios \(clinica_id, id\)/);
+    assert.match(sql, /envio_status ENUM\([\s\S]*'accepted_by_provider'[\s\S]*'delivered'[\s\S]*'failed'/);
+    assert.match(sql, /provedor_mensagem_id VARCHAR\(200\) NULL/);
 });
 
 test('consultas exigem período válido e evitam mesmo início para o profissional', async () => {

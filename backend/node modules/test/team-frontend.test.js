@@ -14,9 +14,12 @@ test('gestão de equipe apresenta convite, estados e ações sem expor token', a
     assert.match(html, /id="equipe-lista"/);
     assert.match(main, /\/equipe\/convites/);
     assert.match(main, /Reenviar/);
+    assert.match(main, /Gerar novo convite/);
+    assert.match(main, /Aceito pelo provedor; entrega não confirmada/);
     assert.match(main, /Revogar/);
     assert.match(main, /window\.confirm\('Revogar este convite pendente\?'\)/);
     assert.doesNotMatch(html, /token[_ -]?hash/i);
+    assert.match(html, /Conclua primeiro o cadastro profissional/);
 });
 
 test('aceite público lê token da URL e nunca solicita senha para conta existente', async () => {

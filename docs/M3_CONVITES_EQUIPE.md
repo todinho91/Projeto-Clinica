@@ -9,6 +9,12 @@
 5. Uma conta nova define a própria senha (mínimo de 12 caracteres). Uma conta existente deve autenticar-se; sua senha e seus demais vínculos não são alterados.
 6. Reenvio invalida convites pendentes anteriores. Revogação e desativação são auditadas.
 
+Profissionais e pacientes somente recebem convite quando o perfil clínico correspondente já existe na mesma clínica. Para profissionais novos, o cadastro completo deve ser concluído primeiro em `profissionais.html`, pelo fluxo transacional da PR #50. O sistema não cria perfis clínicos incompletos na tela de equipe.
+
+Essa restrição é necessária porque listagem de profissionais, agendamento, agenda do médico, acesso a pacientes e dashboard profissional consultam ou associam dados pela tabela `profissionais`. Um vínculo com papel `profissional` sem esse perfil ficaria autenticado, mas não apareceria corretamente nas operações clínicas e não teria identidade clínica para filtrar agenda e pacientes.
+
+Um vínculo `inativo` só volta ao fluxo de convite com o mesmo papel previamente autorizado. Dentro da mesma transação, ele muda para `convite_pendente`, registra `vinculo_reativacao_iniciada` na auditoria e somente então recebe um novo convite. Trocar o papel por meio do convite é recusado.
+
 O middleware de tenant consulta o vínculo a cada requisição. Assim, desativar o vínculo bloqueia imediatamente um JWT emitido anteriormente.
 
 ## Matriz de autorização
@@ -27,7 +33,7 @@ Uma promoção para `profissional` ou `paciente` exige que o perfil corresponden
 
 ## E-mail
 
-O padrão seguro é `MAIL_PROVIDER=disabled`. Nesse modo o convite é criado, mas a API informa que a entrega não foi confirmada. O token nunca é retornado pela API administrativa nem registrado em log.
+O padrão seguro é `MAIL_PROVIDER=disabled`. Nesse modo o convite é criado, mas a API informa que o envio não está configurado. O token nunca é retornado pela API administrativa nem registrado em log.
 
 O adaptador `webhook` exige:
 
@@ -42,9 +48,19 @@ MAIL_FROM=<remetente-verificado>
 
 O webhook recebe `from`, `to`, `template` e `variables`. A variável `activationUrl` contém o token e deve ser tratada pelo provedor como segredo. A URL pública é construída exclusivamente com `APP_PUBLIC_ORIGIN`, nunca com o cabeçalho `Host` da requisição.
 
+Os estados persistidos em `convites_clinica.envio_status` são:
+
+- `not_requested`: convite criado, tentativa ainda não realizada;
+- `not_configured`: provedor não configurado;
+- `accepted_by_provider`: HTTP 2xx; o provedor aceitou a solicitação, mas a entrega não está confirmada;
+- `delivered`: reservado para confirmação real de entrega por integração autenticada;
+- `failed`: rejeição HTTP ou indisponibilidade do provedor.
+
+O adaptador webhook atual nunca transforma apenas HTTP 200/202 em `delivered`. A confirmação definitiva dependerá de callback autenticado do provedor de e-mail.
+
 ## Migration e validação local
 
-A migration aditiva é `backend/database/migrations/005_team_invitations.sql`. Ela não altera as migrations 001–004. Antes de aplicá-la, faça backup e confirme explicitamente o banco conectado. Não execute o migrador no banco de validação sem autorização.
+A migration aditiva é `backend/database/migrations/005_team_invitations.sql`. Como ainda não foi aplicada no ambiente de validação, ela foi ajustada na própria PR #51 para registrar o estado de envio e o identificador opcional do provedor. Ela não altera as migrations 001–004. Antes de aplicá-la, faça backup e confirme explicitamente o banco conectado. Não execute o migrador no banco de validação sem autorização.
 
 Testes sem MySQL:
 

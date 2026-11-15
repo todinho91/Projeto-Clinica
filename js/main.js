@@ -142,16 +142,26 @@ async function setupEquipePage() {
                     ).catch((error) => { showMessage(status, error.message); load(); }));
                     roleCell.replaceChildren(select);
                 }
-                row.append(person, roleCell, tableCell(member.status), tableCell(member.convite_status || '—'));
+                const deliveryLabel = {
+                    not_requested: 'Envio pendente',
+                    not_configured: 'E-mail não configurado',
+                    accepted_by_provider: 'Aceito pelo provedor; entrega não confirmada',
+                    delivered: 'Entrega confirmada',
+                    failed: 'Falha no envio'
+                }[member.envio_status];
+                const invitationState = member.convite_status
+                    ? `${member.convite_status}${deliveryLabel ? ` · ${deliveryLabel}` : ''}`
+                    : '—';
+                row.append(person, roleCell, tableCell(member.status), tableCell(invitationState));
                 const actions = document.createElement('td'); actions.className = 'text-end';
                 const addButton = (label, css, handler) => { const button = document.createElement('button'); button.type='button'; button.className=`btn btn-sm ${css} ms-1 mb-1`; button.textContent=label; button.addEventListener('click', handler); actions.append(button); };
                 if (member.status === 'convite_pendente') {
-                    if (member.convite_id) {
+                    if (member.convite_id && member.convite_status === 'pendente') {
                         addButton('Reenviar', 'btn-outline-primary', () => action(`/equipe/convites/${member.convite_id}/reenviar`).catch((e) => showMessage(status,e.message)));
-                        if (member.convite_status === 'pendente') addButton('Revogar', 'btn-outline-danger', () => {
+                        addButton('Revogar', 'btn-outline-danger', () => {
                             if (window.confirm('Revogar este convite pendente?')) action(`/equipe/convites/${member.convite_id}/revogar`).catch((e) => showMessage(status,e.message));
                         });
-                    } else addButton('Gerar convite', 'btn-outline-primary', () => action('/equipe/convites','POST',{ email: member.email, papel: member.papel, nome: member.nome }).catch((e) => showMessage(status,e.message)));
+                    } else addButton(member.convite_id ? 'Gerar novo convite' : 'Gerar convite', 'btn-outline-primary', () => action('/equipe/convites','POST',{ email: member.email, papel: member.papel, nome: member.nome }).catch((e) => showMessage(status,e.message)));
                 }
                 if (member.status === 'ativo') addButton('Desativar', 'btn-outline-danger', () => {
                     if (window.confirm(`Desativar o acesso de ${member.nome}?`)) action(`/equipe/vinculos/${member.id}/status`,'PATCH',{status:'inativo'}).catch((e) => showMessage(status,e.message));

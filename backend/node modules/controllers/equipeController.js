@@ -5,6 +5,7 @@ const { createInvitationToken, hashInvitationToken } = require('../support/invit
 const { invitation } = require('../config/environment');
 
 const ROLES = new Set(['administrador', 'secretaria', 'profissional', 'paciente']);
+const PROFILE_TABLES = Object.freeze({ profissional: 'profissionais', paciente: 'pacientes' });
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function id(value) {
@@ -24,6 +25,55 @@ function mayManage(actorRole, targetRole) {
 
 function logFailure(event, error) {
     console.error(`[equipe] ${event}`, { code: error?.code || 'UNEXPECTED' });
+}
+
+async function hasRequiredProfile(connection, clinicId, userId, role) {
+    const table = PROFILE_TABLES[role];
+    if (!table) return true;
+    const [profiles] = await connection.execute(
+        `SELECT id FROM ${table} WHERE clinica_id = ? AND usuario_id = ? LIMIT 1 FOR UPDATE`,
+        [clinicId, userId]
+    );
+    return profiles.length > 0;
+}
+
+function deliveryPresentation(delivery) {
+    if (delivery.status === 'accepted_by_provider') {
+        return {
+            entrega: 'aceita_pelo_provedor',
+            message: 'Convite criado; solicitação aceita pelo provedor. A entrega ainda não foi confirmada.'
+        };
+    }
+    if (delivery.status === 'delivered') {
+        return { entrega: 'confirmada', message: 'Convite criado e entrega confirmada pelo provedor.' };
+    }
+    if (delivery.status === 'not_configured') {
+        return {
+            entrega: 'nao_configurada',
+            message: 'Convite criado; envio de e-mail não configurado.'
+        };
+    }
+    return { entrega: 'falhou', message: 'Convite criado, mas a solicitação de envio falhou.' };
+}
+
+async function recordDelivery(invitationId, clinicId, delivery) {
+    const allowed = new Set(['not_configured', 'accepted_by_provider', 'delivered', 'failed']);
+    const status = allowed.has(delivery.status) ? delivery.status : 'failed';
+    await pool.execute(`
+        UPDATE convites_clinica
+        SET envio_status = ?, provedor_mensagem_id = ?, envio_atualizado_em = UTC_TIMESTAMP(6)
+        WHERE id = ? AND clinica_id = ?
+    `, [status, delivery.providerMessageId ?? null, invitationId, clinicId]);
+}
+
+async function finishDelivery(req, invitationId, mailPayload) {
+    const delivery = await mailer.sendInvitation(mailPayload);
+    try {
+        await recordDelivery(invitationId, req.tenant.clinicId, delivery);
+    } catch (error) {
+        logFailure('record_delivery_failed', error);
+    }
+    return deliveryPresentation(delivery);
 }
 
 async function invitationRateCheck(connection, clinicId, linkId, creatorId) {
@@ -72,7 +122,8 @@ exports.list = async (req, res) => {
     try {
         const [rows] = await pool.execute(`
             SELECT cu.id, cu.usuario_id, u.nome, u.email, cu.papel, cu.status,
-                   i.id AS convite_id, i.status AS convite_status, i.expira_em, i.criado_em
+                   i.id AS convite_id, i.status AS convite_status, i.expira_em, i.criado_em,
+                   i.envio_status
             FROM clinica_usuarios cu
             JOIN usuarios u ON u.id = cu.usuario_id
             LEFT JOIN convites_clinica i ON i.id = (
@@ -109,6 +160,15 @@ exports.createInvitation = async (req, res) => {
         if (!clinicName) throw new Error('clinic missing');
         const existingUser = userRows[0];
         let userId = existingUser?.id;
+        if (!userId && PROFILE_TABLES[role]) {
+            await connection.rollback();
+            return res.status(409).json({
+                error: role === 'profissional'
+                    ? 'Conclua primeiro o cadastro do profissional na tela Profissionais.'
+                    : 'O paciente deve possuir cadastro clínico antes de receber convite.',
+                code: 'CLINICAL_PROFILE_REQUIRED'
+            });
+        }
         if (!userId) {
             const name = typeof req.body?.nome === 'string' ? req.body.nome.trim() : '';
             if (name.length < 2 || name.length > 160) {
@@ -137,7 +197,16 @@ exports.createInvitation = async (req, res) => {
         }
         if (existing[0] && existing[0].papel !== role) {
             await connection.rollback();
-            return res.status(409).json({ error: 'Vínculo pendente já existe com outro papel.' });
+            return res.status(409).json({ error: 'O vínculo existente possui outro papel. Altere-o pelo fluxo administrativo autorizado.' });
+        }
+        if (!(await hasRequiredProfile(connection, req.tenant.clinicId, userId, role))) {
+            await connection.rollback();
+            return res.status(409).json({
+                error: role === 'profissional'
+                    ? 'Conclua primeiro o cadastro do profissional na tela Profissionais.'
+                    : 'O paciente deve possuir cadastro clínico antes de receber convite.',
+                code: 'CLINICAL_PROFILE_REQUIRED'
+            });
         }
         let linkId = existing[0]?.id;
         if (!linkId) {
@@ -146,6 +215,19 @@ exports.createInvitation = async (req, res) => {
                 VALUES (?, ?, ?, 'convite_pendente')
             `, [req.tenant.clinicId, userId, role]);
             linkId = link.insertId;
+        } else if (existing[0].status === 'inativo') {
+            await connection.execute(`
+                UPDATE clinica_usuarios
+                SET status = 'convite_pendente'
+                WHERE id = ? AND clinica_id = ? AND status = 'inativo'
+            `, [linkId, req.tenant.clinicId]);
+            await audit(connection, req, 'vinculo_reativacao_iniciada', 'clinica_usuario', linkId, {
+                papel: role,
+                status_anterior: 'inativo'
+            });
+        } else if (existing[0].status !== 'convite_pendente') {
+            await connection.rollback();
+            return res.status(409).json({ error: 'Estado do vínculo incompatível com convite.' });
         }
         if (await invitationRateCheck(connection, req.tenant.clinicId, linkId, req.userId)) {
             await connection.rollback();
@@ -160,11 +242,13 @@ exports.createInvitation = async (req, res) => {
         return res.status(500).json({ error: 'Erro ao criar convite.' });
     } finally { connection?.release(); }
 
-    const delivery = await mailer.sendInvitation({ recipient: email, clinicName, role, token: issued.token });
+    const delivery = await finishDelivery(req, issued.id, {
+        recipient: email, clinicName, role, token: issued.token
+    });
     return res.status(201).json({
         id: issued.id,
-        message: delivery.delivered ? 'Convite criado e entregue.' : 'Convite criado; entrega de e-mail não confirmada.',
-        entrega: delivery.delivered ? 'confirmada' : 'nao_confirmada'
+        message: delivery.message,
+        entrega: delivery.entrega
     });
 };
 
@@ -185,6 +269,10 @@ exports.reissue = async (req, res) => {
         target = rows[0];
         if (!target) { await connection.rollback(); return res.status(404).json({ error: 'Convite não encontrado.' }); }
         if (!mayManage(req.tenant.role, target.papel)) { await connection.rollback(); return res.status(403).json({ error: 'Papel não autorizado.' }); }
+        if (target.status !== 'pendente') {
+            await connection.rollback();
+            return res.status(409).json({ error: 'Somente convites pendentes podem ser reenviados.' });
+        }
         if (await invitationRateCheck(
             connection, req.tenant.clinicId, target.clinica_usuario_id, req.userId
         )) {
@@ -207,8 +295,13 @@ exports.reissue = async (req, res) => {
         logFailure('reissue_invitation_failed', error);
         return res.status(500).json({ error: 'Erro ao reenviar convite.' });
     } finally { connection?.release(); }
-    const delivery = await mailer.sendInvitation({ recipient: target.email_normalizado, clinicName: target.clinica_nome, role: target.papel, token: issued.token });
-    return res.status(201).json({ id: issued.id, entrega: delivery.delivered ? 'confirmada' : 'nao_confirmada' });
+    const delivery = await finishDelivery(req, issued.id, {
+        recipient: target.email_normalizado,
+        clinicName: target.clinica_nome,
+        role: target.papel,
+        token: issued.token
+    });
+    return res.status(201).json({ id: issued.id, message: delivery.message, entrega: delivery.entrega });
 };
 
 exports.revoke = async (req, res) => {
@@ -239,6 +332,7 @@ exports.inspectInvitation = async (req, res) => {
     try {
         const [rows] = await pool.execute(`
             SELECT c.nome AS clinica, i.papel, i.expira_em, i.status,
+                   cu.status AS vinculo_status, cu.papel AS vinculo_papel,
                    CASE WHEN u.status = 'bloqueado' THEN 1 ELSE 0 END AS requer_senha
             FROM convites_clinica i
             JOIN clinicas c ON c.id=i.clinica_id
@@ -247,7 +341,8 @@ exports.inspectInvitation = async (req, res) => {
             WHERE i.token_hash=? LIMIT 1
         `, [hash]);
         const item = rows[0];
-        if (!item || item.status !== 'pendente' || new Date(item.expira_em) <= new Date()) {
+        if (!item || item.status !== 'pendente' || item.vinculo_status !== 'convite_pendente'
+            || item.vinculo_papel !== item.papel || new Date(item.expira_em) <= new Date()) {
             return res.status(410).json({ error: 'Convite expirado, revogado ou já utilizado.' });
         }
         return res.status(200).json({ clinica: item.clinica, papel: item.papel, expira_em: item.expira_em, requer_senha: Boolean(item.requer_senha) });
@@ -267,6 +362,7 @@ exports.acceptInvitation = async (req, res) => {
         const [rows] = await connection.execute(`
             SELECT i.id, i.clinica_id, i.papel, i.status, i.expira_em,
                    cu.id AS vinculo_id, cu.usuario_id, cu.status AS vinculo_status,
+                   cu.papel AS vinculo_papel,
                    u.status AS usuario_status
             FROM convites_clinica i
             JOIN clinica_usuarios cu ON cu.id=i.clinica_usuario_id AND cu.clinica_id=i.clinica_id
@@ -274,8 +370,15 @@ exports.acceptInvitation = async (req, res) => {
             WHERE i.token_hash=? FOR UPDATE
         `, [hash]);
         const target = rows[0];
-        if (!target || target.status !== 'pendente' || target.vinculo_status !== 'convite_pendente' || new Date(target.expira_em) <= new Date()) {
+        if (!target || target.status !== 'pendente' || target.vinculo_status !== 'convite_pendente'
+            || target.vinculo_papel !== target.papel || new Date(target.expira_em) <= new Date()) {
             await connection.rollback(); return res.status(410).json({ error: 'Convite expirado, revogado ou já utilizado.' });
+        }
+        if (!(await hasRequiredProfile(
+            connection, target.clinica_id, target.usuario_id, target.papel
+        ))) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'O cadastro clínico precisa ser concluído antes da ativação.' });
         }
         if (target.usuario_status === 'bloqueado') {
             if (typeof password !== 'string' || password.length < 12 || password.length > 200) {
@@ -318,6 +421,10 @@ async function changeLink(req, res, mode) {
         if (!mayManage(req.tenant.role, target.papel) || (mode === 'role' && !mayManage(req.tenant.role, value))) {
             await connection.rollback(); return res.status(403).json({ error: 'Alteração não autorizada.' });
         }
+        if (mode === 'role' && target.status === 'convite_pendente') {
+            await connection.rollback();
+            return res.status(409).json({ error: 'Revogue o convite pendente antes de alterar o papel.' });
+        }
         if (mode === 'role' && ['profissional', 'paciente'].includes(value)) {
             const table = value === 'profissional' ? 'profissionais' : 'pacientes';
             const [profiles] = await connection.execute(
@@ -327,6 +434,25 @@ async function changeLink(req, res, mode) {
             if (profiles.length === 0) {
                 await connection.rollback();
                 return res.status(409).json({ error: `O usuário não possui perfil de ${value} nesta clínica.` });
+            }
+        }
+        if (mode === 'status' && value === 'ativo') {
+            if (target.status === 'convite_pendente') {
+                await connection.rollback();
+                return res.status(409).json({ error: 'O vínculo pendente deve ser ativado pelo aceite do convite.' });
+            }
+            const [users] = await connection.execute(
+                'SELECT status FROM usuarios WHERE id = ? FOR UPDATE', [target.usuario_id]
+            );
+            if (users[0]?.status !== 'ativo') {
+                await connection.rollback();
+                return res.status(409).json({ error: 'A identidade global não está ativa.' });
+            }
+            if (!(await hasRequiredProfile(
+                connection, req.tenant.clinicId, target.usuario_id, target.papel
+            ))) {
+                await connection.rollback();
+                return res.status(409).json({ error: 'O cadastro clínico precisa ser concluído antes da reativação.' });
             }
         }
         const removesAdmin = target.papel === 'administrador' && target.status === 'ativo'
@@ -352,4 +478,4 @@ async function changeLink(req, res, mode) {
 
 exports.updateStatus = (req, res) => changeLink(req, res, 'status');
 exports.updateRole = (req, res) => changeLink(req, res, 'role');
-exports._private = { mayManage, normalizedEmail };
+exports._private = { deliveryPresentation, hasRequiredProfile, mayManage, normalizedEmail };

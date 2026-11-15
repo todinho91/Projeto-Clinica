@@ -10,6 +10,11 @@ CREATE TABLE IF NOT EXISTS convites_clinica (
     aceito_em DATETIME(6) NULL,
     revogado_em DATETIME(6) NULL,
     criado_por_usuario_id BIGINT UNSIGNED NOT NULL,
+    envio_status ENUM(
+        'not_requested', 'not_configured', 'accepted_by_provider', 'delivered', 'failed'
+    ) NOT NULL DEFAULT 'not_requested',
+    provedor_mensagem_id VARCHAR(200) NULL,
+    envio_atualizado_em DATETIME(6) NULL,
     criado_em DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
     UNIQUE KEY uq_convites_token_hash (token_hash),

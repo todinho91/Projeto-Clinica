@@ -2,7 +2,7 @@ const { invitation } = require('../config/environment');
 
 async function sendInvitation({ recipient, clinicName, role, token }) {
     if (invitation.mailProvider !== 'webhook') {
-        return { delivered: false, reason: 'provider_not_configured' };
+        return { status: 'not_configured', delivered: false, reason: 'provider_not_configured' };
     }
 
     const activationUrl = new URL('/aceitar-convite.html', invitation.publicOrigin);
@@ -22,11 +22,17 @@ async function sendInvitation({ recipient, clinicName, role, token }) {
             }),
             signal: AbortSignal.timeout(8000)
         });
-        return response.ok
-            ? { delivered: true }
-            : { delivered: false, reason: 'provider_rejected' };
+        if (!response.ok) {
+            return { status: 'failed', delivered: false, reason: 'provider_rejected' };
+        }
+        const rawMessageId = response.headers?.get?.('x-message-id');
+        return {
+            status: 'accepted_by_provider',
+            delivered: false,
+            providerMessageId: typeof rawMessageId === 'string' ? rawMessageId.slice(0, 200) : null
+        };
     } catch {
-        return { delivered: false, reason: 'provider_unavailable' };
+        return { status: 'failed', delivered: false, reason: 'provider_unavailable' };
     }
 }
 

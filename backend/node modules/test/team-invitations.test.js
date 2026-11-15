@@ -49,12 +49,129 @@ test('secretaria não cria convite administrativo antes de acessar o banco', asy
     assert.equal(res.statusCode,403); assert.equal(get.mock.callCount(),0);
 });
 
-test('convite novo persiste apenas hash, usa tenant autenticado e não afirma entrega', async (t) => {
+test('convite direto de novo profissional exige cadastro completo da PR #50', async (t) => {
     const executions=[];
     const conn=connection(async(sql,params)=>{
         executions.push({sql,params});
         if (/SELECT nome FROM clinicas/.test(sql)) return [[{nome:'Clínica Teste'}]];
-        if (/SELECT id FROM usuarios WHERE email/.test(sql)) return [[]];
+        if (/SELECT id, status FROM usuarios/.test(sql)) return [[]];
+        return [{affectedRows:1}];
+    });
+    const rollback=t.mock.method(conn,'rollback');
+    t.mock.method(pool,'getConnection',async()=>conn);
+    const res=response();
+    await controller.createInvitation({
+        body:{nome:'Profissional sem perfil',email:'sem.perfil@example.test',papel:'profissional'},
+        tenant:{clinicId:11,role:'secretaria'},userId:7
+    },res);
+    assert.equal(res.statusCode,409);
+    assert.equal(res.body.code,'CLINICAL_PROFILE_REQUIRED');
+    assert.equal(rollback.mock.callCount(),1);
+    assert.equal(executions.some(({sql})=>/INSERT INTO usuarios|INSERT INTO clinica_usuarios|INSERT INTO convites_clinica/.test(sql)),false);
+});
+
+test('profissional existente sem perfil clínico não recebe convite', async (t) => {
+    const executions=[];
+    const conn=connection(async(sql,params)=>{
+        executions.push({sql,params});
+        if (/SELECT nome FROM clinicas/.test(sql)) return [[{nome:'Clínica Teste'}]];
+        if (/SELECT id, status FROM usuarios/.test(sql)) return [[{id:70,status:'ativo'}]];
+        if (/SELECT id, papel, status FROM clinica_usuarios/.test(sql)) return [[{id:80,papel:'profissional',status:'convite_pendente'}]];
+        if (/FROM profissionais/.test(sql)) return [[]];
+        return [{affectedRows:1}];
+    });
+    const rollback=t.mock.method(conn,'rollback');
+    t.mock.method(pool,'getConnection',async()=>conn);
+    const res=response();
+    await controller.createInvitation({
+        body:{email:'sem.perfil@example.test',papel:'profissional'},
+        tenant:{clinicId:11,role:'administrador'},userId:7
+    },res);
+    assert.equal(res.statusCode,409);
+    assert.equal(res.body.code,'CLINICAL_PROFILE_REQUIRED');
+    assert.equal(rollback.mock.callCount(),1);
+    assert.equal(executions.some(({sql})=>/INSERT INTO convites_clinica/.test(sql)),false);
+});
+
+test('convite para vínculo inativo inicia reativação pendente com auditoria', async (t) => {
+    const executions=[];
+    const conn=connection(async(sql,params)=>{
+        executions.push({sql,params});
+        if (/SELECT nome FROM clinicas/.test(sql)) return [[{nome:'Clínica Teste'}]];
+        if (/SELECT id, status FROM usuarios/.test(sql)) return [[{id:70,status:'ativo'}]];
+        if (/SELECT id, papel, status FROM clinica_usuarios/.test(sql)) return [[{id:80,papel:'profissional',status:'inativo'}]];
+        if (/FROM profissionais/.test(sql)) return [[{id:44}]];
+        if (/SELECT id, criado_em FROM convites_clinica/.test(sql)) return [[]];
+        if (/criado_por_usuario_id/.test(sql) && /SELECT/.test(sql)) return [[]];
+        if (/INSERT INTO convites_clinica/.test(sql)) return [{insertId:90}];
+        return [{affectedRows:1}];
+    });
+    t.mock.method(pool,'getConnection',async()=>conn);
+    t.mock.method(pool,'execute',async()=>[{affectedRows:1}]);
+    t.mock.method(mailer,'sendInvitation',async()=>({status:'not_configured',delivered:false}));
+    const res=response();
+    await controller.createInvitation({
+        body:{email:'profissional@example.test',papel:'profissional'},
+        tenant:{clinicId:11,role:'secretaria'},userId:7
+    },res);
+    assert.equal(res.statusCode,201);
+    const transition=executions.find(({sql})=>/UPDATE clinica_usuarios[\s\S]*status = 'convite_pendente'/.test(sql));
+    assert.deepEqual(transition.params,[80,11]);
+    assert.ok(executions.some(({sql,params})=>/INSERT INTO auditoria/.test(sql)&&params.includes('vinculo_reativacao_iniciada')));
+    assert.ok(executions.findIndex(({sql})=>/status = 'convite_pendente'/.test(sql))
+        < executions.findIndex(({sql})=>/INSERT INTO convites_clinica/.test(sql)));
+});
+
+test('convite para vínculo pendente preserva papel e não refaz transição', async (t) => {
+    const executions=[];
+    const conn=connection(async(sql,params)=>{
+        executions.push({sql,params});
+        if (/SELECT nome FROM clinicas/.test(sql)) return [[{nome:'Clínica Teste'}]];
+        if (/SELECT id, status FROM usuarios/.test(sql)) return [[{id:70,status:'bloqueado'}]];
+        if (/SELECT id, papel, status FROM clinica_usuarios/.test(sql)) return [[{id:80,papel:'profissional',status:'convite_pendente'}]];
+        if (/FROM profissionais/.test(sql)) return [[{id:44}]];
+        if (/SELECT id, criado_em FROM convites_clinica/.test(sql)) return [[]];
+        if (/criado_por_usuario_id/.test(sql) && /SELECT/.test(sql)) return [[]];
+        if (/INSERT INTO convites_clinica/.test(sql)) return [{insertId:90}];
+        return [{affectedRows:1}];
+    });
+    t.mock.method(pool,'getConnection',async()=>conn);
+    t.mock.method(pool,'execute',async()=>[{affectedRows:1}]);
+    t.mock.method(mailer,'sendInvitation',async()=>({status:'not_configured',delivered:false}));
+    const res=response();
+    await controller.createInvitation({
+        body:{email:'profissional@example.test',papel:'profissional'},
+        tenant:{clinicId:11,role:'secretaria'},userId:7
+    },res);
+    assert.equal(res.statusCode,201);
+    assert.equal(executions.some(({sql})=>/UPDATE clinica_usuarios/.test(sql)),false);
+    assert.ok(executions.some(({sql})=>/INSERT INTO convites_clinica/.test(sql)));
+});
+
+test('vínculo inativo não pode trocar de papel por meio de convite', async (t) => {
+    const conn=connection(async(sql)=>{
+        if (/SELECT nome FROM clinicas/.test(sql)) return [[{nome:'Clínica Teste'}]];
+        if (/SELECT id, status FROM usuarios/.test(sql)) return [[{id:70,status:'ativo'}]];
+        if (/SELECT id, papel, status FROM clinica_usuarios/.test(sql)) return [[{id:80,papel:'profissional',status:'inativo'}]];
+        return [{affectedRows:1}];
+    });
+    const rollback=t.mock.method(conn,'rollback');
+    t.mock.method(pool,'getConnection',async()=>conn);
+    const res=response();
+    await controller.createInvitation({
+        body:{email:'profissional@example.test',papel:'administrador'},
+        tenant:{clinicId:11,role:'administrador'},userId:7
+    },res);
+    assert.equal(res.statusCode,409);
+    assert.equal(rollback.mock.callCount(),1);
+});
+
+test('convite administrativo novo persiste só hash e não afirma entrega sem provedor', async (t) => {
+    const executions=[];
+    const conn=connection(async(sql,params)=>{
+        executions.push({sql,params});
+        if (/SELECT nome FROM clinicas/.test(sql)) return [[{nome:'Clínica Teste'}]];
+        if (/SELECT id, status FROM usuarios WHERE email/.test(sql)) return [[]];
         if (/INSERT INTO usuarios/.test(sql)) return [{insertId:70}];
         if (/SELECT id, papel, status FROM clinica_usuarios/.test(sql)) return [[]];
         if (/INSERT INTO clinica_usuarios/.test(sql)) return [{insertId:80}];
@@ -62,20 +179,26 @@ test('convite novo persiste apenas hash, usa tenant autenticado e não afirma en
         return [{affectedRows:1}];
     });
     t.mock.method(pool,'getConnection',async()=>conn);
-    t.mock.method(mailer,'sendInvitation',async()=>({delivered:false,reason:'provider_not_configured'}));
-    const res=response(); await controller.createInvitation({body:{nome:'Pessoa',email:'PESSOA@example.test',papel:'profissional',clinica_id:999},tenant:{clinicId:11,role:'secretaria'},userId:7},res);
-    assert.equal(res.statusCode,201); assert.equal(res.body.entrega,'nao_confirmada'); assert.match(res.body.message,/não confirmada/);
+    t.mock.method(pool,'execute',async(sql,params)=>{
+        executions.push({sql,params}); return [{affectedRows:1}];
+    });
+    t.mock.method(mailer,'sendInvitation',async()=>({status:'not_configured',delivered:false}));
+    const res=response(); await controller.createInvitation({body:{nome:'Pessoa',email:'PESSOA@example.test',papel:'secretaria',clinica_id:999},tenant:{clinicId:11,role:'administrador'},userId:7},res);
+    assert.equal(res.statusCode,201); assert.equal(res.body.entrega,'nao_configurada'); assert.match(res.body.message,/não configurado/);
     assert.equal('token' in res.body, false);
     const insert=executions.find(({sql})=>/INSERT INTO convites_clinica/.test(sql));
     assert.equal(insert.params[0],11); assert.equal(insert.params[2],'pessoa@example.test'); assert.match(insert.params[4],/^[a-f0-9]{64}$/);
     assert.equal(executions.some(({params})=>params?.includes(999)),false);
+    const deliveryUpdate=executions.find(({sql})=>/SET envio_status = \?/.test(sql));
+    assert.deepEqual(deliveryUpdate.params,['not_configured',null,90,11]);
 });
 
 test('aceitação de conta nova ativa usuário e vínculo em uma única transação', async (t) => {
     const token=createInvitationToken(); const executions=[];
     const conn=connection(async(sql,params)=>{
         executions.push({sql,params});
-        if (/FROM convites_clinica i/.test(sql)) return [[{id:90,clinica_id:11,papel:'profissional',status:'pendente',expira_em:new Date(Date.now()+60000),vinculo_id:80,usuario_id:70,vinculo_status:'convite_pendente',usuario_status:'bloqueado'}]];
+        if (/FROM convites_clinica i/.test(sql)) return [[{id:90,clinica_id:11,papel:'profissional',status:'pendente',expira_em:new Date(Date.now()+60000),vinculo_id:80,usuario_id:70,vinculo_status:'convite_pendente',vinculo_papel:'profissional',usuario_status:'bloqueado'}]];
+        if (/FROM profissionais/.test(sql)) return [[{id:44}]];
         return [{affectedRows:1}];
     });
     const commit=t.mock.method(conn,'commit'); t.mock.method(pool,'getConnection',async()=>conn);
@@ -91,7 +214,7 @@ test('conta existente autenticada ativa apenas o novo vínculo e preserva creden
     const token=createInvitationToken(); const executions=[];
     const conn=connection(async(sql,params)=>{
         executions.push({sql,params});
-        if (/FROM convites_clinica i/.test(sql)) return [[{id:90,clinica_id:11,papel:'secretaria',status:'pendente',expira_em:new Date(Date.now()+60000),vinculo_id:80,usuario_id:70,vinculo_status:'convite_pendente',usuario_status:'ativo'}]];
+        if (/FROM convites_clinica i/.test(sql)) return [[{id:90,clinica_id:11,papel:'secretaria',status:'pendente',expira_em:new Date(Date.now()+60000),vinculo_id:80,usuario_id:70,vinculo_status:'convite_pendente',vinculo_papel:'secretaria',usuario_status:'ativo'}]];
         return [{affectedRows:1}];
     });
     t.mock.method(pool,'getConnection',async()=>conn); const res=response();
@@ -114,19 +237,42 @@ test('reenvio invalida pendentes anteriores antes de criar token substituto', as
         return [{affectedRows:1}];
     });
     t.mock.method(pool,'getConnection',async()=>conn);
-    t.mock.method(mailer,'sendInvitation',async()=>({delivered:true}));
+    t.mock.method(pool,'execute',async()=>[{affectedRows:1}]);
+    t.mock.method(mailer,'sendInvitation',async()=>({status:'accepted_by_provider',delivered:false}));
     const res=response(); await controller.reissue({params:{id:'90'},tenant:{clinicId:11,role:'secretaria'},userId:7},res);
     assert.equal(res.statusCode,201); assert.equal(res.body.id,91);
     const revokeIndex=executions.findIndex(({sql})=>/UPDATE convites_clinica\s+SET status = 'revogado'/.test(sql));
     const insertIndex=executions.findIndex(({sql})=>/INSERT INTO convites_clinica/.test(sql));
     assert.ok(revokeIndex >= 0 && insertIndex > revokeIndex);
+    assert.equal(res.body.entrega,'aceita_pelo_provedor');
+    assert.match(res.body.message,/entrega ainda não foi confirmada/i);
+});
+
+test('convite revogado não pode ser reenviado como se ainda estivesse pendente', async (t) => {
+    const executions=[];
+    const conn=connection(async(sql,params)=>{
+        executions.push({sql,params});
+        if (/SELECT i\.\*, c\.nome/.test(sql)) return [[{
+            id:90,clinica_id:11,clinica_usuario_id:80,email_normalizado:'pessoa@example.test',
+            papel:'profissional',status:'revogado',clinica_nome:'Clínica Teste'
+        }]];
+        return [{affectedRows:1}];
+    });
+    const rollback=t.mock.method(conn,'rollback');
+    t.mock.method(pool,'getConnection',async()=>conn);
+    const res=response();
+    await controller.reissue({params:{id:'90'},tenant:{clinicId:11,role:'secretaria'},userId:7},res);
+    assert.equal(res.statusCode,409);
+    assert.equal(rollback.mock.callCount(),1);
+    assert.equal(executions.some(({sql})=>/INSERT INTO convites_clinica/.test(sql)),false);
 });
 
 test('conta existente exige autenticação da própria identidade e preserva senha', async (t) => {
     const token=createInvitationToken(); const executions=[];
     const conn=connection(async(sql,params)=>{
         executions.push({sql,params});
-        if (/FROM convites_clinica i/.test(sql)) return [[{id:90,clinica_id:11,papel:'profissional',status:'pendente',expira_em:new Date(Date.now()+60000),vinculo_id:80,usuario_id:70,vinculo_status:'convite_pendente',usuario_status:'ativo'}]];
+        if (/FROM convites_clinica i/.test(sql)) return [[{id:90,clinica_id:11,papel:'profissional',status:'pendente',expira_em:new Date(Date.now()+60000),vinculo_id:80,usuario_id:70,vinculo_status:'convite_pendente',vinculo_papel:'profissional',usuario_status:'ativo'}]];
+        if (/FROM profissionais/.test(sql)) return [[{id:44}]];
         return [{affectedRows:1}];
     });
     const rollback=t.mock.method(conn,'rollback'); t.mock.method(pool,'getConnection',async()=>conn);
@@ -141,6 +287,27 @@ test('convite revogado, expirado ou já aceito é recusado sem alteração', asy
     const rollback=t.mock.method(conn,'rollback'); t.mock.method(pool,'getConnection',async()=>conn);
     const res=response(); await controller.acceptInvitation({params:{token},body:{}},res);
     assert.equal(res.statusCode,410); assert.equal(rollback.mock.callCount(),1);
+});
+
+test('aceite legado não ativa profissional sem perfil clínico', async (t) => {
+    const token=createInvitationToken(); const executions=[];
+    const conn=connection(async(sql,params)=>{
+        executions.push({sql,params});
+        if (/FROM convites_clinica i/.test(sql)) return [[{
+            id:90,clinica_id:11,papel:'profissional',status:'pendente',
+            expira_em:new Date(Date.now()+60000),vinculo_id:80,usuario_id:70,
+            vinculo_status:'convite_pendente',vinculo_papel:'profissional',usuario_status:'bloqueado'
+        }]];
+        if (/FROM profissionais/.test(sql)) return [[]];
+        return [{affectedRows:1}];
+    });
+    const rollback=t.mock.method(conn,'rollback');
+    t.mock.method(pool,'getConnection',async()=>conn);
+    const res=response();
+    await controller.acceptInvitation({params:{token},body:{senha:'senha-segura-123'}},res);
+    assert.equal(res.statusCode,409);
+    assert.equal(rollback.mock.callCount(),1);
+    assert.equal(executions.some(({sql})=>/UPDATE usuarios|UPDATE clinica_usuarios SET status='ativo'/.test(sql)),false);
 });
 
 test('consulta pública rejeita token manipulado sem acessar o banco', async (t) => {
@@ -197,6 +364,42 @@ test('não permite desativar o último administrador ativo', async (t) => {
     assert.match(executions[0].sql, /clinicas WHERE id=\? FOR UPDATE/);
     assert.ok(executions.some(({sql})=>/papel='administrador'.*FOR UPDATE/.test(sql)));
     assert.equal(executions.some(({sql})=>/UPDATE clinica_usuarios SET status/.test(sql)),false);
+});
+
+test('vínculo pendente não pode ser ativado sem aceite do titular', async (t) => {
+    const conn=connection(async(sql)=>{
+        if (/SELECT id FROM clinicas/.test(sql)) return [[{id:11}]];
+        if (/SELECT id, usuario_id, papel, status/.test(sql)) return [[{id:80,usuario_id:70,papel:'profissional',status:'convite_pendente'}]];
+        return [{affectedRows:1}];
+    });
+    const rollback=t.mock.method(conn,'rollback');
+    t.mock.method(pool,'getConnection',async()=>conn);
+    const res=response();
+    await controller.updateStatus({params:{id:'80'},body:{status:'ativo'},tenant:{clinicId:11,role:'secretaria'},userId:7},res);
+    assert.equal(res.statusCode,409);
+    assert.equal(rollback.mock.callCount(),1);
+});
+
+test('reativação direta preserva papel e exige identidade e perfil ativos', async (t) => {
+    const executions=[];
+    const conn=connection(async(sql,params)=>{
+        executions.push({sql,params});
+        if (/SELECT id FROM clinicas/.test(sql)) return [[{id:11}]];
+        if (/SELECT id, usuario_id, papel, status/.test(sql)) return [[{id:80,usuario_id:70,papel:'profissional',status:'inativo'}]];
+        if (/SELECT status FROM usuarios/.test(sql)) return [[{status:'ativo'}]];
+        if (/FROM profissionais/.test(sql)) return [[{id:44}]];
+        return [{affectedRows:1}];
+    });
+    const commit=t.mock.method(conn,'commit');
+    t.mock.method(pool,'getConnection',async()=>conn);
+    const res=response();
+    await controller.updateStatus({params:{id:'80'},body:{status:'ativo'},tenant:{clinicId:11,role:'secretaria'},userId:7},res);
+    assert.equal(res.statusCode,200);
+    assert.equal(commit.mock.callCount(),1);
+    const update=executions.find(({sql})=>/UPDATE clinica_usuarios SET status=\?/.test(sql));
+    assert.deepEqual(update.params,['ativo',80,11]);
+    assert.equal(executions.some(({sql})=>/SET papel=/.test(sql)),false);
+    assert.ok(executions.some(({sql,params})=>/INSERT INTO auditoria/.test(sql)&&params.includes('vinculo_status_alterado')));
 });
 
 test('limitador público bloqueia força bruta após a cota por IP', () => {
