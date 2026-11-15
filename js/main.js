@@ -173,10 +173,55 @@ async function setupClinicProvisioningPage() {
             const detail = document.createElement('span');
             detail.textContent = `${clinic.slug} · ${clinic.timezone}`;
             const admin = document.createElement('small');
+            const adminStatusLabel = {
+                ativo: 'acesso ativo',
+                convite_pendente: 'ativação pendente',
+                inativo: 'acesso inativo'
+            }[clinic.administrador_status] || clinic.administrador_status;
             admin.textContent = clinic.administrador_email
-                ? `Administrador: ${clinic.administrador_email} · ${clinic.administrador_status}`
+                ? `Administrador: ${clinic.administrador_email} · ${adminStatusLabel}`
                 : 'Administrador ainda não definido';
-            card.append(title, detail, admin);
+            const invitationState = document.createElement('small');
+            invitationState.className = 'vitalis-provisioning-invitation';
+            if (clinic.administrador_status === 'ativo') {
+                invitationState.textContent = 'Acesso do administrador ativo';
+            } else if (clinic.convite_expirado) {
+                invitationState.textContent = 'Convite expirado';
+            } else if (clinic.convite_envio_status === 'failed') {
+                invitationState.textContent = 'Falha ao solicitar o envio';
+            } else if (clinic.convite_envio_status === 'not_configured') {
+                invitationState.textContent = 'E-mail não configurado';
+            } else if (clinic.convite_envio_status === 'accepted_by_provider') {
+                invitationState.textContent = 'Envio aceito pelo provedor; entrega não confirmada';
+            } else if (clinic.convite_envio_status === 'delivered') {
+                invitationState.textContent = 'Entrega confirmada; aceite pendente';
+            } else {
+                invitationState.textContent = clinic.convite_status
+                    ? `Convite ${clinic.convite_status}`
+                    : 'Convite ainda não disponível';
+            }
+            card.append(title, detail, admin, invitationState);
+            if (clinic.pode_reenviar_convite && clinic.convite_id) {
+                const resend = document.createElement('button');
+                resend.type = 'button';
+                resend.className = 'btn btn-sm btn-outline-primary mt-2';
+                resend.textContent = 'Gerar novo convite';
+                resend.addEventListener('click', async () => {
+                    if (!window.confirm(`Invalidar o convite anterior e gerar outro para ${clinic.administrador_email}?`)) return;
+                    try {
+                        const data = await apiRequest(
+                            `/plataforma/clinicas/${clinic.id}/convites/${clinic.convite_id}/reenviar`,
+                            { method: 'POST' },
+                            'identity'
+                        );
+                        showMessage(status, data.message, 'success');
+                        await loadClinics();
+                    } catch (error) {
+                        showMessage(status, error.message);
+                    }
+                });
+                card.append(resend);
+            }
             list.append(card);
         });
         if (!clinics.length) showMessage(listStatus, 'Nenhuma clínica provisionada.');

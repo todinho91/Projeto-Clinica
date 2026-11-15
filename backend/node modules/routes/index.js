@@ -30,6 +30,11 @@ router.post('/auth/select-clinic', identityOnly, authController.selectClinic);
 router.get('/plataforma/capacidades', identityOnly, clinicaController.capabilities);
 router.get('/plataforma/clinicas', identityOnly, clinicaController.listPlatformClinics);
 router.post('/plataforma/clinicas', identityOnly, clinicaController.provision);
+router.post(
+    '/plataforma/clinicas/:clinicId/convites/:invitationId/reenviar',
+    identityOnly,
+    clinicaController.reissueInitialInvitation
+);
 
 router.use(tenantContext);
 

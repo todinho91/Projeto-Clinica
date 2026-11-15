@@ -34,3 +34,18 @@ test('configurações são exclusivas de administrador e interface cobre 360 e 3
     assert.match(css, /\.vitalis-provisioning-grid/);
     assert.match(css, /overflow-wrap: anywhere/);
 });
+
+test('painel da plataforma apresenta estado e reenvio do convite inicial', async () => {
+    const [page, main, routes] = await Promise.all([
+        fs.readFile(path.join(root, 'provisionamento-clinicas.html'), 'utf8'),
+        fs.readFile(path.join(root, 'js', 'main.js'), 'utf8'),
+        fs.readFile(path.join(root, 'backend', 'node modules', 'routes', 'index.js'), 'utf8')
+    ]);
+    assert.match(page, /id="provisionamento-lista"/);
+    assert.match(main, /Convite expirado/);
+    assert.match(main, /Falha ao solicitar o envio/);
+    assert.match(main, /Gerar novo convite/);
+    assert.match(main, /\/plataforma\/clinicas\/\$\{clinic\.id\}\/convites\/\$\{clinic\.convite_id\}\/reenviar/);
+    assert.match(routes, /:clinicId\/convites\/:invitationId\/reenviar/);
+    assert.match(routes, /identityOnly,[\s\S]{0,100}clinicaController\.reissueInitialInvitation/);
+});

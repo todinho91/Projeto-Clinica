@@ -38,6 +38,11 @@ function logFailure(event, error) {
     console.error(`[clinicas] ${event}`, { code: error?.code || 'UNEXPECTED' });
 }
 
+function positiveId(value) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 async function platformOperator(executor, userId, lock = false) {
     const [rows] = await executor.execute(`
         SELECT op.id, op.status AS operador_status, u.status AS usuario_status
@@ -66,6 +71,22 @@ function deliveryPresentation(delivery) {
         return { entrega: 'nao_configurada', message: 'Clínica criada; envio de e-mail não configurado.' };
     }
     return { entrega: 'falhou', message: 'Clínica criada, mas a solicitação de envio do convite falhou.' };
+}
+
+function reissueDeliveryPresentation(delivery) {
+    if (delivery.status === 'accepted_by_provider') {
+        return {
+            entrega: 'aceita_pelo_provedor',
+            message: 'Novo convite criado e aceito pelo provedor; a entrega ainda não foi confirmada.'
+        };
+    }
+    if (delivery.status === 'delivered') {
+        return { entrega: 'confirmada', message: 'Novo convite criado e entrega confirmada.' };
+    }
+    if (delivery.status === 'not_configured') {
+        return { entrega: 'nao_configurada', message: 'Novo convite criado; envio de e-mail não configurado.' };
+    }
+    return { entrega: 'falhou', message: 'Novo convite criado, mas a solicitação de envio falhou.' };
 }
 
 async function recordDelivery(invitationId, clinicId, delivery) {
@@ -97,7 +118,11 @@ exports.listPlatformClinics = async (req, res) => {
         const [rows] = await pool.execute(`
             SELECT c.id, c.nome, c.slug, c.timezone, c.status,
                    u.nome AS administrador_nome, u.email AS administrador_email,
-                   cu.status AS administrador_status
+                   cu.status AS administrador_status,
+                   i.id AS convite_id, i.status AS convite_status,
+                   i.expira_em AS convite_expira_em, i.envio_status AS convite_envio_status,
+                   CASE WHEN i.criado_por_operador_id IS NOT NULL THEN 1 ELSE 0 END
+                     AS convite_origem_plataforma
             FROM clinicas c
             LEFT JOIN clinica_usuarios cu
               ON cu.id = (
@@ -106,13 +131,165 @@ exports.listPlatformClinics = async (req, res) => {
                 ORDER BY cu2.id LIMIT 1
               )
             LEFT JOIN usuarios u ON u.id = cu.usuario_id
+            LEFT JOIN convites_clinica i
+              ON i.id = (
+                SELECT i2.id FROM convites_clinica i2
+                WHERE i2.clinica_id = c.id AND i2.clinica_usuario_id = cu.id
+                ORDER BY i2.id DESC LIMIT 1
+              )
             ORDER BY c.nome, c.id
         `);
-        return res.status(200).json(rows.map((row) => ({ ...row, id: Number(row.id) })));
+        return res.status(200).json(rows.map((row) => {
+            const expired = row.convite_expira_em
+                ? new Date(row.convite_expira_em).getTime() <= Date.now()
+                : false;
+            const failedDelivery = ['not_requested', 'not_configured', 'failed']
+                .includes(row.convite_envio_status);
+            return {
+                ...row,
+                id: Number(row.id),
+                convite_id: row.convite_id === null ? null : Number(row.convite_id),
+                convite_expirado: expired,
+                pode_reenviar_convite: row.administrador_status === 'convite_pendente'
+                    && row.convite_status === 'pendente'
+                    && Boolean(row.convite_origem_plataforma)
+                    && (expired || failedDelivery)
+            };
+        }));
     } catch (error) {
         logFailure('platform_list_failed', error);
         return res.status(500).json({ error: 'Erro ao listar clínicas.' });
     }
+};
+
+exports.reissueInitialInvitation = async (req, res) => {
+    const clinicId = positiveId(req.params.clinicId);
+    const invitationId = positiveId(req.params.invitationId);
+    if (!clinicId || !invitationId) {
+        return res.status(400).json({ error: 'Clínica ou convite inválido.' });
+    }
+    let connection;
+    let issued;
+    let target;
+    try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        const operator = await platformOperator(connection, req.userId, true);
+        if (!operator) {
+            await connection.rollback();
+            return res.status(403).json({ error: 'Operação restrita à plataforma.' });
+        }
+        const [rows] = await connection.execute(`
+            SELECT i.id, i.clinica_id, i.clinica_usuario_id, i.email_normalizado,
+                   i.papel, i.status, i.expira_em, i.envio_status,
+                   i.criado_por_operador_id,
+                   c.nome AS clinica_nome, c.status AS clinica_status,
+                   cu.status AS vinculo_status, cu.papel AS vinculo_papel,
+                   u.status AS usuario_status, u.motivo_bloqueio,
+                   u.email AS usuario_email
+            FROM convites_clinica i
+            JOIN clinicas c ON c.id = i.clinica_id
+            JOIN clinica_usuarios cu
+              ON cu.id = i.clinica_usuario_id AND cu.clinica_id = i.clinica_id
+            JOIN usuarios u ON u.id = cu.usuario_id
+            WHERE i.id = ? AND i.clinica_id = ?
+            FOR UPDATE
+        `, [invitationId, clinicId]);
+        target = rows[0];
+        if (!target) {
+            await connection.rollback();
+            return res.status(404).json({ error: 'Convite inicial não encontrado nesta clínica.' });
+        }
+        if (target.status !== 'pendente') {
+            await connection.rollback();
+            return res.status(409).json({ error: 'Este convite já foi substituído, revogado ou aceito.' });
+        }
+        if (!target.criado_por_operador_id) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'Este convite não pertence ao provisionamento inicial.' });
+        }
+        if (target.clinica_status !== 'ativa'
+            || target.papel !== 'administrador'
+            || target.vinculo_papel !== 'administrador'
+            || target.vinculo_status !== 'convite_pendente'
+            || target.email_normalizado !== String(target.usuario_email).toLowerCase()) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'O primeiro administrador não está pendente de ativação.' });
+        }
+        if (target.usuario_status === 'inativo'
+            || (target.usuario_status === 'bloqueado'
+                && target.motivo_bloqueio !== 'ativacao_pendente')) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'A identidade do administrador não está disponível para convite.' });
+        }
+        const expired = new Date(target.expira_em).getTime() <= Date.now();
+        const failedDelivery = ['not_requested', 'not_configured', 'failed']
+            .includes(target.envio_status);
+        if (!expired && !failedDelivery) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'O convite atual ainda está válido e não possui falha de envio.' });
+        }
+        const [recent] = await connection.execute(`
+            SELECT id FROM convites_clinica
+            WHERE clinica_id = ? AND clinica_usuario_id = ?
+              AND criado_em >= DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 HOUR)
+            LIMIT 6 FOR UPDATE
+        `, [clinicId, target.clinica_usuario_id]);
+        if (recent.length >= 5) {
+            await connection.rollback();
+            return res.status(429).json({ error: 'Limite de reenvios atingido. Tente novamente mais tarde.' });
+        }
+        await connection.execute(`
+            UPDATE convites_clinica
+            SET status = 'revogado', revogado_em = UTC_TIMESTAMP(6)
+            WHERE clinica_id = ? AND clinica_usuario_id = ? AND status = 'pendente'
+        `, [clinicId, target.clinica_usuario_id]);
+        const token = createInvitationToken();
+        const [result] = await connection.execute(`
+            INSERT INTO convites_clinica (
+                clinica_id, clinica_usuario_id, email_normalizado, papel,
+                token_hash, expira_em, criado_por_usuario_id, criado_por_operador_id
+            ) VALUES (?, ?, ?, 'administrador', ?,
+                DATE_ADD(UTC_TIMESTAMP(6), INTERVAL ? HOUR), NULL, ?)
+        `, [
+            clinicId, target.clinica_usuario_id, target.email_normalizado,
+            hashInvitationToken(token), invitation.ttlHours, operator.id
+        ]);
+        issued = { id: Number(result.insertId), token };
+        await connection.execute(`
+            INSERT INTO auditoria_plataforma (
+                operador_plataforma_id, clinica_id, acao, entidade_tipo, entidade_id, metadados
+            ) VALUES (?, ?, 'convite_inicial_reenviado', 'convite_clinica', ?, ?)
+        `, [
+            operator.id, clinicId, issued.id,
+            JSON.stringify({ convite_anterior_id: invitationId })
+        ]);
+        await connection.commit();
+    } catch (error) {
+        if (connection) await connection.rollback().catch(() => {});
+        logFailure('initial_invitation_reissue_failed', error);
+        return res.status(500).json({ error: 'Erro ao reenviar convite inicial.' });
+    } finally {
+        connection?.release();
+    }
+
+    const delivery = await mailer.sendInvitation({
+        recipient: target.email_normalizado,
+        clinicName: target.clinica_nome,
+        role: 'administrador',
+        token: issued.token
+    });
+    try {
+        await recordDelivery(issued.id, clinicId, delivery);
+    } catch (error) {
+        logFailure('record_reissue_delivery_failed', error);
+    }
+    const presentation = reissueDeliveryPresentation(delivery);
+    return res.status(201).json({
+        convite_id: issued.id,
+        entrega: presentation.entrega,
+        message: presentation.message
+    });
 };
 
 exports.provision = async (req, res) => {
@@ -218,6 +395,9 @@ exports.provision = async (req, res) => {
         if (error.code === 'ER_DUP_ENTRY') {
             return res.status(409).json({ error: 'Já existe uma clínica com este slug.' });
         }
+        if (error.code === 'ER_LOCK_DEADLOCK') {
+            return res.status(409).json({ error: 'Provisionamento concorrente detectado. Atualize a lista e tente novamente.' });
+        }
         logFailure('provision_failed', error);
         return res.status(500).json({ error: 'Erro ao provisionar clínica.' });
     } finally {
@@ -311,4 +491,7 @@ exports.updateSettings = async (req, res) => {
     }
 };
 
-exports._private = { deliveryPresentation, email, platformOperator, slug, text, timezone };
+exports._private = {
+    deliveryPresentation, email, platformOperator, positiveId,
+    reissueDeliveryPresentation, slug, text, timezone
+};

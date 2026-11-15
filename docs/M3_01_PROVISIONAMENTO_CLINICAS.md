@@ -11,6 +11,13 @@ Usuários já ativos preservam nome, senha e vínculos anteriores. O convite dev
 com um token de identidade da própria conta. Para uma identidade nova, a senha é definida
 pelo titular durante o aceite. Contas inativas ou bloqueadas por segurança são recusadas.
 
+Se o convite inicial expirar ou a solicitação de envio falhar, um operador ativo da
+plataforma pode gerar outro pela página de provisionamento. A operação exige o ID da
+clínica e do convite atualmente exibido, bloqueia o registro durante a transação, revoga
+todos os tokens pendentes daquele vínculo e registra o novo convite em
+`auditoria_plataforma`. Vínculos já ativos e identidades bloqueadas por segurança não
+podem usar esse fluxo.
+
 ## Autorização da plataforma
 
 A migration `006_clinic_provisioning.sql` cria `operadores_plataforma`. A tabela não recebe
@@ -95,6 +102,9 @@ Ela não foi executada por esta implementação.
 ## Cenários manuais
 
 - provisionar uma clínica com slug inédito e aceitar o convite do primeiro administrador;
+- expirar o convite inicial, reenviar e confirmar que somente o novo token funciona;
+- provocar falha de envio e confirmar que o botão de reenvio fica disponível;
+- tentar dois reenvios simultâneos por operadores distintos e confirmar somente um novo convite;
 - repetir o slug e confirmar resposta de conflito sem registros parciais;
 - usar uma conta já vinculada a outra clínica e confirmar que a senha e o vínculo anterior
   permanecem intactos;

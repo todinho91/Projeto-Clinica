@@ -117,6 +117,8 @@ html { scroll-behavior: smooth; }
 .vitalis-provisioning-card strong { color: var(--vitalis-navy); }
 .vitalis-provisioning-card span { margin-top: .2rem; color: var(--vitalis-blue); font-size: .78rem; }
 .vitalis-provisioning-card small { margin-top: .3rem; color: var(--vitalis-muted); }
+.vitalis-provisioning-invitation { padding-top: .45rem; border-top: 1px solid var(--vitalis-border); font-weight: 650; }
+.vitalis-provisioning-card .btn { width: 100%; white-space: normal; }
 
 /* PR50: responsividade e rolagem interna */
 html, body.vitalis-dashboard-body {
