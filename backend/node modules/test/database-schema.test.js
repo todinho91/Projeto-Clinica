@@ -127,3 +127,13 @@ test('gestão de pacientes adiciona índices tenant-aware sem destruir dados', a
     assert.match(sql, /KEY idx_pacientes_nascimento_nome \(clinica_id, data_nascimento, nome\)/);
     assert.doesNotMatch(sql, /DROP|TRUNCATE|DELETE|UPDATE|INSERT/i);
 });
+
+test('pré-voo da migration 008 inclui e-mails vazios e usa a collation real', async () => {
+    const documentation = await fs.readFile(
+        path.join(__dirname, '..', '..', '..', 'docs', 'M5_1_PACIENTES.md'), 'utf8'
+    );
+    assert.match(documentation, /WHERE email IS NOT NULL/);
+    assert.match(documentation, /GROUP BY clinica_id, email/);
+    assert.doesNotMatch(documentation, /TRIM\(email\) <> ''/);
+    assert.match(documentation, /inclui e-mails vazios/);
+});

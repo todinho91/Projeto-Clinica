@@ -2,6 +2,13 @@ const pool = require('../config/database');
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const MAX_PAGE = 100000;
+
+function logFailure(operation, error) {
+    const code = typeof error?.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(error.code)
+        ? error.code : 'UNEXPECTED';
+    console.error('[pacientes] operation_failed', { operation, code });
+}
 
 function positiveId(value) {
     const id = Number(value);
@@ -50,6 +57,14 @@ function patientPayload(body = {}) {
     if (!name || email === undefined || phone === undefined || birthDate === undefined
         || !['ativo', 'inativo'].includes(status)) return null;
     return { name, email, phone, birthDate, status };
+}
+
+function boundedInteger(value, fallback, maximum) {
+    if (value === undefined || value === null || value === '') return fallback;
+    const text = String(value);
+    if (!/^[1-9]\d*$/.test(text)) return null;
+    const parsed = Number(text);
+    return Number.isSafeInteger(parsed) && parsed <= maximum ? parsed : null;
 }
 
 function maskEmail(value) {
@@ -116,10 +131,10 @@ async function duplicatePatient(connection, clinicId, payload, ignoredId = 0) {
 exports.listForManagement = async (req, res) => {
     const search = typeof req.query?.busca === 'string' ? req.query.busca.trim() : '';
     const status = req.query?.status || 'todos';
-    const page = Math.max(1, Number.parseInt(req.query?.pagina, 10) || 1);
-    const requestedLimit = Number.parseInt(req.query?.limite, 10) || 20;
-    const limit = Math.min(50, Math.max(1, requestedLimit));
-    if (search.length > 100 || !['todos', 'ativo', 'inativo'].includes(status)) {
+    const page = boundedInteger(req.query?.pagina, 1, MAX_PAGE);
+    const limit = boundedInteger(req.query?.limite, 20, 50);
+    if (page === null || limit === null || search.length > 100
+        || !['todos', 'ativo', 'inativo'].includes(status)) {
         return res.status(400).json({ error: 'Filtros de pacientes inválidos.' });
     }
     const offset = (page - 1) * limit;
@@ -158,7 +173,7 @@ exports.listForManagement = async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('Erro ao listar pacientes:', error);
+        logFailure('list', error);
         return res.status(500).json({ error: 'Erro ao listar pacientes.' });
     }
 };
@@ -183,7 +198,7 @@ exports.searchForScheduling = async (req, res) => {
             ano_nascimento: patient.ano_nascimento === null ? null : Number(patient.ano_nascimento)
         })));
     } catch (error) {
-        console.error('Erro ao buscar pacientes:', error);
+        logFailure('search', error);
         return res.status(500).json({ error: 'Erro ao buscar pacientes.' });
     }
 };
@@ -200,7 +215,7 @@ exports.getForManagement = async (req, res) => {
         if (!rows[0]) return res.status(404).json({ error: 'Paciente não encontrado na clínica ativa.' });
         return res.status(200).json({ ...rows[0], id: Number(rows[0].id) });
     } catch (error) {
-        console.error('Erro ao consultar paciente para gestão:', error);
+        logFailure('get_management', error);
         return res.status(500).json({ error: 'Erro ao consultar paciente.' });
     }
 };
@@ -243,7 +258,7 @@ exports.createPatient = async (req, res) => {
         if (error.code === 'ER_DUP_ENTRY') {
             return res.status(409).json({ error: 'Possível paciente duplicado nesta clínica.' });
         }
-        console.error('Erro ao cadastrar paciente:', error);
+        logFailure('create', error);
         return res.status(500).json({ error: 'Erro ao cadastrar paciente.' });
     } finally {
         connection?.release();
@@ -307,7 +322,7 @@ exports.updatePatient = async (req, res) => {
         if (error.code === 'ER_DUP_ENTRY') {
             return res.status(409).json({ error: 'Possível paciente duplicado nesta clínica.' });
         }
-        console.error('Erro ao atualizar paciente:', error);
+        logFailure('update', error);
         return res.status(500).json({ error: 'Erro ao atualizar paciente.' });
     } finally {
         connection?.release();
@@ -384,9 +399,10 @@ exports.getPacienteDetails = async (req, res) => {
             documentos
         });
     } catch (error) {
-        console.error('Erro ao buscar detalhes do paciente:', error);
+        logFailure('details', error);
         return res.status(500).json({ error: 'Erro ao buscar detalhes do paciente.' });
     }
 };
 
 exports.patientPayload = patientPayload;
+exports.boundedInteger = boundedInteger;

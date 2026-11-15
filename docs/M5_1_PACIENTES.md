@@ -19,14 +19,14 @@ O cadastro administrativo cria `pacientes.usuario_id = NULL`. E-mail semelhante 
 Antes de aplicá-la em qualquer base existente, faça backup verificado e execute uma verificação somente leitura de e-mails duplicados por clínica:
 
 ```sql
-SELECT clinica_id, LOWER(TRIM(email)) AS email_normalizado, COUNT(*) AS total
+SELECT clinica_id, MIN(email) AS email_exemplo, COUNT(*) AS total
 FROM pacientes
-WHERE email IS NOT NULL AND TRIM(email) <> ''
-GROUP BY clinica_id, LOWER(TRIM(email))
+WHERE email IS NOT NULL
+GROUP BY clinica_id, email
 HAVING COUNT(*) > 1;
 ```
 
-Se houver resultados, interrompa a migration e trate-os manualmente; não escolha nem mescle identidades automaticamente.
+Esta consulta usa a mesma collation da coluna e inclui e-mails vazios (`''`), diferenças apenas de maiúsculas/minúsculas e espaços finais que possam colidir com o índice. Se houver resultados, interrompa a migration e trate-os manualmente; não escolha nem mescle identidades automaticamente.
 
 ## Validação MySQL 8 em banco descartável
 

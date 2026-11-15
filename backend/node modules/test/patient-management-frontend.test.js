@@ -37,3 +37,35 @@ test('controle de busca descarta respostas antigas', async () => {
     assert.match(setup, /createLatestRequestGate\(\)/);
     assert.match(setup, /loadGate\.isCurrent\(ticket, page\)/);
 });
+
+test('edição descarta resposta antiga e valida o identificador retornado', async () => {
+    const first = core.createLatestRequestGate();
+    const oldRequest = first.begin(10);
+    const currentRequest = first.begin(20);
+    assert.equal(first.isCurrent(oldRequest, 10), false);
+    assert.equal(first.isCurrent(currentRequest, 20), true);
+    assert.equal(core.matchingSelectionId(10, 20), null);
+    assert.equal(core.matchingSelectionId(20, 20), 20);
+
+    const main = await fs.readFile(path.join(root, 'js', 'main.js'), 'utf8');
+    const setup = main.slice(main.indexOf('async function setupPatientsPage()'), main.indexOf('async function setupGestaoProfissionaisPage()'));
+    assert.match(setup, /editGate\.isCurrent\(ticket, patientId\)/);
+    assert.match(setup, /matchingSelectionId\(patient\.id, patientId\)/);
+});
+
+test('trava comportamental impede gravações simultâneas mesmo com campos opcionais vazios', async () => {
+    const lock = core.createOperationLock();
+    const payload = { nome: 'Paciente Teste', email: '', data_nascimento: '' };
+    assert.equal(payload.email, '');
+    assert.equal(lock.tryBegin(), true);
+    assert.equal(lock.tryBegin(), false);
+    assert.equal(lock.active, true);
+    lock.end();
+    assert.equal(lock.tryBegin(), true);
+
+    const main = await fs.readFile(path.join(root, 'js', 'main.js'), 'utf8');
+    const setup = main.slice(main.indexOf('async function setupPatientsPage()'), main.indexOf('async function setupGestaoProfissionaisPage()'));
+    assert.match(setup, /setFormDisabled\(true\)/);
+    assert.match(setup, /setEditActionsDisabled\(true\)/);
+    assert.match(setup, /!mutationLock\.tryBegin\(\)/);
+});

@@ -77,6 +77,7 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
 
         pool = require('../config/database');
         const controller = require('../controllers/pacienteController');
+        const authController = require('../controllers/authController');
 
         const first = response();
         const concurrent = response();
@@ -89,6 +90,27 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
         const south = response();
         await controller.createPatient(patientRequest(southId, southAdmin), south);
         assert.equal(south.statusCode, 201, 'o mesmo e-mail é permitido em clínicas independentes');
+
+        const publicRegistration = response();
+        await authController.register({ body: {
+            nome: 'Tentativa de Apropriação',
+            email: 'paciente.integracao@example.test',
+            senha: 'senha-ficticia-forte',
+            clinica_slug: 'norte-pacientes-test'
+        } }, publicRegistration);
+        assert.equal(publicRegistration.statusCode, 409);
+        const [[partialIdentity]] = await setup.execute(
+            'SELECT COUNT(*) AS total FROM usuarios WHERE email = ?',
+            ['paciente.integracao@example.test']
+        );
+        const [[partialMembership]] = await setup.execute(`
+            SELECT COUNT(*) AS total
+            FROM clinica_usuarios cu
+            JOIN usuarios u ON u.id = cu.usuario_id
+            WHERE cu.clinica_id = ? AND u.email = ?
+        `, [northId, 'paciente.integracao@example.test']);
+        assert.equal(Number(partialIdentity.total), 0);
+        assert.equal(Number(partialMembership.total), 0);
 
         const search = response();
         await controller.searchForScheduling({ tenant: { clinicId: northId }, query: { q: 'Integração' } }, search);

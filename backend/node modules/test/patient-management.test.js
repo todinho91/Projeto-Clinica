@@ -50,6 +50,35 @@ test('listagem é isolada e mascara dados pessoais', async (t) => {
     assert.ok(calls.every((call) => call.params[0] === 11 && /clinica_id = \?/.test(call.sql)));
 });
 
+test('paginação recusa valores fora dos limites antes de consultar o banco', async (t) => {
+    const execute = t.mock.method(pool, 'execute', async () => {
+        throw new Error('não deveria consultar o banco');
+    });
+    for (const query of [
+        { pagina: '0' }, { pagina: '-1' }, { pagina: '1.5' },
+        { pagina: '100001' }, { limite: '0' }, { limite: '51' }, { limite: 'abc' }
+    ]) {
+        const res = response();
+        await controller.listForManagement({ tenant: { clinicId: 11 }, query }, res);
+        assert.equal(res.statusCode, 400);
+    }
+    assert.equal(execute.mock.callCount(), 0);
+});
+
+test('paginação aceita os limites máximos sem interpolar entrada livre', async (t) => {
+    const sqlSeen = [];
+    t.mock.method(pool, 'execute', async (sql) => {
+        sqlSeen.push(sql);
+        return /COUNT/.test(sql) ? [[{ total: 0 }]] : [[]];
+    });
+    const res = response();
+    await controller.listForManagement({
+        tenant: { clinicId: 11 }, query: { pagina: '100000', limite: '50' }
+    }, res);
+    assert.equal(res.statusCode, 200);
+    assert.match(sqlSeen[0], /LIMIT 50 OFFSET 4999950/);
+});
+
 test('busca para M4-02 expõe somente id, nome e ano na clínica ativa', async (t) => {
     t.mock.method(pool, 'execute', async (sql, params) => {
         assert.match(sql, /clinica_id = \? AND status = 'ativo'/);
@@ -148,6 +177,22 @@ test('falha parcial provoca rollback e não confirma a transação', async (t) =
     assert.equal(res.statusCode, 500);
     assert.equal(rollback.mock.callCount(), 1);
     assert.equal(commit.mock.callCount(), 0);
+});
+
+test('logs de falha não expõem mensagem, SQL, parâmetros ou dados pessoais', async (t) => {
+    const sensitive = new Error('maria@example.test telefone 41999991234');
+    sensitive.code = 'ER_PARSE_ERROR';
+    sensitive.sql = 'SELECT * FROM pacientes WHERE email = maria@example.test';
+    sensitive.sqlMessage = 'parâmetros privados';
+    t.mock.method(pool, 'execute', async () => { throw sensitive; });
+    const logged = [];
+    t.mock.method(console, 'error', (...args) => logged.push(args));
+    const res = response();
+    await controller.listForManagement({ tenant: { clinicId: 11 }, query: {} }, res);
+    assert.equal(res.statusCode, 500);
+    const serialized = JSON.stringify(logged);
+    assert.match(serialized, /ER_PARSE_ERROR/);
+    assert.doesNotMatch(serialized, /maria@example|41999991234|SELECT \*|parâmetros privados/);
 });
 
 test('rotas de gestão aceitam apenas administrador e secretaria', () => {

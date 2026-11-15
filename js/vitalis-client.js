@@ -90,6 +90,19 @@
         };
     }
 
+    function createOperationLock() {
+        let active = false;
+        return {
+            tryBegin() {
+                if (active) return false;
+                active = true;
+                return true;
+            },
+            end() { active = false; },
+            get active() { return active; }
+        };
+    }
+
     function matchingSelectionId(loadedId, selectedId) {
         const loaded = Number(loadedId);
         const selected = Number(selectedId);
@@ -179,6 +192,7 @@
         appointmentPayload,
         createSession,
         createLatestRequestGate,
+        createOperationLock,
         dashboardForRole,
         dashboardAgenda,
         dashboardSummary,

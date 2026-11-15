@@ -1115,10 +1115,26 @@ async function setupPatientsPage() {
     const next = document.getElementById('pacientes-proximo');
     const pageLabel = document.getElementById('pacientes-pagina');
     const loadGate = VitalisCore.createLatestRequestGate();
+    const editGate = VitalisCore.createLatestRequestGate();
+    const mutationLock = VitalisCore.createOperationLock();
     let editingId = null;
+    let editLoading = false;
     let page = 1;
     let total = 0;
     const limit = 20;
+
+    function setFormDisabled(disabled) {
+        form.setAttribute('aria-busy', String(disabled));
+        form.querySelectorAll('input, select, button').forEach((control) => {
+            control.disabled = disabled;
+        });
+    }
+
+    function setEditActionsDisabled(disabled) {
+        list.querySelectorAll('[data-patient-edit]').forEach((button) => {
+            button.disabled = disabled;
+        });
+    }
 
     function statusBadge(status) {
         const badge = document.createElement('span');
@@ -1137,8 +1153,16 @@ async function setupPatientsPage() {
     }
 
     async function startEdit(id) {
+        if (mutationLock.active) return;
+        const patientId = Number(id);
+        const ticket = editGate.begin(patientId);
+        editLoading = true;
+        setFormDisabled(true);
+        showMessage(formStatus, 'Carregando paciente...', 'secondary');
         try {
-            const patient = await apiRequest(`/pacientes/gestao/${id}`);
+            const patient = await apiRequest(`/pacientes/gestao/${patientId}`);
+            if (!editGate.isCurrent(ticket, patientId)
+                || VitalisCore.matchingSelectionId(patient.id, patientId) !== patientId) return;
             editingId = patient.id;
             title.textContent = 'Editar paciente';
             document.getElementById('paciente-nome').value = patient.nome;
@@ -1151,7 +1175,12 @@ async function setupPatientsPage() {
             form.scrollIntoView({ behavior: 'smooth', block: 'start' });
             document.getElementById('paciente-nome').focus();
         } catch (error) {
-            showMessage(listStatus, error.message);
+            if (editGate.isCurrent(ticket, patientId)) showMessage(listStatus, error.message);
+        } finally {
+            if (editGate.isCurrent(ticket, patientId)) {
+                editLoading = false;
+                if (!mutationLock.active) setFormDisabled(false);
+            }
         }
     }
 
@@ -1190,6 +1219,8 @@ async function setupPatientsPage() {
             const edit = document.createElement('button');
             edit.type = 'button';
             edit.className = 'btn btn-sm btn-outline-primary';
+            edit.dataset.patientEdit = '';
+            edit.disabled = mutationLock.active;
             edit.innerHTML = '<i class="bi bi-pencil"></i> Editar';
             edit.setAttribute('aria-label', `Editar ${patient.nome}`);
             edit.addEventListener('click', () => startEdit(patient.id));
@@ -1227,6 +1258,11 @@ async function setupPatientsPage() {
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
+        if (editLoading || !mutationLock.tryBegin()) return;
+        editGate.invalidate();
+        const targetId = editingId;
+        setFormDisabled(true);
+        setEditActionsDisabled(true);
         const payload = {
             nome: document.getElementById('paciente-nome').value,
             email: document.getElementById('paciente-email').value,
@@ -1235,8 +1271,8 @@ async function setupPatientsPage() {
             status: document.getElementById('paciente-status').value
         };
         try {
-            const result = await apiRequest(editingId ? `/pacientes/${editingId}` : '/pacientes', {
-                method: editingId ? 'PUT' : 'POST', body: JSON.stringify(payload)
+            const result = await apiRequest(targetId ? `/pacientes/${targetId}` : '/pacientes', {
+                method: targetId ? 'PUT' : 'POST', body: JSON.stringify(payload)
             });
             resetForm();
             page = 1;
@@ -1244,9 +1280,17 @@ async function setupPatientsPage() {
             showMessage(formStatus, result.message, 'success');
         } catch (error) {
             showMessage(formStatus, error.message);
+        } finally {
+            mutationLock.end();
+            setFormDisabled(false);
+            setEditActionsDisabled(false);
         }
     });
-    cancel.addEventListener('click', resetForm);
+    cancel.addEventListener('click', () => {
+        if (mutationLock.active || editLoading) return;
+        editGate.invalidate();
+        resetForm();
+    });
     searchForm.addEventListener('submit', (event) => { event.preventDefault(); page = 1; loadPatients(); });
     previous.addEventListener('click', () => { if (page > 1) { page -= 1; loadPatients(); } });
     next.addEventListener('click', () => { if (page * limit < total) { page += 1; loadPatients(); } });
