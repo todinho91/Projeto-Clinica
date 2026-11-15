@@ -17,7 +17,7 @@ const testConfig = {
 Object.assign(process.env, testConfig);
 
 const pool = require('../config/database');
-const { login, register } = require('../controllers/authController');
+const { login, register, selectClinic } = require('../controllers/authController');
 const authenticate = require('../middleware/auth');
 
 function response() {
@@ -62,7 +62,7 @@ test('login emite token de identidade HS256 e lista vínculos ativos', async (t)
     authenticate(req, response(), next);
     assert.equal(next.mock.callCount(), 1);
     assert.equal(req.userId, 42);
-    assert.deepEqual(req.auth, { tokenType: 'identity', clinicId: null });
+    assert.deepEqual(req.auth, { tokenType: 'identity', clinicId: null, membershipVersion: null });
 });
 
 test('login com senha incorreta não emite token', async (t) => {
@@ -79,6 +79,19 @@ test('login com senha incorreta não emite token', async (t) => {
 
     assert.equal(res.statusCode, 401);
     assert.equal(res.body.token, undefined);
+});
+
+test('seleção de clínica assina a versão atual do vínculo', async (t) => {
+    t.mock.method(pool,'execute',async()=>[[{
+        id:7,nome:'Clínica Demo',slug:'demo',papel:'secretaria',sessao_versao:9
+    }]]);
+    const res=response(); await selectClinic({userId:42,body:{clinica_id:7}},res);
+    assert.equal(res.statusCode,200);
+    const decoded=jwt.verify(res.body.token,testConfig.JWT_SECRET,{algorithms:['HS256']});
+    assert.equal(decoded.membership_version,9);
+    const req={headers:{authorization:`Bearer ${res.body.token}`}};
+    authenticate(req,response(),()=>{});
+    assert.equal(req.auth.membershipVersion,9);
 });
 
 test('cadastro público rejeita papel privilegiado antes de acessar o banco', async (t) => {

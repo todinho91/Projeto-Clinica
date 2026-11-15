@@ -1,3 +1,33 @@
+ALTER TABLE usuarios
+    ADD COLUMN motivo_bloqueio ENUM('nenhum', 'ativacao_pendente', 'seguranca')
+        NOT NULL DEFAULT 'nenhum' AFTER status;
+
+ALTER TABLE clinica_usuarios
+    ADD COLUMN sessao_versao INT UNSIGNED NOT NULL DEFAULT 1 AFTER status;
+
+-- Compatibilidade com os profissionais pré-cadastrados pela migration 004/PR #50.
+-- Somente evidência completa de pré-cadastro permite classificar o bloqueio como
+-- ativação pendente; os demais bloqueios existentes permanecem administrativos.
+UPDATE usuarios u
+SET u.motivo_bloqueio = CASE
+    WHEN u.status = 'bloqueado' AND EXISTS (
+        SELECT 1
+        FROM clinica_usuarios cu
+        JOIN profissionais p
+          ON p.clinica_id = cu.clinica_id AND p.usuario_id = cu.usuario_id
+        JOIN auditoria a
+          ON a.clinica_id = p.clinica_id
+         AND a.entidade_tipo = 'profissional'
+         AND a.entidade_id = p.id
+         AND a.acao = 'profissional_pre_cadastrado'
+        WHERE cu.usuario_id = u.id
+          AND cu.papel = 'profissional'
+          AND cu.status = 'convite_pendente'
+    ) THEN 'ativacao_pendente'
+    WHEN u.status = 'bloqueado' THEN 'seguranca'
+    ELSE 'nenhum'
+END;
+
 CREATE TABLE IF NOT EXISTS convites_clinica (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     clinica_id BIGINT UNSIGNED NOT NULL,

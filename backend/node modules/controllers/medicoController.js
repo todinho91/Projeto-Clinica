@@ -316,8 +316,8 @@ exports.createProfessionalAccount = async (req, res) => {
         const unusableCredential = randomBytes(48).toString('base64url');
         const passwordHash = await bcrypt.hash(unusableCredential, 12);
         const [userResult] = await connection.execute(`
-            INSERT INTO usuarios (nome, email, senha_hash, status)
-            VALUES (?, ?, ?, 'bloqueado')
+            INSERT INTO usuarios (nome, email, senha_hash, status, motivo_bloqueio)
+            VALUES (?, ?, ?, 'bloqueado', 'ativacao_pendente')
         `, [payload.fullName, payload.email, passwordHash]);
         const userId = Number(userResult.insertId);
 

@@ -56,11 +56,12 @@ test('contexto usa somente a clínica assinada e revalida o vínculo no banco', 
     t.mock.method(pool, 'execute', async (sql, params) => {
         parameters = params;
         assert.match(sql, /cu\.clinica_id = \?/);
+        assert.match(sql, /cu\.sessao_versao = \?/);
         return [[{ clinica_id: 11, papel: 'secretaria', clinica_nome: 'Demo' }]];
     });
     const req = {
         userId: 3,
-        auth: { tokenType: 'clinic', clinicId: 11 },
+        auth: { tokenType: 'clinic', clinicId: 11, membershipVersion: 4 },
         body: { clinica_id: 99 }
     };
     const res = response();
@@ -68,9 +69,16 @@ test('contexto usa somente a clínica assinada e revalida o vínculo no banco', 
 
     await tenantContext(req, res, next);
 
-    assert.deepEqual(parameters, [11, 3]);
+    assert.deepEqual(parameters, [11, 3, 4]);
     assert.deepEqual(req.tenant, { clinicId: 11, clinicName: 'Demo', role: 'secretaria' });
     assert.equal(next.mock.callCount(), 1);
+});
+
+test('token de clínica sem versão de vínculo é recusado antes do banco', async (t) => {
+    const execute=t.mock.method(pool,'execute'); const res=response();
+    await tenantContext({userId:3,auth:{tokenType:'clinic',clinicId:11,membershipVersion:null}},res,()=>{});
+    assert.equal(res.statusCode,403);
+    assert.equal(execute.mock.callCount(),0);
 });
 
 test('token forjado para outra clínica é rejeitado sem vínculo ativo', async (t) => {
@@ -80,7 +88,7 @@ test('token forjado para outra clínica é rejeitado sem vínculo ativo', async 
 
     await tenantContext({
         userId: 3,
-        auth: { tokenType: 'clinic', clinicId: 99 }
+        auth: { tokenType: 'clinic', clinicId: 99, membershipVersion: 1 }
     }, res, next);
 
     assert.equal(res.statusCode, 403);

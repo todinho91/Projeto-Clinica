@@ -58,9 +58,34 @@ Os estados persistidos em `convites_clinica.envio_status` são:
 
 O adaptador webhook atual nunca transforma apenas HTTP 200/202 em `delivered`. A confirmação definitiva dependerá de callback autenticado do provedor de e-mail.
 
+### Caixa de convite exclusivamente local
+
+Para validar o fluxo no Ubuntu sem contratar provedor, use o coletor que escuta apenas em `127.0.0.1`, mantém o último convite somente em memória e não imprime o link/token no terminal:
+
+```bash
+cd "/home/joao/Projeto-Clinica-m3-validacao/backend/node modules"
+export VITALIS_LOCAL_MAIL_TOKEN="$(openssl rand -hex 32)"
+LOCAL_MAIL_WEBHOOK_TOKEN="$VITALIS_LOCAL_MAIL_TOKEN" npm run dev:mailbox
+```
+
+Em outro terminal, configure o backend local (sem gravar o segredo no repositório):
+
+```bash
+export MAIL_PROVIDER=webhook
+export MAIL_API_URL=http://127.0.0.1:3100/send
+export MAIL_API_TOKEN="$VITALIS_LOCAL_MAIL_TOKEN"
+export MAIL_FROM=local-vitalis@example.test
+export APP_PUBLIC_ORIGIN=http://127.0.0.1:5500
+npm start
+```
+
+Depois de criar ou reenviar o convite pela interface, abra `http://127.0.0.1:3100` no mesmo Ubuntu e use o link exibido. A API administrativa continua sem retornar o token. Reiniciar o coletor apaga a mensagem em memória. Use este procedimento somente após a migration 005 ser autorizada e aplicada ao banco isolado aprovado.
+
 ## Migration e validação local
 
-A migration aditiva é `backend/database/migrations/005_team_invitations.sql`. Como ainda não foi aplicada no ambiente de validação, ela foi ajustada na própria PR #51 para registrar o estado de envio e o identificador opcional do provedor. Ela não altera as migrations 001–004. Antes de aplicá-la, faça backup e confirme explicitamente o banco conectado. Não execute o migrador no banco de validação sem autorização.
+A migration aditiva é `backend/database/migrations/005_team_invitations.sql`. Como ainda não foi aplicada no ambiente de validação, ela foi ajustada na própria PR #51 para registrar o estado de envio, distinguir ativação pendente de bloqueio administrativo e versionar as sessões de cada vínculo. Ela não altera as migrations 001–004. Antes de aplicá-la, faça backup e confirme explicitamente o banco conectado. Não execute o migrador no banco de validação sem autorização.
+
+Após a implantação da migration 005, tokens de clínica emitidos pela versão anterior não possuem `membership_version` e serão recusados. O usuário deve entrar novamente ou selecionar a clínica outra vez. Desativação, reativação, mudança de papel e aceite de convite incrementam a versão do vínculo; por isso, uma sessão revogada não volta a funcionar quando o vínculo é reativado.
 
 Testes sem MySQL:
 

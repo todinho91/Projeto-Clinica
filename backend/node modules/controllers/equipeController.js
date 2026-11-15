@@ -27,6 +27,23 @@ function logFailure(event, error) {
     console.error(`[equipe] ${event}`, { code: error?.code || 'UNEXPECTED' });
 }
 
+async function authorizedOperator(connection, req) {
+    const [rows] = await connection.execute(`
+        SELECT cu.papel, cu.status AS vinculo_status,
+               u.status AS usuario_status, c.status AS clinica_status
+        FROM clinica_usuarios cu
+        JOIN usuarios u ON u.id = cu.usuario_id
+        JOIN clinicas c ON c.id = cu.clinica_id
+        WHERE cu.clinica_id = ? AND cu.usuario_id = ? AND cu.papel = ?
+          AND cu.sessao_versao = ?
+        FOR UPDATE
+    `, [req.tenant.clinicId, req.userId, req.tenant.role, req.auth?.membershipVersion]);
+    const actor = rows[0];
+    if (!actor || actor.papel !== req.tenant.role || actor.vinculo_status !== 'ativo'
+        || actor.usuario_status !== 'ativo' || actor.clinica_status !== 'ativa') return null;
+    return actor;
+}
+
 async function hasRequiredProfile(connection, clinicId, userId, role) {
     const table = PROFILE_TABLES[role];
     if (!table) return true;
@@ -152,12 +169,22 @@ exports.createInvitation = async (req, res) => {
     try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
-        const [[clinicRows], [userRows]] = await Promise.all([
-            connection.execute('SELECT nome FROM clinicas WHERE id = ? FOR UPDATE', [req.tenant.clinicId]),
-            connection.execute('SELECT id, status FROM usuarios WHERE email = ? LIMIT 1 FOR UPDATE', [email])
-        ]);
+        const actor = await authorizedOperator(connection, req);
+        if (!actor || !mayManage(actor.papel, role)) {
+            await connection.rollback();
+            return res.status(403).json({ error: 'Operador não autorizado ou sessão desatualizada.' });
+        }
+        const [clinicRows] = await connection.execute(
+            'SELECT nome, status FROM clinicas WHERE id = ? FOR UPDATE', [req.tenant.clinicId]
+        );
         clinicName = clinicRows[0]?.nome;
-        if (!clinicName) throw new Error('clinic missing');
+        if (!clinicName || clinicRows[0].status !== 'ativa') {
+            await connection.rollback();
+            return res.status(409).json({ error: 'A clínica não está ativa.' });
+        }
+        const [userRows] = await connection.execute(
+            'SELECT id, status, motivo_bloqueio FROM usuarios WHERE email = ? LIMIT 1 FOR UPDATE', [email]
+        );
         const existingUser = userRows[0];
         let userId = existingUser?.id;
         if (!userId && PROFILE_TABLES[role]) {
@@ -177,8 +204,8 @@ exports.createInvitation = async (req, res) => {
             }
             const hash = await bcrypt.hash(createInvitationToken(), 12);
             const [created] = await connection.execute(`
-                INSERT INTO usuarios (nome, email, senha_hash, status)
-                VALUES (?, ?, ?, 'bloqueado')
+                INSERT INTO usuarios (nome, email, senha_hash, status, motivo_bloqueio)
+                VALUES (?, ?, ?, 'bloqueado', 'ativacao_pendente')
             `, [name, email, hash]);
             userId = created.insertId;
         }
@@ -187,7 +214,8 @@ exports.createInvitation = async (req, res) => {
             WHERE clinica_id = ? AND usuario_id = ? FOR UPDATE
         `, [req.tenant.clinicId, userId]);
         if (existingUser?.status === 'inativo'
-            || (existingUser?.status === 'bloqueado' && existing[0]?.status !== 'convite_pendente')) {
+            || (existingUser?.status === 'bloqueado'
+                && existingUser.motivo_bloqueio !== 'ativacao_pendente')) {
             await connection.rollback();
             return res.status(409).json({ error: 'A conta existente não está disponível para convite.' });
         }
@@ -218,7 +246,7 @@ exports.createInvitation = async (req, res) => {
         } else if (existing[0].status === 'inativo') {
             await connection.execute(`
                 UPDATE clinica_usuarios
-                SET status = 'convite_pendente'
+                SET status = 'convite_pendente', sessao_versao = sessao_versao + 1
                 WHERE id = ? AND clinica_id = ? AND status = 'inativo'
             `, [linkId, req.tenant.clinicId]);
             await audit(connection, req, 'vinculo_reativacao_iniciada', 'clinica_usuario', linkId, {
@@ -261,14 +289,24 @@ exports.reissue = async (req, res) => {
     try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
+        const actor = await authorizedOperator(connection, req);
+        if (!actor) {
+            await connection.rollback();
+            return res.status(403).json({ error: 'Operador não autorizado ou sessão desatualizada.' });
+        }
         const [rows] = await connection.execute(`
-            SELECT i.*, c.nome AS clinica_nome
-            FROM convites_clinica i JOIN clinicas c ON c.id = i.clinica_id
+            SELECT i.*, c.nome AS clinica_nome, c.status AS clinica_status,
+                   cu.status AS vinculo_status, cu.papel AS vinculo_papel,
+                   u.status AS usuario_status, u.motivo_bloqueio, u.email AS usuario_email
+            FROM convites_clinica i
+            JOIN clinicas c ON c.id = i.clinica_id
+            JOIN clinica_usuarios cu ON cu.id = i.clinica_usuario_id AND cu.clinica_id = i.clinica_id
+            JOIN usuarios u ON u.id = cu.usuario_id
             WHERE i.id = ? AND i.clinica_id = ? FOR UPDATE
         `, [invitationId, req.tenant.clinicId]);
         target = rows[0];
         if (!target) { await connection.rollback(); return res.status(404).json({ error: 'Convite não encontrado.' }); }
-        if (!mayManage(req.tenant.role, target.papel)) { await connection.rollback(); return res.status(403).json({ error: 'Papel não autorizado.' }); }
+        if (!mayManage(actor.papel, target.papel)) { await connection.rollback(); return res.status(403).json({ error: 'Papel não autorizado.' }); }
         if (target.status !== 'pendente') {
             await connection.rollback();
             return res.status(409).json({ error: 'Somente convites pendentes podem ser reenviados.' });
@@ -279,15 +317,18 @@ exports.reissue = async (req, res) => {
             await connection.rollback();
             return res.status(429).json({ error: 'Limite de reenvios atingido. Tente novamente mais tarde.' });
         }
-        const [linkRows] = await connection.execute(`
-            SELECT id, status FROM clinica_usuarios
-            WHERE id = ? AND clinica_id = ? FOR UPDATE
-        `, [target.clinica_usuario_id, req.tenant.clinicId]);
-        if (linkRows[0]?.status !== 'convite_pendente') {
+        if (target.clinica_status !== 'ativa' || target.vinculo_status !== 'convite_pendente'
+            || target.vinculo_papel !== target.papel
+            || target.email_normalizado !== String(target.usuario_email).toLowerCase()
+            || target.usuario_status === 'inativo'
+            || (target.usuario_status === 'bloqueado'
+                && target.motivo_bloqueio !== 'ativacao_pendente')) {
             await connection.rollback();
-            return res.status(409).json({ error: 'O vínculo não está pendente.' });
+            return res.status(409).json({ error: 'Identidade, vínculo ou clínica não estão aptos ao reenvio.' });
         }
-        issued = await issueInvitation(connection, req, linkRows[0], target.email_normalizado, target.papel);
+        issued = await issueInvitation(
+            connection, req, { id: target.clinica_usuario_id }, target.email_normalizado, target.papel
+        );
         await audit(connection, req, 'convite_reenviado', 'convite_clinica', issued.id, { anterior_id: invitationId });
         await connection.commit();
     } catch (error) {
@@ -310,10 +351,12 @@ exports.revoke = async (req, res) => {
     let connection;
     try {
         connection = await pool.getConnection(); await connection.beginTransaction();
+        const actor = await authorizedOperator(connection, req);
+        if (!actor) { await connection.rollback(); return res.status(403).json({ error: 'Operador não autorizado ou sessão desatualizada.' }); }
         const [rows] = await connection.execute(`SELECT id, papel, status FROM convites_clinica WHERE id = ? AND clinica_id = ? FOR UPDATE`, [invitationId, req.tenant.clinicId]);
         const target = rows[0];
         if (!target) { await connection.rollback(); return res.status(404).json({ error: 'Convite não encontrado.' }); }
-        if (!mayManage(req.tenant.role, target.papel)) { await connection.rollback(); return res.status(403).json({ error: 'Papel não autorizado.' }); }
+        if (!mayManage(actor.papel, target.papel)) { await connection.rollback(); return res.status(403).json({ error: 'Papel não autorizado.' }); }
         if (target.status !== 'pendente') { await connection.rollback(); return res.status(409).json({ error: 'Convite não está pendente.' }); }
         await connection.execute(`UPDATE convites_clinica SET status='revogado', revogado_em=UTC_TIMESTAMP(6) WHERE id=?`, [invitationId]);
         await audit(connection, req, 'convite_revogado', 'convite_clinica', invitationId);
@@ -331,9 +374,10 @@ exports.inspectInvitation = async (req, res) => {
     if (!hash) return res.status(404).json({ error: 'Convite inválido.' });
     try {
         const [rows] = await pool.execute(`
-            SELECT c.nome AS clinica, i.papel, i.expira_em, i.status,
+            SELECT c.nome AS clinica, c.status AS clinica_status, i.papel, i.expira_em, i.status,
                    cu.status AS vinculo_status, cu.papel AS vinculo_papel,
-                   CASE WHEN u.status = 'bloqueado' THEN 1 ELSE 0 END AS requer_senha
+                   u.status AS usuario_status, u.motivo_bloqueio,
+                   CASE WHEN u.status = 'bloqueado' AND u.motivo_bloqueio = 'ativacao_pendente' THEN 1 ELSE 0 END AS requer_senha
             FROM convites_clinica i
             JOIN clinicas c ON c.id=i.clinica_id
             JOIN clinica_usuarios cu ON cu.id=i.clinica_usuario_id AND cu.clinica_id=i.clinica_id
@@ -342,7 +386,11 @@ exports.inspectInvitation = async (req, res) => {
         `, [hash]);
         const item = rows[0];
         if (!item || item.status !== 'pendente' || item.vinculo_status !== 'convite_pendente'
-            || item.vinculo_papel !== item.papel || new Date(item.expira_em) <= new Date()) {
+            || item.vinculo_papel !== item.papel || item.clinica_status !== 'ativa'
+            || item.usuario_status === 'inativo'
+            || (item.usuario_status === 'bloqueado'
+                && item.motivo_bloqueio !== 'ativacao_pendente')
+            || new Date(item.expira_em) <= new Date()) {
             return res.status(410).json({ error: 'Convite expirado, revogado ou já utilizado.' });
         }
         return res.status(200).json({ clinica: item.clinica, papel: item.papel, expira_em: item.expira_em, requer_senha: Boolean(item.requer_senha) });
@@ -363,15 +411,23 @@ exports.acceptInvitation = async (req, res) => {
             SELECT i.id, i.clinica_id, i.papel, i.status, i.expira_em,
                    cu.id AS vinculo_id, cu.usuario_id, cu.status AS vinculo_status,
                    cu.papel AS vinculo_papel,
-                   u.status AS usuario_status
+                   u.status AS usuario_status, u.motivo_bloqueio,
+                   u.email AS usuario_email, i.email_normalizado,
+                   c.status AS clinica_status
             FROM convites_clinica i
             JOIN clinica_usuarios cu ON cu.id=i.clinica_usuario_id AND cu.clinica_id=i.clinica_id
             JOIN usuarios u ON u.id=cu.usuario_id
+            JOIN clinicas c ON c.id=i.clinica_id
             WHERE i.token_hash=? FOR UPDATE
         `, [hash]);
         const target = rows[0];
         if (!target || target.status !== 'pendente' || target.vinculo_status !== 'convite_pendente'
-            || target.vinculo_papel !== target.papel || new Date(target.expira_em) <= new Date()) {
+            || target.vinculo_papel !== target.papel || target.clinica_status !== 'ativa'
+            || target.email_normalizado !== String(target.usuario_email).toLowerCase()
+            || target.usuario_status === 'inativo'
+            || (target.usuario_status === 'bloqueado'
+                && target.motivo_bloqueio !== 'ativacao_pendente')
+            || new Date(target.expira_em) <= new Date()) {
             await connection.rollback(); return res.status(410).json({ error: 'Convite expirado, revogado ou já utilizado.' });
         }
         if (!(await hasRequiredProfile(
@@ -385,11 +441,19 @@ exports.acceptInvitation = async (req, res) => {
                 await connection.rollback(); return res.status(400).json({ error: 'Crie uma senha com pelo menos 12 caracteres.' });
             }
             const passwordHash = await bcrypt.hash(password, 12);
-            await connection.execute(`UPDATE usuarios SET senha_hash=?, status='ativo' WHERE id=?`, [passwordHash, target.usuario_id]);
+            await connection.execute(`
+                UPDATE usuarios
+                SET senha_hash=?, status='ativo', motivo_bloqueio='nenhum'
+                WHERE id=? AND status='bloqueado' AND motivo_bloqueio='ativacao_pendente'
+            `, [passwordHash, target.usuario_id]);
         } else if (req.userId !== Number(target.usuario_id)) {
             await connection.rollback(); return res.status(401).json({ error: 'Entre na conta convidada para aceitar este convite.' });
         }
-        await connection.execute(`UPDATE clinica_usuarios SET status='ativo' WHERE id=? AND clinica_id=?`, [target.vinculo_id, target.clinica_id]);
+        await connection.execute(`
+            UPDATE clinica_usuarios
+            SET status='ativo', sessao_versao=sessao_versao + 1
+            WHERE id=? AND clinica_id=? AND status='convite_pendente'
+        `, [target.vinculo_id, target.clinica_id]);
         await connection.execute(`UPDATE convites_clinica SET status='aceito', aceito_em=UTC_TIMESTAMP(6) WHERE id=?`, [target.id]);
         await connection.execute(`
             INSERT INTO auditoria (clinica_id, usuario_id, acao, entidade_tipo, entidade_id, metadados)
@@ -414,16 +478,17 @@ async function changeLink(req, res, mode) {
     let connection;
     try {
         connection = await pool.getConnection(); await connection.beginTransaction();
-        await connection.execute('SELECT id FROM clinicas WHERE id=? FOR UPDATE', [req.tenant.clinicId]);
+        const actor = await authorizedOperator(connection, req);
+        if (!actor) { await connection.rollback(); return res.status(403).json({ error: 'Operador não autorizado ou sessão desatualizada.' }); }
         const [rows] = await connection.execute(`SELECT id, usuario_id, papel, status FROM clinica_usuarios WHERE id=? AND clinica_id=? FOR UPDATE`, [linkId, req.tenant.clinicId]);
         const target = rows[0];
         if (!target) { await connection.rollback(); return res.status(404).json({ error: 'Vínculo não encontrado.' }); }
-        if (!mayManage(req.tenant.role, target.papel) || (mode === 'role' && !mayManage(req.tenant.role, value))) {
+        if (!mayManage(actor.papel, target.papel) || (mode === 'role' && !mayManage(actor.papel, value))) {
             await connection.rollback(); return res.status(403).json({ error: 'Alteração não autorizada.' });
         }
-        if (mode === 'role' && target.status === 'convite_pendente') {
+        if (target.status === 'convite_pendente') {
             await connection.rollback();
-            return res.status(409).json({ error: 'Revogue o convite pendente antes de alterar o papel.' });
+            return res.status(409).json({ error: 'O vínculo pendente só pode mudar pelo aceite ou revogação do convite.' });
         }
         if (mode === 'role' && ['profissional', 'paciente'].includes(value)) {
             const table = value === 'profissional' ? 'profissionais' : 'pacientes';
@@ -458,11 +523,22 @@ async function changeLink(req, res, mode) {
         const removesAdmin = target.papel === 'administrador' && target.status === 'ativo'
             && ((mode === 'role' && value !== 'administrador') || (mode === 'status' && value !== 'ativo'));
         if (removesAdmin) {
-            const [admins] = await connection.execute(`SELECT id FROM clinica_usuarios WHERE clinica_id=? AND papel='administrador' AND status='ativo' FOR UPDATE`, [req.tenant.clinicId]);
-            if (admins.length <= 1) { await connection.rollback(); return res.status(409).json({ error: 'A clínica deve manter ao menos um administrador ativo.' }); }
+            const [admins] = await connection.execute(`
+                SELECT cu.id
+                FROM clinica_usuarios cu
+                JOIN usuarios u ON u.id = cu.usuario_id
+                WHERE cu.clinica_id=? AND cu.papel='administrador' AND cu.status='ativo'
+                  AND u.status='ativo' AND cu.id <> ?
+                FOR UPDATE
+            `, [req.tenant.clinicId, linkId]);
+            if (admins.length === 0) { await connection.rollback(); return res.status(409).json({ error: 'A clínica deve manter ao menos um administrador ativo.' }); }
         }
         const column = mode === 'role' ? 'papel' : 'status';
-        await connection.execute(`UPDATE clinica_usuarios SET ${column}=? WHERE id=? AND clinica_id=?`, [value, linkId, req.tenant.clinicId]);
+        await connection.execute(`
+            UPDATE clinica_usuarios
+            SET ${column}=?, sessao_versao=sessao_versao + 1
+            WHERE id=? AND clinica_id=?
+        `, [value, linkId, req.tenant.clinicId]);
         if (mode === 'status' && value === 'inativo') {
             await connection.execute(`UPDATE convites_clinica SET status='revogado', revogado_em=UTC_TIMESTAMP(6) WHERE clinica_id=? AND clinica_usuario_id=? AND status='pendente'`, [req.tenant.clinicId, linkId]);
         }
@@ -478,4 +554,4 @@ async function changeLink(req, res, mode) {
 
 exports.updateStatus = (req, res) => changeLink(req, res, 'status');
 exports.updateRole = (req, res) => changeLink(req, res, 'role');
-exports._private = { deliveryPresentation, hasRequiredProfile, mayManage, normalizedEmail };
+exports._private = { authorizedOperator, deliveryPresentation, hasRequiredProfile, mayManage, normalizedEmail };
