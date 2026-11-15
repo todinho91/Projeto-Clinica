@@ -1,5 +1,7 @@
 const assert = require('node:assert/strict');
 const { randomBytes } = require('node:crypto');
+const { readFileSync } = require('node:fs');
+const path = require('node:path');
 const { test } = require('node:test');
 
 Object.assign(process.env, {
@@ -40,6 +42,16 @@ function request(overrides = {}) {
         ...overrides
     };
 }
+
+test('rollback MySQL usa CHECK temporário sem exigir trigger ou privilégio global', () => {
+    const integration = readFileSync(
+        path.join(__dirname, 'clinic-provisioning.integration.test.js'),
+        'utf8'
+    );
+    assert.match(integration, /ADD CONSTRAINT chk_convite_rollback_teste[\s\S]*CHECK/);
+    assert.match(integration, /DROP CHECK chk_convite_rollback_teste/);
+    assert.doesNotMatch(integration, /CREATE\s+TRIGGER|\bSUPER\b|log_bin_trust_function_creators/i);
+});
 
 test('integração destrutiva aceita somente banco exclusivo de provisionamento', () => {
     assert.equal(

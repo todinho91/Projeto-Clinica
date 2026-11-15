@@ -199,30 +199,38 @@ test('MySQL 8 valida provisionamento, reenvio concorrente, aceite, rollback e is
         assert.equal(Number(reissueAudit.total), 1);
 
         await setup.query(`
-            CREATE TRIGGER bloquear_convite_teste
-            BEFORE INSERT ON convites_clinica FOR EACH ROW
-            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'falha sintética de rollback'
+            ALTER TABLE convites_clinica
+            ADD CONSTRAINT chk_convite_rollback_teste
+            CHECK (email_normalizado <> 'rollback@example.test')
         `);
         const rollbackResponse = response();
-        await controller.provision({
-            userId: Number(operatorUser.insertId),
-            body: {
-                ...payload,
-                nome: 'Clínica Rollback', slug: 'clinica-rollback',
-                administrador_nome: 'Admin Rollback',
-                administrador_email: 'rollback@example.test'
-            }
-        }, rollbackResponse);
+        let rollbackClinic;
+        let rollbackUser;
+        try {
+            await controller.provision({
+                userId: Number(operatorUser.insertId),
+                body: {
+                    ...payload,
+                    nome: 'Clínica Rollback', slug: 'clinica-rollback',
+                    administrador_nome: 'Admin Rollback',
+                    administrador_email: 'rollback@example.test'
+                }
+            }, rollbackResponse);
+            [[rollbackClinic]] = await setup.execute(
+                "SELECT COUNT(*) AS total FROM clinicas WHERE slug = 'clinica-rollback'"
+            );
+            [[rollbackUser]] = await setup.execute(
+                "SELECT COUNT(*) AS total FROM usuarios WHERE email = 'rollback@example.test'"
+            );
+        } finally {
+            await setup.query(`
+                ALTER TABLE convites_clinica
+                DROP CHECK chk_convite_rollback_teste
+            `);
+        }
         assert.equal(rollbackResponse.statusCode, 500);
-        const [[rollbackClinic]] = await setup.execute(
-            "SELECT COUNT(*) AS total FROM clinicas WHERE slug = 'clinica-rollback'"
-        );
-        const [[rollbackUser]] = await setup.execute(
-            "SELECT COUNT(*) AS total FROM usuarios WHERE email = 'rollback@example.test'"
-        );
         assert.equal(Number(rollbackClinic.total), 0);
         assert.equal(Number(rollbackUser.total), 0);
-        await setup.query('DROP TRIGGER bloquear_convite_teste');
     } finally {
         if (pool) await pool.end();
         await setup.end();
