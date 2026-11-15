@@ -65,12 +65,14 @@ Para validar o fluxo no Ubuntu sem contratar provedor, use o coletor que escuta 
 ```bash
 cd "/home/joao/Projeto-Clinica-m3-validacao/backend/node modules"
 export VITALIS_LOCAL_MAIL_TOKEN="$(openssl rand -hex 32)"
-LOCAL_MAIL_WEBHOOK_TOKEN="$VITALIS_LOCAL_MAIL_TOKEN" npm run dev:mailbox
 ```
 
-Em outro terminal, configure o backend local (sem gravar o segredo no repositório):
+Para manter o segredo apenas no ambiente do mesmo shell, execute o coletor em segundo plano e então inicie o backend (sem gravar o segredo no repositório):
 
 ```bash
+LOCAL_MAIL_WEBHOOK_TOKEN="$VITALIS_LOCAL_MAIL_TOKEN" npm run dev:mailbox &
+VITALIS_MAILBOX_PID=$!
+trap 'kill "$VITALIS_MAILBOX_PID" 2>/dev/null' EXIT INT TERM
 export MAIL_PROVIDER=webhook
 export MAIL_API_URL=http://127.0.0.1:3100/send
 export MAIL_API_TOKEN="$VITALIS_LOCAL_MAIL_TOKEN"
