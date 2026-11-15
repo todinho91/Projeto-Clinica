@@ -69,6 +69,11 @@
         return allowed[page]?.includes(role) ?? false;
     }
 
+    function platformAccessState(capabilities, communicationFailed = false) {
+        if (communicationFailed) return 'unavailable';
+        return capabilities?.provisionar_clinicas === true ? 'authorized' : 'restricted';
+    }
+
     function appointmentPayload(localStart, durationMinutes, professionalId) {
         const start = new Date(localStart);
         const duration = Number(durationMinutes);
@@ -154,6 +159,7 @@
         dashboardForRole,
         dashboardAgenda,
         dashboardSummary,
+        platformAccessState,
         roleCanAccessPage
     };
 }));

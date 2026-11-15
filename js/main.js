@@ -161,6 +161,36 @@ async function setupClinicProvisioningPage() {
     const status = document.getElementById('provisionamento-status-mensagem');
     const listStatus = document.getElementById('provisionamento-lista-status');
     const list = document.getElementById('provisionamento-lista');
+    const accessState = document.getElementById('provisionamento-acesso');
+    const accessAlert = document.getElementById('provisionamento-acesso-alerta');
+    const accessIcon = document.getElementById('provisionamento-acesso-icone');
+    const accessTitle = document.getElementById('provisionamento-acesso-titulo');
+    const accessMessage = document.getElementById('provisionamento-acesso-mensagem');
+    const protectedContent = document.getElementById('provisionamento-conteudo');
+
+    function renderAccessState(state) {
+        const states = {
+            restricted: {
+                alert: 'alert-warning',
+                icon: 'bi-shield-lock',
+                title: 'Acesso restrito',
+                message: 'Sua conta não possui permissão para provisionar clínicas. Volte à seleção de clínicas para continuar.'
+            },
+            unavailable: {
+                alert: 'alert-danger',
+                icon: 'bi-cloud-slash',
+                title: 'Não foi possível verificar o acesso',
+                message: 'Houve uma falha de comunicação com o Vitalis. Verifique a conexão e tente novamente.'
+            }
+        };
+        const view = states[state];
+        protectedContent.hidden = true;
+        accessState.hidden = false;
+        accessAlert.className = `alert ${view.alert} mb-0`;
+        accessIcon.className = `bi ${view.icon}`;
+        accessTitle.textContent = view.title;
+        accessMessage.textContent = view.message;
+    }
 
     async function loadClinics() {
         const clinics = await apiRequest('/plataforma/clinicas', {}, 'identity');
@@ -224,18 +254,29 @@ async function setupClinicProvisioningPage() {
             }
             list.append(card);
         });
-        if (!clinics.length) showMessage(listStatus, 'Nenhuma clínica provisionada.');
+        if (!clinics.length) showMessage(listStatus, 'Nenhuma clínica provisionada.', 'secondary');
         else listStatus.replaceChildren();
     }
 
+    let capabilities;
     try {
-        const capabilities = await apiRequest('/plataforma/capacidades', {}, 'identity');
-        if (!capabilities.provisionar_clinicas) throw new Error('Operação restrita à plataforma.');
+        capabilities = await apiRequest('/plataforma/capacidades', {}, 'identity');
+    } catch {
+        renderAccessState(VitalisCore.platformAccessState(null, true));
+        return;
+    }
+    const permissionState = VitalisCore.platformAccessState(capabilities);
+    if (permissionState !== 'authorized') {
+        renderAccessState(permissionState);
+        return;
+    }
+
+    accessState.hidden = true;
+    protectedContent.hidden = false;
+    try {
         await loadClinics();
     } catch (error) {
-        showMessage(status, error.message);
-        form.hidden = true;
-        return;
+        showMessage(listStatus, `Acesso confirmado, mas não foi possível carregar as clínicas: ${error.message}`);
     }
 
     form.addEventListener('submit', async (event) => {
@@ -551,9 +592,13 @@ async function setupClinicSelectionPage() {
         if (clinics.length === 0) {
             select.disabled = true;
             document.querySelector('#clinic-form button[type="submit"]').disabled = true;
-            showMessage(status, mayProvision
-                ? 'Nenhuma clínica ativa vinculada. Você pode provisionar uma nova clínica.'
-                : 'Nenhuma clínica ativa vinculada ao usuário.');
+            showMessage(
+                status,
+                mayProvision
+                    ? 'Nenhuma clínica ativa vinculada. Você pode provisionar uma nova clínica.'
+                    : 'Nenhuma clínica ativa vinculada ao usuário.',
+                mayProvision ? 'primary' : 'danger'
+            );
         }
     } catch (error) {
         showMessage(status, error.message);

@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { promises: fs } = require('node:fs');
 const path = require('node:path');
 const { test } = require('node:test');
+const core = require('../../../js/vitalis-client');
 
 const root = path.join(__dirname, '..', '..', '..');
 
@@ -48,4 +49,26 @@ test('painel da plataforma apresenta estado e reenvio do convite inicial', async
     assert.match(main, /\/plataforma\/clinicas\/\$\{clinic\.id\}\/convites\/\$\{clinic\.convite_id\}\/reenviar/);
     assert.match(routes, /:clinicId\/convites\/:invitationId\/reenviar/);
     assert.match(routes, /identityOnly,[\s\S]{0,100}clinicaController\.reissueInitialInvitation/);
+});
+
+test('painel mantém conteúdo protegido oculto até confirmar autorização', async () => {
+    const [page, main] = await Promise.all([
+        fs.readFile(path.join(root, 'provisionamento-clinicas.html'), 'utf8'),
+        fs.readFile(path.join(root, 'js', 'main.js'), 'utf8')
+    ]);
+    assert.match(page, /id="provisionamento-acesso"/);
+    assert.match(page, /id="provisionamento-conteudo" hidden[\s\S]*Operação autorizada/);
+    assert.match(page, /href="select-clinic\.html"[\s\S]{0,120}Voltar à seleção de clínicas/);
+    assert.equal(core.platformAccessState({ provisionar_clinicas: true }), 'authorized');
+    assert.equal(core.platformAccessState({ provisionar_clinicas: false }), 'restricted');
+    assert.equal(core.platformAccessState(null, true), 'unavailable');
+    assert.match(main, /Acesso restrito/);
+    assert.match(main, /Não foi possível verificar o acesso/);
+    assert.match(main, /permissionState !== 'authorized'[\s\S]{0,250}protectedContent\.hidden = false/);
+});
+
+test('seleção sem clínicas usa estado informativo para operador autorizado', async () => {
+    const main = await fs.readFile(path.join(root, 'js', 'main.js'), 'utf8');
+    assert.match(main, /Nenhuma clínica ativa vinculada\. Você pode provisionar uma nova clínica\./);
+    assert.match(main, /mayProvision \? 'primary' : 'danger'/);
 });
