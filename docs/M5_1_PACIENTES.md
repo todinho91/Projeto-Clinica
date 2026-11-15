@@ -36,11 +36,11 @@ No Ubuntu, com Node.js 22 e credenciais exclusivas desse banco:
 
 ```bash
 cd "backend/node modules"
-TEST_DB_HOST=127.0.0.1 \
-TEST_DB_PORT=3306 \
-TEST_DB_USER='<usuario_descartavel>' \
-TEST_DB_PASSWORD='<senha_local>' \
-TEST_DB_DATABASE=vitalis_pacientes_m5_test \
+export TEST_DB_HOST=127.0.0.1
+export TEST_DB_PORT=3306
+export TEST_DB_USER='<usuario_descartavel>'
+export TEST_DB_PASSWORD='<defina somente no terminal local>'
+export TEST_DB_DATABASE=vitalis_pacientes_m5_test
 npm run test:patients:integration
 ```
 
