@@ -63,6 +63,7 @@
             'especialidades.html': ['administrador', 'secretaria'],
             'equipe.html': ['administrador', 'secretaria'],
             'configuracoes-clinica.html': ['administrador'],
+            'disponibilidade.html': ['administrador', 'secretaria', 'profissional'],
             'dashboard-medico.html': ['profissional'],
             'dashboard-paciente.html': ['paciente']
         };

@@ -8,6 +8,7 @@ const medicoController = require('../controllers/medicoController');
 const pacienteController = require('../controllers/pacienteController');
 const equipeController = require('../controllers/equipeController');
 const clinicaController = require('../controllers/clinicaController');
+const disponibilidadeController = require('../controllers/disponibilidadeController');
 const multerConfig = require('../config/multerConfig');
 const authenticate = require('../middleware/auth');
 const identityOnly = require('../middleware/identityOnly');
@@ -107,6 +108,31 @@ router.patch(
     '/especialidades/:id/status',
     authorize('administrador', 'secretaria'),
     especialidadeController.updateSpecialtyStatus
+);
+router.get(
+    '/disponibilidade/contexto',
+    authorize('administrador', 'secretaria', 'profissional'),
+    disponibilidadeController.context
+);
+router.get(
+    '/disponibilidade/profissionais/:professionalId',
+    authorize('administrador', 'secretaria', 'profissional'),
+    disponibilidadeController.getProfessionalAvailability
+);
+router.put(
+    '/disponibilidade/profissionais/:professionalId/semana',
+    authorize('administrador', 'secretaria', 'profissional'),
+    disponibilidadeController.replaceWeeklyAvailability
+);
+router.post(
+    '/disponibilidade/profissionais/:professionalId/bloqueios',
+    authorize('administrador', 'secretaria', 'profissional'),
+    disponibilidadeController.createBlock
+);
+router.patch(
+    '/disponibilidade/profissionais/:professionalId/bloqueios/:blockId/cancelar',
+    authorize('administrador', 'secretaria', 'profissional'),
+    disponibilidadeController.cancelBlock
 );
 router.post(
     '/consultas',

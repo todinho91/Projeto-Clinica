@@ -108,6 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (page === 'aceitar-convite.html') setupAceiteConvitePage();
     else if (page === 'configuracoes-clinica.html') setupClinicSettingsPage();
     else if (page === 'provisionamento-clinicas.html') setupClinicProvisioningPage();
+    else if (page === 'disponibilidade.html') setupAvailabilityPage();
 });
 
 async function setupClinicSettingsPage() {
@@ -303,6 +304,212 @@ async function setupClinicProvisioningPage() {
             showMessage(status, error.message);
         }
     });
+}
+
+async function setupAvailabilityPage() {
+    const clinic = requireClinicSession('disponibilidade.html');
+    if (!clinic) return;
+    applyClinicIdentity(clinic);
+    document.querySelectorAll('[data-availability-home]').forEach((link) => {
+        link.href = VitalisCore.dashboardForRole(clinic.papel) || 'select-clinic.html';
+    });
+    if (!['administrador', 'secretaria'].includes(clinic.papel)) {
+        document.querySelectorAll('[data-management-only]').forEach((element) => element.remove());
+    }
+    const professionalSelect = document.getElementById('disponibilidade-profissional');
+    const timezone = document.getElementById('disponibilidade-timezone');
+    const pageStatus = document.getElementById('disponibilidade-status');
+    const content = document.getElementById('disponibilidade-conteudo');
+    const intervalList = document.getElementById('disponibilidade-intervalos');
+    const weeklyStatus = document.getElementById('disponibilidade-semanal-status');
+    const blockStatus = document.getElementById('bloqueio-form-status');
+    const blockList = document.getElementById('bloqueios-lista');
+    const dayNames = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+    const typeLabels = { atendimento: 'Atendimento', descanso: 'Descanso' };
+    const blockLabels = { ferias: 'Férias', feriado: 'Feriado', indisponibilidade: 'Indisponibilidade' };
+
+    function option(value, label, selected = false) {
+        const element = document.createElement('option');
+        element.value = value;
+        element.textContent = label;
+        element.selected = selected;
+        return element;
+    }
+
+    function addInterval(data = {}) {
+        const row = document.createElement('div');
+        row.className = 'vitalis-availability-interval';
+        const day = document.createElement('select');
+        day.className = 'form-select';
+        day.setAttribute('aria-label', 'Dia da semana');
+        dayNames.forEach((name, index) => day.append(option(index, name, Number(data.dia_semana) === index)));
+        const type = document.createElement('select');
+        type.className = 'form-select';
+        type.setAttribute('aria-label', 'Tipo de intervalo');
+        Object.entries(typeLabels).forEach(([value, label]) => type.append(option(value, label, data.tipo === value)));
+        const start = document.createElement('input');
+        start.className = 'form-control';
+        start.type = 'time';
+        start.value = data.inicio || '08:00';
+        start.required = true;
+        start.setAttribute('aria-label', 'Início do intervalo');
+        const end = document.createElement('input');
+        end.className = 'form-control';
+        end.type = 'time';
+        end.value = data.fim || '12:00';
+        end.required = true;
+        end.setAttribute('aria-label', 'Fim do intervalo');
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'btn btn-outline-danger';
+        remove.setAttribute('aria-label', 'Remover intervalo');
+        remove.innerHTML = '<i class="bi bi-trash"></i><span class="d-sm-none"> Remover</span>';
+        remove.addEventListener('click', () => row.remove());
+        row.append(day, type, start, end, remove);
+        intervalList.append(row);
+    }
+
+    function intervalPayload() {
+        return [...intervalList.querySelectorAll('.vitalis-availability-interval')].map((row) => {
+            const [day, type, start, end] = row.querySelectorAll('select, input');
+            return {
+                dia_semana: Number(day.value), tipo: type.value,
+                inicio: start.value, fim: end.value
+            };
+        });
+    }
+
+    function localLabel(value) {
+        if (typeof value !== 'string' || !value.includes('T')) return 'Horário indisponível';
+        const [date, time] = value.split('T');
+        const [year, month, day] = date.split('-');
+        return `${day}/${month}/${year} ${time}`;
+    }
+
+    function renderBlocks(blocks) {
+        blockList.replaceChildren();
+        if (!blocks.length) {
+            const empty = document.createElement('p');
+            empty.className = 'text-muted mb-0';
+            empty.textContent = 'Nenhum bloqueio cadastrado para este profissional.';
+            blockList.append(empty);
+            return;
+        }
+        blocks.forEach((block) => {
+            const card = document.createElement('article');
+            card.className = 'vitalis-block-card';
+            const header = document.createElement('div');
+            const title = document.createElement('strong');
+            title.textContent = blockLabels[block.tipo] || block.tipo;
+            const badge = document.createElement('span');
+            badge.className = `vitalis-team-badge ${block.status === 'ativo' ? 'vitalis-team-badge-active' : 'vitalis-team-badge-neutral'}`;
+            badge.textContent = block.status === 'ativo' ? 'Ativo' : 'Cancelado';
+            header.append(title, badge);
+            const period = document.createElement('p');
+            period.textContent = `${localLabel(block.inicio_local)} até ${localLabel(block.fim_local)}`;
+            card.append(header, period);
+            if (block.motivo) {
+                const reason = document.createElement('small');
+                reason.textContent = block.motivo;
+                card.append(reason);
+            }
+            if (block.status === 'ativo') {
+                const cancel = document.createElement('button');
+                cancel.type = 'button';
+                cancel.className = 'btn btn-sm btn-outline-danger mt-2';
+                cancel.textContent = 'Cancelar bloqueio';
+                cancel.addEventListener('click', async () => {
+                    if (!window.confirm('Cancelar este bloqueio e preservar seu histórico?')) return;
+                    try {
+                        const professionalId = Number(professionalSelect.value);
+                        const data = await apiRequest(`/disponibilidade/profissionais/${professionalId}/bloqueios/${block.id}/cancelar`, { method: 'PATCH' });
+                        showMessage(blockStatus, data.message, 'success');
+                        await loadAvailability();
+                    } catch (error) {
+                        showMessage(blockStatus, error.message);
+                    }
+                });
+                card.append(cancel);
+            }
+            blockList.append(card);
+        });
+    }
+
+    async function loadAvailability() {
+        const professionalId = Number(professionalSelect.value);
+        if (!professionalId) {
+            content.hidden = true;
+            return;
+        }
+        try {
+            const data = await apiRequest(`/disponibilidade/profissionais/${professionalId}`);
+            intervalList.replaceChildren();
+            data.intervalos.forEach(addInterval);
+            renderBlocks(data.bloqueios);
+            timezone.textContent = data.timezone;
+            content.hidden = false;
+            pageStatus.replaceChildren();
+        } catch (error) {
+            content.hidden = true;
+            showMessage(pageStatus, error.message);
+        }
+    }
+
+    document.getElementById('adicionar-intervalo').addEventListener('click', () => addInterval());
+    professionalSelect.addEventListener('change', loadAvailability);
+    document.getElementById('disponibilidade-semanal-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        try {
+            const professionalId = Number(professionalSelect.value);
+            const data = await apiRequest(`/disponibilidade/profissionais/${professionalId}/semana`, {
+                method: 'PUT', body: JSON.stringify({ intervalos: intervalPayload() })
+            });
+            showMessage(weeklyStatus, data.message, 'success');
+            await loadAvailability();
+        } catch (error) {
+            showMessage(weeklyStatus, error.message);
+        }
+    });
+    document.getElementById('bloqueio-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        try {
+            const professionalId = Number(professionalSelect.value);
+            const data = await apiRequest(`/disponibilidade/profissionais/${professionalId}/bloqueios`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    tipo: document.getElementById('bloqueio-tipo').value,
+                    inicio_local: document.getElementById('bloqueio-inicio').value,
+                    fim_local: document.getElementById('bloqueio-fim').value,
+                    motivo: document.getElementById('bloqueio-motivo').value
+                })
+            });
+            showMessage(blockStatus, data.message, 'success');
+            event.currentTarget.reset();
+            await loadAvailability();
+        } catch (error) {
+            showMessage(blockStatus, error.message);
+        }
+    });
+
+    try {
+        const data = await apiRequest('/disponibilidade/contexto');
+        timezone.textContent = data.timezone;
+        professionalSelect.replaceChildren();
+        data.profissionais.forEach((professional) => {
+            professionalSelect.append(option(professional.id, professional.nome_exibicao));
+        });
+        if (!data.profissionais.length) {
+            professionalSelect.append(option('', 'Nenhum profissional ativo disponível', true));
+            professionalSelect.disabled = true;
+            showMessage(pageStatus, 'Nenhum profissional ativo está disponível nesta clínica.', 'secondary');
+            return;
+        }
+        professionalSelect.disabled = clinic.papel === 'profissional';
+        await loadAvailability();
+    } catch (error) {
+        content.hidden = true;
+        showMessage(pageStatus, error.message);
+    }
 }
 
 async function setupEquipePage() {
