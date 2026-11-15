@@ -20,9 +20,9 @@ async function resetTestSchema(connection, expectedDatabase) {
     const [[selected]] = await connection.query('SELECT DATABASE() AS database_name');
     if (selected.database_name !== expectedDatabase) throw new Error('Conexão não aponta para o banco descartável esperado.');
     const tables = [
-        'convites_clinica','auditoria','documentos_clinicos','consultas','pacientes',
+        'auditoria_plataforma','convites_clinica','auditoria','documentos_clinicos','consultas','pacientes',
         'profissional_especialidades','profissionais','especialidades','clinica_usuarios',
-        'usuarios','clinicas','schema_migrations'
+        'operadores_plataforma','usuarios','clinicas','schema_migrations'
     ];
     await connection.query('SET FOREIGN_KEY_CHECKS = 0');
     try {

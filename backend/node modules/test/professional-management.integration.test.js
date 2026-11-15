@@ -30,9 +30,9 @@ async function resetTestSchema(connection, expectedDatabase) {
     }
 
     const tables = [
-        'convites_clinica', 'auditoria', 'documentos_clinicos', 'consultas', 'pacientes',
+        'auditoria_plataforma', 'convites_clinica', 'auditoria', 'documentos_clinicos', 'consultas', 'pacientes',
         'profissional_especialidades', 'profissionais', 'especialidades',
-        'clinica_usuarios', 'usuarios', 'clinicas', 'schema_migrations'
+        'clinica_usuarios', 'operadores_plataforma', 'usuarios', 'clinicas', 'schema_migrations'
     ];
     await connection.query('SET FOREIGN_KEY_CHECKS = 0');
     try {

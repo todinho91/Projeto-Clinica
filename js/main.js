@@ -77,6 +77,9 @@ function applyClinicIdentity(clinic) {
     document.querySelectorAll('[data-clinic-name]').forEach((element) => {
         element.textContent = clinic.nome;
     });
+    if (clinic.papel !== 'administrador') {
+        document.querySelectorAll('[data-admin-only]').forEach((element) => element.remove());
+    }
 }
 
 function formatDate(value) {
@@ -103,7 +106,204 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (page === 'especialidades.html') setupGestaoEspecialidadesPage();
     else if (page === 'equipe.html') setupEquipePage();
     else if (page === 'aceitar-convite.html') setupAceiteConvitePage();
+    else if (page === 'configuracoes-clinica.html') setupClinicSettingsPage();
+    else if (page === 'provisionamento-clinicas.html') setupClinicProvisioningPage();
 });
+
+async function setupClinicSettingsPage() {
+    const clinic = requireClinicSession('configuracoes-clinica.html');
+    if (!clinic) return;
+    applyClinicIdentity(clinic);
+    const form = document.getElementById('configuracoes-clinica-form');
+    const status = document.getElementById('configuracoes-clinica-status');
+    try {
+        const settings = await apiRequest('/clinica/configuracoes');
+        document.getElementById('config-clinica-nome').value = settings.nome;
+        document.getElementById('config-clinica-slug').value = settings.slug;
+        document.getElementById('config-clinica-timezone').value = settings.timezone;
+        document.getElementById('config-clinica-status').textContent = settings.status === 'ativa' ? 'Ativa' : 'Inativa';
+    } catch (error) {
+        showMessage(status, error.message);
+        form.hidden = true;
+        return;
+    }
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!window.confirm('Salvar nome e fuso horário da clínica ativa?')) return;
+        try {
+            const data = await apiRequest('/clinica/configuracoes', {
+                method: 'PATCH',
+                body: JSON.stringify({
+                    nome: document.getElementById('config-clinica-nome').value,
+                    timezone: document.getElementById('config-clinica-timezone').value
+                })
+            });
+            session.saveClinic({
+                token: session.clinicToken,
+                clinica: { ...clinic, nome: data.clinica.nome }
+            });
+            showMessage(status, data.message, 'success');
+            document.querySelectorAll('[data-clinic-name]').forEach((element) => {
+                element.textContent = data.clinica.nome;
+            });
+        } catch (error) {
+            showMessage(status, error.message);
+        }
+    });
+}
+
+async function setupClinicProvisioningPage() {
+    if (!session.identityToken) {
+        window.location.replace('login.html');
+        return;
+    }
+    const form = document.getElementById('provisionamento-form');
+    const status = document.getElementById('provisionamento-status-mensagem');
+    const listStatus = document.getElementById('provisionamento-lista-status');
+    const list = document.getElementById('provisionamento-lista');
+    const accessState = document.getElementById('provisionamento-acesso');
+    const accessAlert = document.getElementById('provisionamento-acesso-alerta');
+    const accessIcon = document.getElementById('provisionamento-acesso-icone');
+    const accessTitle = document.getElementById('provisionamento-acesso-titulo');
+    const accessMessage = document.getElementById('provisionamento-acesso-mensagem');
+    const protectedContent = document.getElementById('provisionamento-conteudo');
+
+    function renderAccessState(state) {
+        const states = {
+            restricted: {
+                alert: 'alert-warning',
+                icon: 'bi-shield-lock',
+                title: 'Acesso restrito',
+                message: 'Sua conta não possui permissão para provisionar clínicas. Volte à seleção de clínicas para continuar.'
+            },
+            unavailable: {
+                alert: 'alert-danger',
+                icon: 'bi-cloud-slash',
+                title: 'Não foi possível verificar o acesso',
+                message: 'Houve uma falha de comunicação com o Vitalis. Verifique a conexão e tente novamente.'
+            }
+        };
+        const view = states[state];
+        protectedContent.hidden = true;
+        accessState.hidden = false;
+        accessAlert.className = `alert ${view.alert} mb-0`;
+        accessIcon.className = `bi ${view.icon}`;
+        accessTitle.textContent = view.title;
+        accessMessage.textContent = view.message;
+    }
+
+    async function loadClinics() {
+        const clinics = await apiRequest('/plataforma/clinicas', {}, 'identity');
+        list.replaceChildren();
+        clinics.forEach((clinic) => {
+            const card = document.createElement('article');
+            card.className = 'vitalis-provisioning-card';
+            const title = document.createElement('strong');
+            title.textContent = clinic.nome;
+            const detail = document.createElement('span');
+            detail.textContent = `${clinic.slug} · ${clinic.timezone}`;
+            const admin = document.createElement('small');
+            const adminStatusLabel = {
+                ativo: 'acesso ativo',
+                convite_pendente: 'ativação pendente',
+                inativo: 'acesso inativo'
+            }[clinic.administrador_status] || clinic.administrador_status;
+            admin.textContent = clinic.administrador_email
+                ? `Administrador: ${clinic.administrador_email} · ${adminStatusLabel}`
+                : 'Administrador ainda não definido';
+            const invitationState = document.createElement('small');
+            invitationState.className = 'vitalis-provisioning-invitation';
+            if (clinic.administrador_status === 'ativo') {
+                invitationState.textContent = 'Acesso do administrador ativo';
+            } else if (clinic.convite_expirado) {
+                invitationState.textContent = 'Convite expirado';
+            } else if (clinic.convite_envio_status === 'failed') {
+                invitationState.textContent = 'Falha ao solicitar o envio';
+            } else if (clinic.convite_envio_status === 'not_configured') {
+                invitationState.textContent = 'E-mail não configurado';
+            } else if (clinic.convite_envio_status === 'accepted_by_provider') {
+                invitationState.textContent = 'Envio aceito pelo provedor; entrega não confirmada';
+            } else if (clinic.convite_envio_status === 'delivered') {
+                invitationState.textContent = 'Entrega confirmada; aceite pendente';
+            } else {
+                invitationState.textContent = clinic.convite_status
+                    ? `Convite ${clinic.convite_status}`
+                    : 'Convite ainda não disponível';
+            }
+            card.append(title, detail, admin, invitationState);
+            if (clinic.pode_reenviar_convite && clinic.convite_id) {
+                const resend = document.createElement('button');
+                resend.type = 'button';
+                resend.className = 'btn btn-sm btn-outline-primary mt-2';
+                resend.textContent = 'Gerar novo convite';
+                resend.addEventListener('click', async () => {
+                    if (!window.confirm(`Invalidar o convite anterior e gerar outro para ${clinic.administrador_email}?`)) return;
+                    try {
+                        const data = await apiRequest(
+                            `/plataforma/clinicas/${clinic.id}/convites/${clinic.convite_id}/reenviar`,
+                            { method: 'POST' },
+                            'identity'
+                        );
+                        showMessage(status, data.message, 'success');
+                        await loadClinics();
+                    } catch (error) {
+                        showMessage(status, error.message);
+                    }
+                });
+                card.append(resend);
+            }
+            list.append(card);
+        });
+        if (!clinics.length) showMessage(listStatus, 'Nenhuma clínica provisionada.', 'secondary');
+        else listStatus.replaceChildren();
+    }
+
+    let capabilities;
+    try {
+        capabilities = await apiRequest('/plataforma/capacidades', {}, 'identity');
+    } catch {
+        renderAccessState(VitalisCore.platformAccessState(null, true));
+        return;
+    }
+    const permissionState = VitalisCore.platformAccessState(capabilities);
+    if (permissionState !== 'authorized') {
+        renderAccessState(permissionState);
+        return;
+    }
+
+    accessState.hidden = true;
+    protectedContent.hidden = false;
+    try {
+        await loadClinics();
+    } catch (error) {
+        showMessage(listStatus, `Acesso confirmado, mas não foi possível carregar as clínicas: ${error.message}`);
+    }
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const clinicName = document.getElementById('provisionamento-nome').value.trim();
+        const adminEmail = document.getElementById('provisionamento-admin-email').value.trim();
+        if (!window.confirm(`Criar ${clinicName} e convidar ${adminEmail} como primeiro administrador?`)) return;
+        try {
+            const data = await apiRequest('/plataforma/clinicas', {
+                method: 'POST',
+                body: JSON.stringify({
+                    nome: clinicName,
+                    slug: document.getElementById('provisionamento-slug').value,
+                    timezone: document.getElementById('provisionamento-timezone').value,
+                    status: document.getElementById('provisionamento-status').value,
+                    administrador_nome: document.getElementById('provisionamento-admin-nome').value,
+                    administrador_email: adminEmail
+                })
+            }, 'identity');
+            showMessage(status, data.message, 'success');
+            form.reset();
+            await loadClinics();
+        } catch (error) {
+            showMessage(status, error.message);
+        }
+    });
+}
 
 async function setupEquipePage() {
     const clinic = requireClinicSession('equipe.html');
@@ -361,7 +561,6 @@ function setupLoginPage() {
                 window.location.assign(returnTo);
                 return;
             }
-            if (data.clinicas.length === 0) throw new Error('Nenhuma clínica ativa vinculada ao usuário.');
             window.location.assign('select-clinic.html');
         } catch (error) {
             errorElement.textContent = error.message;
@@ -376,7 +575,12 @@ async function setupClinicSelectionPage() {
     }
     const select = document.getElementById('clinica-select');
     const status = document.getElementById('clinic-status');
+    const platformLink = document.getElementById('platform-provisioning-link');
+    let mayProvision = false;
     try {
+        const capabilities = await apiRequest('/plataforma/capacidades', {}, 'identity');
+        mayProvision = Boolean(capabilities.provisionar_clinicas);
+        platformLink.hidden = !mayProvision;
         const clinics = await apiRequest('/auth/clinics', {}, 'identity');
         select.replaceChildren();
         clinics.forEach((clinic) => {
@@ -387,7 +591,14 @@ async function setupClinicSelectionPage() {
         });
         if (clinics.length === 0) {
             select.disabled = true;
-            showMessage(status, 'Nenhuma clínica ativa vinculada ao usuário.');
+            document.querySelector('#clinic-form button[type="submit"]').disabled = true;
+            showMessage(
+                status,
+                mayProvision
+                    ? 'Nenhuma clínica ativa vinculada. Você pode provisionar uma nova clínica.'
+                    : 'Nenhuma clínica ativa vinculada ao usuário.',
+                mayProvision ? 'primary' : 'danger'
+            );
         }
     } catch (error) {
         showMessage(status, error.message);

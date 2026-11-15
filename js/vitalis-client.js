@@ -62,10 +62,16 @@
             'profissionais.html': ['administrador', 'secretaria'],
             'especialidades.html': ['administrador', 'secretaria'],
             'equipe.html': ['administrador', 'secretaria'],
+            'configuracoes-clinica.html': ['administrador'],
             'dashboard-medico.html': ['profissional'],
             'dashboard-paciente.html': ['paciente']
         };
         return allowed[page]?.includes(role) ?? false;
+    }
+
+    function platformAccessState(capabilities, communicationFailed = false) {
+        if (communicationFailed) return 'unavailable';
+        return capabilities?.provisionar_clinicas === true ? 'authorized' : 'restricted';
     }
 
     function appointmentPayload(localStart, durationMinutes, professionalId) {
@@ -153,6 +159,7 @@
         dashboardForRole,
         dashboardAgenda,
         dashboardSummary,
+        platformAccessState,
         roleCanAccessPage
     };
 }));
