@@ -22,10 +22,12 @@ test('migrations criam todas as tabelas previstas para DB-01', async () => {
         'profissional_especialidades',
         'consultas',
         'documentos_clinicos',
-        'auditoria'
-        ,'convites_clinica',
+        'auditoria',
+        'convites_clinica',
         'operadores_plataforma',
-        'auditoria_plataforma'
+        'auditoria_plataforma',
+        'disponibilidades_profissional',
+        'bloqueios_profissional'
     ]) {
         assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`));
     }
@@ -46,8 +48,10 @@ test('entidades clínicas possuem chave de tenant e referências compostas', asy
         'especialidades',
         'consultas',
         'documentos_clinicos',
-        'auditoria'
-        ,'convites_clinica'
+        'auditoria',
+        'convites_clinica',
+        'disponibilidades_profissional',
+        'bloqueios_profissional'
     ]) {
         const block = sql.match(new RegExp(
             `CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\) ENGINE=InnoDB`
@@ -98,4 +102,18 @@ test('provisionamento usa operador explícito, auditoria e convite sem token pur
     assert.match(sql, /criado_por_operador_id BIGINT UNSIGNED NULL/);
     assert.match(sql, /CHECK \(\(criado_por_usuario_id IS NOT NULL\) <> \(criado_por_operador_id IS NOT NULL\)\)/);
     assert.doesNotMatch(sql, /INSERT INTO operadores_plataforma|senha|token_hash\s*=\s*['"]/i);
+});
+
+test('disponibilidade e bloqueios são aditivos, isolados por tenant e preparados para M4-02', async () => {
+    const sql = await fs.readFile(
+        path.join(migrationsDir, '007_professional_availability.sql'), 'utf8'
+    );
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS disponibilidades_profissional/);
+    assert.match(sql, /tipo ENUM\('atendimento', 'descanso'\)/);
+    assert.match(sql, /CHECK \(fim_local > inicio_local\)/);
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS bloqueios_profissional/);
+    assert.match(sql, /tipo ENUM\('ferias', 'feriado', 'indisponibilidade'\)/);
+    assert.match(sql, /CHECK \(fim_em > inicio_em\)/);
+    assert.match(sql, /FOREIGN KEY \(clinica_id, profissional_id\)[\s\S]*REFERENCES profissionais \(clinica_id, id\)/);
+    assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
 });

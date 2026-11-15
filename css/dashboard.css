@@ -125,6 +125,21 @@ html { scroll-behavior: smooth; }
 .vitalis-provisioning-invitation { padding-top: .45rem; border-top: 1px solid var(--vitalis-border); font-weight: 650; }
 .vitalis-provisioning-card .btn { width: 100%; white-space: normal; }
 
+/* M4-01: disponibilidade e bloqueios */
+.vitalis-availability-context { display: grid; grid-template-columns: minmax(240px, 1fr) auto; gap: 1rem; align-items: end; margin-bottom: 1rem; }
+.vitalis-timezone-note { display: grid; grid-template-columns: auto 1fr; gap: .15rem .55rem; align-items: center; min-width: 220px; padding: .75rem 1rem; border: 1px solid var(--vitalis-border); border-radius: 12px; background: #f8fbfe; }
+.vitalis-timezone-note i { grid-row: 1 / 3; color: var(--vitalis-blue); font-size: 1.35rem; }
+.vitalis-timezone-note span { color: var(--vitalis-muted); font-size: .7rem; letter-spacing: .04em; text-transform: uppercase; }
+.vitalis-timezone-note strong { color: var(--vitalis-navy); overflow-wrap: anywhere; }
+.vitalis-availability-intervals { display: grid; gap: .65rem; }
+.vitalis-availability-interval { display: grid; grid-template-columns: minmax(150px, 1.2fr) minmax(130px, 1fr) minmax(110px, .7fr) minmax(110px, .7fr) auto; gap: .6rem; align-items: center; }
+.vitalis-availability-grid { display: grid; grid-template-columns: minmax(300px, .8fr) minmax(0, 1.2fr); gap: 1rem; margin-top: 1rem; align-items: start; }
+.vitalis-block-list { display: grid; gap: .7rem; max-height: 580px; overflow: auto; }
+.vitalis-block-card { min-width: 0; padding: .85rem; border: 1px solid var(--vitalis-border); border-radius: 12px; background: #f9fbfd; overflow-wrap: anywhere; }
+.vitalis-block-card > div { display: flex; justify-content: space-between; gap: .75rem; align-items: center; }
+.vitalis-block-card p { margin: .45rem 0 0; color: var(--vitalis-navy); font-size: .85rem; }
+.vitalis-block-card small { display: block; margin-top: .35rem; color: var(--vitalis-muted); }
+
 /* PR50: responsividade e rolagem interna */
 html, body.vitalis-dashboard-body {
     overflow-x: clip;
@@ -153,6 +168,7 @@ html, body.vitalis-dashboard-body {
     .vitalis-management-grid { grid-template-columns: minmax(0, 1fr); }
     .vitalis-management-form { position: static; }
     .vitalis-provisioning-grid { grid-template-columns: minmax(0, 1fr); }
+    .vitalis-availability-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 1199.98px) and (min-width: 992px) {
     .vitalis-team-page .vitalis-management-grid { grid-template-columns: minmax(0, 1fr); }
@@ -170,6 +186,10 @@ html, body.vitalis-dashboard-body {
     .vitalis-platform-topbar > div { justify-content: space-between; }
     .vitalis-provisioning-main { padding: 1rem; }
     .vitalis-provisioning-page .vitalis-welcome { margin-bottom: 1.25rem; }
+    .vitalis-availability-context { grid-template-columns: minmax(0, 1fr); }
+    .vitalis-timezone-note { min-width: 0; }
+    .vitalis-availability-interval { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: .75rem; border: 1px solid var(--vitalis-border); border-radius: 12px; }
+    .vitalis-availability-interval .btn { grid-column: 1 / -1; width: 100%; }
 
     .vitalis-team-page .vitalis-main { padding: 1rem; }
     .vitalis-team-page .vitalis-welcome { margin-bottom: 1.25rem; }
@@ -205,5 +225,9 @@ html, body.vitalis-dashboard-body {
     .vitalis-platform-topbar .btn { width: 100%; }
     .vitalis-access-state .alert { flex-direction: column; }
     .vitalis-access-state .btn { width: 100%; white-space: normal; }
+    .vitalis-availability-interval { grid-template-columns: minmax(0, 1fr); }
+    .vitalis-availability-interval .btn { grid-column: auto; }
+    .vitalis-availability-page .vitalis-main { padding: .75rem; }
+    .vitalis-availability-page .vitalis-panel { padding: .85rem; border-radius: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }

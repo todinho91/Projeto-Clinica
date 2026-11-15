@@ -63,6 +63,7 @@
             'especialidades.html': ['administrador', 'secretaria'],
             'equipe.html': ['administrador', 'secretaria'],
             'configuracoes-clinica.html': ['administrador'],
+            'disponibilidade.html': ['administrador', 'secretaria', 'profissional'],
             'dashboard-medico.html': ['profissional'],
             'dashboard-paciente.html': ['paciente']
         };
@@ -72,6 +73,26 @@
     function platformAccessState(capabilities, communicationFailed = false) {
         if (communicationFailed) return 'unavailable';
         return capabilities?.provisionar_clinicas === true ? 'authorized' : 'restricted';
+    }
+
+    function createLatestRequestGate() {
+        let sequence = 0;
+        return {
+            begin(value) {
+                sequence += 1;
+                return { sequence, value: String(value) };
+            },
+            invalidate() { sequence += 1; },
+            isCurrent(ticket, value) {
+                return ticket?.sequence === sequence && ticket.value === String(value);
+            }
+        };
+    }
+
+    function matchingSelectionId(loadedId, selectedId) {
+        const loaded = Number(loadedId);
+        const selected = Number(selectedId);
+        return Number.isSafeInteger(loaded) && loaded > 0 && loaded === selected ? loaded : null;
     }
 
     function appointmentPayload(localStart, durationMinutes, professionalId) {
@@ -156,10 +177,12 @@
         KEYS,
         appointmentPayload,
         createSession,
+        createLatestRequestGate,
         dashboardForRole,
         dashboardAgenda,
         dashboardSummary,
         platformAccessState,
+        matchingSelectionId,
         roleCanAccessPage
     };
 }));

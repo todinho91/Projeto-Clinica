@@ -2,6 +2,7 @@ const TEST_DATABASE_PATTERN = /^vitalis_profissionais(?:_[a-z0-9_]+)?_test$/;
 const SPECIALTY_TEST_DATABASE_PATTERN = /^vitalis_especialidades(?:_[a-z0-9_]+)?_test$/;
 const TEAM_TEST_DATABASE_PATTERN = /^vitalis_convites(?:_[a-z0-9_]+)?_test$/;
 const PROVISIONING_TEST_DATABASE_PATTERN = /^vitalis_provisionamento(?:_[a-z0-9_]+)?_test$/;
+const AVAILABILITY_TEST_DATABASE_PATTERN = /^vitalis_disponibilidade(?:_[a-z0-9_]+)?_test$/;
 
 function assertDisposableDatabaseName(databaseName) {
     if (!TEST_DATABASE_PATTERN.test(databaseName)) {
@@ -39,13 +40,38 @@ function assertProvisioningDisposableDatabaseName(databaseName) {
     return databaseName;
 }
 
+function assertAvailabilityDisposableDatabaseName(databaseName) {
+    if (!AVAILABILITY_TEST_DATABASE_PATTERN.test(databaseName)) {
+        throw new Error(
+            'Operação recusada: TEST_DB_DATABASE deve começar com vitalis_disponibilidade e terminar com _test.'
+        );
+    }
+    return databaseName;
+}
+
+async function confirmAvailabilityTestEnvironment(connection, databaseName) {
+    assertAvailabilityDisposableDatabaseName(databaseName);
+    const [[selected]] = await connection.query('SELECT DATABASE() AS database_name');
+    if (selected?.database_name !== databaseName) {
+        throw new Error('Conexão não aponta para o banco descartável autorizado.');
+    }
+    const [[server]] = await connection.query('SELECT VERSION() AS version');
+    if (!/^8\./.test(server?.version || '')) {
+        throw new Error('A integração de disponibilidade exige MySQL 8.');
+    }
+    return { database: selected.database_name, version: server.version };
+}
+
 module.exports = {
     assertDisposableDatabaseName,
     assertSpecialtyDisposableDatabaseName,
     assertTeamDisposableDatabaseName,
     assertProvisioningDisposableDatabaseName,
+    assertAvailabilityDisposableDatabaseName,
+    confirmAvailabilityTestEnvironment,
     TEST_DATABASE_PATTERN,
     SPECIALTY_TEST_DATABASE_PATTERN,
     TEAM_TEST_DATABASE_PATTERN,
-    PROVISIONING_TEST_DATABASE_PATTERN
+    PROVISIONING_TEST_DATABASE_PATTERN,
+    AVAILABILITY_TEST_DATABASE_PATTERN
 };
