@@ -31,6 +31,46 @@ test('layout de pacientes cobre 390 e 360 px sem tabela horizontal', async () =>
     assert.match(css, /grid-template-columns: minmax\(76px, \.35fr\) minmax\(0, 1fr\)/);
 });
 
+test('layout administrativo mantém navegação rolável e ações da sessão visíveis', async () => {
+    const css = await fs.readFile(path.join(root, 'css', 'dashboard.css'), 'utf8');
+    const pages = [
+        'dashboard-secretaria.html',
+        'pacientes.html',
+        'profissionais.html',
+        'disponibilidade.html',
+        'especialidades.html',
+        'equipe.html',
+        'configuracoes-clinica.html'
+    ];
+
+    assert.match(css, /\.vitalis-sidebar[^}]*height: 100dvh[^}]*overflow: hidden/);
+    assert.match(css, /\.vitalis-sidebar \.offcanvas-body[^}]*min-height: 0[^}]*overflow: hidden/);
+    assert.match(css, /\.vitalis-nav[^}]*flex: 1 1 auto[^}]*min-height: 0[^}]*overflow-y: auto/);
+    assert.match(css, /\.vitalis-sidebar-footer[^}]*flex: 0 0 auto[^}]*margin-top: 0/);
+
+    for (const pageName of pages) {
+        const page = await fs.readFile(path.join(root, pageName), 'utf8');
+        assert.match(page, /class="offcanvas-body d-flex flex-column p-0"/, `${pageName} precisa do contêiner flex compartilhado`);
+        assert.match(page, /class="vitalis-nav"/, `${pageName} precisa da navegação rolável compartilhada`);
+        assert.match(page, /class="vitalis-sidebar-footer"/, `${pageName} precisa manter Trocar clínica e Sair fora da rolagem`);
+    }
+});
+
+test('layout de pacientes distribui tabela e formulário nas resoluções-alvo', async () => {
+    const [css, page] = await Promise.all([
+        fs.readFile(path.join(root, 'css', 'dashboard.css'), 'utf8'),
+        fs.readFile(path.join(root, 'pacientes.html'), 'utf8')
+    ]);
+
+    assert.match(css, /@media \(max-width: 1399\.98px\) and \(min-width: 992px\)[\s\S]*\.vitalis-patients-page \.vitalis-management-grid[^}]*grid-template-columns: minmax\(0, 1fr\)/);
+    assert.match(css, /\.vitalis-patients-page #paciente-nascimento[^}]*width: 100%[^}]*min-width: 0/);
+    assert.match(css, /\.vitalis-patient-table th:nth-child\(1\)[^}]*width: 22%/);
+    assert.match(css, /\.vitalis-patient-table th:nth-child\(6\)[^}]*width: 15%/);
+    assert.match(css, /\.vitalis-patient-table th[^}]*white-space: nowrap/);
+    assert.match(css, /@media \(max-width: 767\.98px\)[\s\S]*\.vitalis-patient-table td[^}]*white-space: normal/);
+    assert.equal((page.match(/<th scope="col"/g) || []).length, 6);
+});
+
 test('controle de busca descarta respostas antigas', async () => {
     const main = await fs.readFile(path.join(root, 'js', 'main.js'), 'utf8');
     const setup = main.slice(main.indexOf('async function setupPatientsPage()'), main.indexOf('async function setupGestaoProfissionaisPage()'));
