@@ -1143,12 +1143,16 @@ async function setupPatientsPage() {
         return badge;
     }
 
-    function resetForm() {
+    function clearPatientForm() {
         editingId = null;
         form.reset();
         document.getElementById('paciente-status').value = 'ativo';
         title.textContent = 'Cadastrar paciente';
         cancel.hidden = true;
+    }
+
+    function resetForm() {
+        clearPatientForm();
         showMessage(formStatus, '', 'muted');
     }
 
@@ -1157,12 +1161,17 @@ async function setupPatientsPage() {
         const patientId = Number(id);
         const ticket = editGate.begin(patientId);
         editLoading = true;
+        clearPatientForm();
         setFormDisabled(true);
         showMessage(formStatus, 'Carregando paciente...', 'secondary');
         try {
             const patient = await apiRequest(`/pacientes/gestao/${patientId}`);
-            if (!editGate.isCurrent(ticket, patientId)
-                || VitalisCore.matchingSelectionId(patient.id, patientId) !== patientId) return;
+            if (!editGate.isCurrent(ticket, patientId)) return;
+            if (VitalisCore.matchingSelectionId(patient.id, patientId) !== patientId) {
+                clearPatientForm();
+                showMessage(formStatus, 'Não foi possível confirmar o paciente selecionado. Tente novamente.');
+                return;
+            }
             editingId = patient.id;
             title.textContent = 'Editar paciente';
             document.getElementById('paciente-nome').value = patient.nome;
@@ -1172,10 +1181,14 @@ async function setupPatientsPage() {
                 ? String(patient.data_nascimento).slice(0, 10) : '';
             document.getElementById('paciente-status').value = patient.status;
             cancel.hidden = false;
+            showMessage(formStatus, '', 'muted');
             form.scrollIntoView({ behavior: 'smooth', block: 'start' });
             document.getElementById('paciente-nome').focus();
         } catch (error) {
-            if (editGate.isCurrent(ticket, patientId)) showMessage(listStatus, error.message);
+            if (editGate.isCurrent(ticket, patientId)) {
+                clearPatientForm();
+                showMessage(formStatus, error.message);
+            }
         } finally {
             if (editGate.isCurrent(ticket, patientId)) {
                 editLoading = false;

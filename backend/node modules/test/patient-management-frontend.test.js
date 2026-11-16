@@ -51,6 +51,10 @@ test('edição descarta resposta antiga e valida o identificador retornado', asy
     const setup = main.slice(main.indexOf('async function setupPatientsPage()'), main.indexOf('async function setupGestaoProfissionaisPage()'));
     assert.match(setup, /editGate\.isCurrent\(ticket, patientId\)/);
     assert.match(setup, /matchingSelectionId\(patient\.id, patientId\)/);
+    assert.ok(setup.indexOf('clearPatientForm();') < setup.indexOf('apiRequest(`/pacientes/gestao/${patientId}`)'));
+    assert.match(setup, /matchingSelectionId\(patient\.id, patientId\)[\s\S]*clearPatientForm\(\)/);
+    assert.match(setup, /catch \(error\)[\s\S]*clearPatientForm\(\)[\s\S]*showMessage\(formStatus, error\.message\)/);
+    assert.match(setup, /cancel\.hidden = false;[\s\S]*showMessage\(formStatus, '', 'muted'\)/);
 });
 
 test('trava comportamental impede gravações simultâneas mesmo com campos opcionais vazios', async () => {

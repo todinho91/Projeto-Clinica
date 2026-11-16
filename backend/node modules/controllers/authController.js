@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const { jwtSecret } = require('../config/environment');
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PUBLIC_REGISTRATION_CONFLICT = 'Não foi possível concluir o cadastro com os dados informados.';
 
 function logAuthFailure(operation, error) {
     const code = typeof error?.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(error.code)
@@ -88,6 +89,9 @@ exports.register = async (req, res) => {
 
         const normalizedEmail = email.trim().toLowerCase();
         const clinicId = Number(clinics[0].id);
+        // Mantém o custo de derivação equivalente nos dois tipos de conflito,
+        // evitando que a resposta ou o tempo revelem a origem do cadastro.
+        const senhaHash = await bcrypt.hash(senha, 10);
         const [existingProfiles] = await connection.execute(`
             SELECT id FROM pacientes
             WHERE clinica_id = ? AND email = ?
@@ -95,11 +99,8 @@ exports.register = async (req, res) => {
         `, [clinicId, normalizedEmail]);
         if (existingProfiles.length > 0) {
             await connection.rollback();
-            return res.status(409).json({
-                error: 'Já existe um perfil clínico com este e-mail. Solicite vinculação segura à clínica.'
-            });
+            return res.status(409).json({ error: PUBLIC_REGISTRATION_CONFLICT });
         }
-        const senhaHash = await bcrypt.hash(senha, 10);
         const [userResult] = await connection.execute(`
             INSERT INTO usuarios (nome, email, senha_hash, status)
             VALUES (?, ?, ?, 'ativo')
@@ -119,7 +120,7 @@ exports.register = async (req, res) => {
     } catch (error) {
         if (connection) await connection.rollback().catch(() => {});
         if (error.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({ error: 'E-mail já cadastrado.' });
+            return res.status(409).json({ error: PUBLIC_REGISTRATION_CONFLICT });
         }
         logAuthFailure('register', error);
         return res.status(500).json({ error: 'Erro ao cadastrar paciente.' });

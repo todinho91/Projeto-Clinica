@@ -8,6 +8,8 @@ A listagem administrativa devolve somente nome, ano de nascimento, situação e 
 
 O cadastro administrativo cria `pacientes.usuario_id = NULL`. E-mail semelhante a uma identidade global não vincula nem apropria uma conta existente. Um fluxo futuro de convite/reivindicação deverá comprovar a titularidade antes de preencher esse vínculo.
 
+Antes do lançamento público, o Vitalis deverá definir e validar um processo de verificação de titularidade para vincular com segurança um perfil clínico preexistente a uma identidade global. Essa revisão é requisito do piloto real e está registrada na [issue #33 — M9-04](https://github.com/todinho91/Projeto-Clinica/issues/33). Até sua conclusão, conflitos do cadastro público usam uma resposta neutra e não informam se os dados correspondem a uma identidade global ou a um perfil clínico.
+
 ## Migration 008
 
 `008_patient_management.sql` é aditiva e cria:

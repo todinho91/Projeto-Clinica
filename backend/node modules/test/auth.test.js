@@ -187,7 +187,7 @@ test('cadastro público não apropria perfil administrativo preexistente', async
             throw new Error('nenhuma escrita deveria ocorrer');
         })
     };
-    const hash = t.mock.method(bcrypt, 'hash', async () => 'não deveria criar hash');
+    const hash = t.mock.method(bcrypt, 'hash', async () => 'hash-sintetico-uniforme');
     t.mock.method(pool, 'getConnection', async () => connection);
     const res = response();
 
@@ -197,9 +197,10 @@ test('cadastro público não apropria perfil administrativo preexistente', async
     } }, res);
 
     assert.equal(res.statusCode, 409);
+    assert.equal(res.body.error, 'Não foi possível concluir o cadastro com os dados informados.');
     assert.equal(connection.rollback.mock.callCount(), 1);
     assert.equal(connection.commit.mock.callCount(), 0);
-    assert.equal(hash.mock.callCount(), 0);
+    assert.equal(hash.mock.callCount(), 1);
     assert.equal(connection.execute.mock.calls.some((call) => /INSERT INTO/.test(call.arguments[0])), false);
 });
 
@@ -233,6 +234,39 @@ test('conflito tardio de perfil público desfaz usuário e vínculo parciais', a
     } }, res);
 
     assert.equal(res.statusCode, 409);
+    assert.equal(res.body.error, 'Não foi possível concluir o cadastro com os dados informados.');
+    assert.equal(connection.rollback.mock.callCount(), 1);
+    assert.equal(connection.commit.mock.callCount(), 0);
+});
+
+test('conflitos de identidade global e perfil clínico usam a mesma resposta neutra', async (t) => {
+    const connection = {
+        beginTransaction: t.mock.fn(async () => {}),
+        commit: t.mock.fn(async () => {}),
+        rollback: t.mock.fn(async () => {}),
+        release: t.mock.fn(),
+        execute: t.mock.fn(async (sql) => {
+            if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 7 }]];
+            if (/SELECT id FROM pacientes/.test(sql)) return [[]];
+            if (/INSERT INTO usuarios/.test(sql)) {
+                const error = new Error('identidade existente');
+                error.code = 'ER_DUP_ENTRY';
+                throw error;
+            }
+            throw new Error('SQL inesperado');
+        })
+    };
+    t.mock.method(bcrypt, 'hash', async () => 'hash-sintetico');
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+
+    await register({ body: {
+        nome: 'Identidade Existente', email: 'identidade@example.test',
+        senha: 'senha-ficticia-forte', clinica_slug: 'demo'
+    } }, res);
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.body.error, 'Não foi possível concluir o cadastro com os dados informados.');
     assert.equal(connection.rollback.mock.callCount(), 1);
     assert.equal(connection.commit.mock.callCount(), 0);
 });

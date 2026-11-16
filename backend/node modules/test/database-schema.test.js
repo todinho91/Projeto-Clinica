@@ -137,3 +137,12 @@ test('pré-voo da migration 008 inclui e-mails vazios e usa a collation real', a
     assert.doesNotMatch(documentation, /TRIM\(email\) <> ''/);
     assert.match(documentation, /inclui e-mails vazios/);
 });
+
+test('documentação bloqueia vinculação automática até verificação de titularidade da issue 33', async () => {
+    const documentation = await fs.readFile(
+        path.join(__dirname, '..', '..', '..', 'docs', 'M5_1_PACIENTES.md'), 'utf8'
+    );
+    assert.match(documentation, /verificação de titularidade/);
+    assert.match(documentation, /issues\/33/);
+    assert.match(documentation, /não informam se os dados correspondem a uma identidade global ou a um perfil clínico/);
+});
