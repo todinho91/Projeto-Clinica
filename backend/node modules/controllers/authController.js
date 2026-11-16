@@ -4,6 +4,13 @@ const jwt = require('jsonwebtoken');
 const { jwtSecret } = require('../config/environment');
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PUBLIC_REGISTRATION_CONFLICT = 'Não foi possível concluir o cadastro com os dados informados.';
+
+function logAuthFailure(operation, error) {
+    const code = typeof error?.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(error.code)
+        ? error.code : 'UNEXPECTED';
+    console.error('[auth] operation_failed', { operation, code });
+}
 
 function identityToken(userId) {
     return jwt.sign(
@@ -72,7 +79,7 @@ exports.register = async (req, res) => {
         connection = await pool.getConnection();
         await connection.beginTransaction();
         const [clinics] = await connection.execute(
-            'SELECT id FROM clinicas WHERE slug = ? AND status = \'ativa\' LIMIT 1',
+            'SELECT id FROM clinicas WHERE slug = ? AND status = \'ativa\' LIMIT 1 FOR UPDATE',
             [clinicSlug.trim()]
         );
         if (clinics.length === 0) {
@@ -80,14 +87,25 @@ exports.register = async (req, res) => {
             return res.status(404).json({ error: 'Clínica não encontrada ou inativa.' });
         }
 
-        const senhaHash = await bcrypt.hash(senha, 10);
         const normalizedEmail = email.trim().toLowerCase();
+        const clinicId = Number(clinics[0].id);
+        // Mantém o custo de derivação equivalente nos dois tipos de conflito,
+        // evitando que a resposta ou o tempo revelem a origem do cadastro.
+        const senhaHash = await bcrypt.hash(senha, 10);
+        const [existingProfiles] = await connection.execute(`
+            SELECT id FROM pacientes
+            WHERE clinica_id = ? AND email = ?
+            LIMIT 1 FOR UPDATE
+        `, [clinicId, normalizedEmail]);
+        if (existingProfiles.length > 0) {
+            await connection.rollback();
+            return res.status(409).json({ error: PUBLIC_REGISTRATION_CONFLICT });
+        }
         const [userResult] = await connection.execute(`
             INSERT INTO usuarios (nome, email, senha_hash, status)
             VALUES (?, ?, ?, 'ativo')
         `, [nome.trim(), normalizedEmail, senhaHash]);
 
-        const clinicId = Number(clinics[0].id);
         await connection.execute(`
             INSERT INTO clinica_usuarios (clinica_id, usuario_id, papel, status)
             VALUES (?, ?, 'paciente', 'ativo')
@@ -102,9 +120,9 @@ exports.register = async (req, res) => {
     } catch (error) {
         if (connection) await connection.rollback().catch(() => {});
         if (error.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({ error: 'E-mail já cadastrado.' });
+            return res.status(409).json({ error: PUBLIC_REGISTRATION_CONFLICT });
         }
-        console.error('Erro ao cadastrar paciente:', error);
+        logAuthFailure('register', error);
         return res.status(500).json({ error: 'Erro ao cadastrar paciente.' });
     } finally {
         connection?.release();
@@ -137,7 +155,7 @@ exports.login = async (req, res) => {
             clinicas
         });
     } catch (error) {
-        console.error('Erro ao fazer login:', error);
+        logAuthFailure('login', error);
         return res.status(500).json({ error: 'Erro ao fazer login.' });
     }
 };
@@ -146,7 +164,7 @@ exports.listClinics = async (req, res) => {
     try {
         return res.status(200).json(await activeClinicsForUser(pool, req.userId));
     } catch (error) {
-        console.error('Erro ao listar clínicas:', error);
+        logAuthFailure('list_clinics', error);
         return res.status(500).json({ error: 'Erro ao listar clínicas.' });
     }
 };
@@ -185,7 +203,7 @@ exports.selectClinic = async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('Erro ao selecionar clínica:', error);
+        logAuthFailure('select_clinic', error);
         return res.status(500).json({ error: 'Erro ao selecionar clínica.' });
     }
 };

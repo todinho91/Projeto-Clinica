@@ -51,8 +51,8 @@ test('MySQL 8 aplica migrations, repete seed e bloqueia referência entre clíni
         await resetTestSchema(connection);
         const firstMigration = await runMigrations({ connection, migrationsDir, logger: { info() {} } });
         const secondMigration = await runMigrations({ connection, migrationsDir, logger: { info() {} } });
-        assert.equal(firstMigration.applied.length, 7);
-        assert.equal(secondMigration.skipped.length, 7);
+        assert.equal(firstMigration.applied.length, 8);
+        assert.equal(secondMigration.skipped.length, 8);
 
         const password = readSeedPassword();
         const rounds = readBcryptRounds();

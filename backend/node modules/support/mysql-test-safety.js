@@ -3,6 +3,7 @@ const SPECIALTY_TEST_DATABASE_PATTERN = /^vitalis_especialidades(?:_[a-z0-9_]+)?
 const TEAM_TEST_DATABASE_PATTERN = /^vitalis_convites(?:_[a-z0-9_]+)?_test$/;
 const PROVISIONING_TEST_DATABASE_PATTERN = /^vitalis_provisionamento(?:_[a-z0-9_]+)?_test$/;
 const AVAILABILITY_TEST_DATABASE_PATTERN = /^vitalis_disponibilidade(?:_[a-z0-9_]+)?_test$/;
+const PATIENT_TEST_DATABASE_PATTERN = /^vitalis_pacientes(?:_[a-z0-9_]+)?_test$/;
 
 function assertDisposableDatabaseName(databaseName) {
     if (!TEST_DATABASE_PATTERN.test(databaseName)) {
@@ -62,6 +63,28 @@ async function confirmAvailabilityTestEnvironment(connection, databaseName) {
     return { database: selected.database_name, version: server.version };
 }
 
+function assertPatientDisposableDatabaseName(databaseName) {
+    if (!PATIENT_TEST_DATABASE_PATTERN.test(databaseName)) {
+        throw new Error(
+            'Operação recusada: TEST_DB_DATABASE deve começar com vitalis_pacientes e terminar com _test.'
+        );
+    }
+    return databaseName;
+}
+
+async function confirmPatientTestEnvironment(connection, databaseName) {
+    assertPatientDisposableDatabaseName(databaseName);
+    const [[selected]] = await connection.query('SELECT DATABASE() AS database_name');
+    if (selected?.database_name !== databaseName) {
+        throw new Error('Conexão não aponta para o banco descartável autorizado.');
+    }
+    const [[server]] = await connection.query('SELECT VERSION() AS version');
+    if (!/^8\./.test(server?.version || '')) {
+        throw new Error('A integração de pacientes exige MySQL 8.');
+    }
+    return { database: selected.database_name, version: server.version };
+}
+
 module.exports = {
     assertDisposableDatabaseName,
     assertSpecialtyDisposableDatabaseName,
@@ -69,9 +92,12 @@ module.exports = {
     assertProvisioningDisposableDatabaseName,
     assertAvailabilityDisposableDatabaseName,
     confirmAvailabilityTestEnvironment,
+    assertPatientDisposableDatabaseName,
+    confirmPatientTestEnvironment,
     TEST_DATABASE_PATTERN,
     SPECIALTY_TEST_DATABASE_PATTERN,
     TEAM_TEST_DATABASE_PATTERN,
     PROVISIONING_TEST_DATABASE_PATTERN,
-    AVAILABILITY_TEST_DATABASE_PATTERN
+    AVAILABILITY_TEST_DATABASE_PATTERN,
+    PATIENT_TEST_DATABASE_PATTERN
 };

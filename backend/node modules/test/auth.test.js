@@ -137,17 +137,20 @@ test('cadastro público desfaz a transação quando a criação do vínculo falh
         release: t.mock.fn(),
         execute: t.mock.fn(async (sql) => {
             if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 7 }]];
+            if (/SELECT id FROM pacientes/.test(sql)) return [[]];
             if (/INSERT INTO usuarios/.test(sql)) return [{ insertId: 42 }];
             if (/INSERT INTO clinica_usuarios/.test(sql)) {
-                const error = new Error('falha fictícia ao criar vínculo');
+                const error = new Error('paciente@example.test e parâmetros privados');
                 error.code = 'ER_TEST_FAILURE';
+                error.sql = 'INSERT INTO clinica_usuarios ...';
                 throw error;
             }
             throw new Error(`SQL inesperado: ${sql}`);
         })
     };
     t.mock.method(pool, 'getConnection', async () => connection);
-    t.mock.method(console, 'error', () => {});
+    const logged = [];
+    t.mock.method(console, 'error', (...args) => logged.push(args));
     const res = response();
 
     await register({
@@ -164,6 +167,108 @@ test('cadastro público desfaz a transação quando a criação do vínculo falh
     assert.equal(connection.rollback.mock.callCount(), 1);
     assert.equal(connection.commit.mock.callCount(), 0);
     assert.equal(connection.release.mock.callCount(), 1);
+    const serialized = JSON.stringify(logged);
+    assert.match(serialized, /ER_TEST_FAILURE/);
+    assert.doesNotMatch(serialized, /paciente@example|INSERT INTO|parâmetros privados/);
+});
+
+test('cadastro público não apropria perfil administrativo preexistente', async (t) => {
+    const connection = {
+        beginTransaction: t.mock.fn(async () => {}),
+        commit: t.mock.fn(async () => {}),
+        rollback: t.mock.fn(async () => {}),
+        release: t.mock.fn(),
+        execute: t.mock.fn(async (sql, params) => {
+            if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 7 }]];
+            if (/SELECT id FROM pacientes/.test(sql)) {
+                assert.deepEqual(params, [7, 'preexistente@example.test']);
+                return [[{ id: 99 }]];
+            }
+            throw new Error('nenhuma escrita deveria ocorrer');
+        })
+    };
+    const hash = t.mock.method(bcrypt, 'hash', async () => 'hash-sintetico-uniforme');
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+
+    await register({ body: {
+        nome: 'Paciente Preexistente', email: 'preexistente@example.test',
+        senha: 'senha-ficticia-forte', clinica_slug: 'demo'
+    } }, res);
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.body.error, 'Não foi possível concluir o cadastro com os dados informados.');
+    assert.equal(connection.rollback.mock.callCount(), 1);
+    assert.equal(connection.commit.mock.callCount(), 0);
+    assert.equal(hash.mock.callCount(), 1);
+    assert.equal(connection.execute.mock.calls.some((call) => /INSERT INTO/.test(call.arguments[0])), false);
+});
+
+test('conflito tardio de perfil público desfaz usuário e vínculo parciais', async (t) => {
+    const connection = {
+        beginTransaction: t.mock.fn(async () => {}),
+        commit: t.mock.fn(async () => {}),
+        rollback: t.mock.fn(async () => {}),
+        release: t.mock.fn(),
+        execute: t.mock.fn(async (sql) => {
+            if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 7 }]];
+            if (/SELECT id FROM pacientes/.test(sql)) return [[]];
+            if (/INSERT INTO usuarios/.test(sql)) return [{ insertId: 42 }];
+            if (/INSERT INTO clinica_usuarios/.test(sql)) return [{ affectedRows: 1 }];
+            if (/INSERT INTO pacientes/.test(sql)) {
+                const error = new Error('dados pessoais e SQL não devem aparecer no log');
+                error.code = 'ER_DUP_ENTRY';
+                error.sql = 'INSERT INTO pacientes ...';
+                throw error;
+            }
+            throw new Error('SQL inesperado');
+        })
+    };
+    t.mock.method(bcrypt, 'hash', async () => 'hash-sintetico');
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+
+    await register({ body: {
+        nome: 'Paciente Concorrente', email: 'concorrente@example.test',
+        senha: 'senha-ficticia-forte', clinica_slug: 'demo'
+    } }, res);
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.body.error, 'Não foi possível concluir o cadastro com os dados informados.');
+    assert.equal(connection.rollback.mock.callCount(), 1);
+    assert.equal(connection.commit.mock.callCount(), 0);
+});
+
+test('conflitos de identidade global e perfil clínico usam a mesma resposta neutra', async (t) => {
+    const connection = {
+        beginTransaction: t.mock.fn(async () => {}),
+        commit: t.mock.fn(async () => {}),
+        rollback: t.mock.fn(async () => {}),
+        release: t.mock.fn(),
+        execute: t.mock.fn(async (sql) => {
+            if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 7 }]];
+            if (/SELECT id FROM pacientes/.test(sql)) return [[]];
+            if (/INSERT INTO usuarios/.test(sql)) {
+                const error = new Error('identidade existente');
+                error.code = 'ER_DUP_ENTRY';
+                throw error;
+            }
+            throw new Error('SQL inesperado');
+        })
+    };
+    t.mock.method(bcrypt, 'hash', async () => 'hash-sintetico');
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+
+    await register({ body: {
+        nome: 'Identidade Existente', email: 'identidade@example.test',
+        senha: 'senha-ficticia-forte', clinica_slug: 'demo'
+    } }, res);
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.body.error, 'Não foi possível concluir o cadastro com os dados informados.');
+    assert.equal(connection.rollback.mock.callCount(), 1);
+    assert.equal(connection.commit.mock.callCount(), 0);
 });
 
 const claims = { sub: '42', token_type: 'identity' };

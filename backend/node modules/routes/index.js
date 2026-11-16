@@ -155,6 +155,31 @@ router.delete(
     consultaController.cancelarConsulta
 );
 router.get(
+    '/pacientes/gestao',
+    authorize('administrador', 'secretaria'),
+    pacienteController.listForManagement
+);
+router.get(
+    '/pacientes/busca',
+    authorize('administrador', 'secretaria'),
+    pacienteController.searchForScheduling
+);
+router.get(
+    '/pacientes/gestao/:id',
+    authorize('administrador', 'secretaria'),
+    pacienteController.getForManagement
+);
+router.post(
+    '/pacientes',
+    authorize('administrador', 'secretaria'),
+    pacienteController.createPatient
+);
+router.put(
+    '/pacientes/:id',
+    authorize('administrador', 'secretaria'),
+    pacienteController.updatePatient
+);
+router.get(
     '/pacientes/:id',
     authorize('administrador', 'secretaria', 'profissional', 'paciente'),
     pacienteController.getPacienteDetails

@@ -61,6 +61,7 @@
             'dashboard-secretaria.html': ['administrador', 'secretaria'],
             'profissionais.html': ['administrador', 'secretaria'],
             'especialidades.html': ['administrador', 'secretaria'],
+            'pacientes.html': ['administrador', 'secretaria'],
             'equipe.html': ['administrador', 'secretaria'],
             'configuracoes-clinica.html': ['administrador'],
             'disponibilidade.html': ['administrador', 'secretaria', 'profissional'],
@@ -86,6 +87,19 @@
             isCurrent(ticket, value) {
                 return ticket?.sequence === sequence && ticket.value === String(value);
             }
+        };
+    }
+
+    function createOperationLock() {
+        let active = false;
+        return {
+            tryBegin() {
+                if (active) return false;
+                active = true;
+                return true;
+            },
+            end() { active = false; },
+            get active() { return active; }
         };
     }
 
@@ -178,6 +192,7 @@
         appointmentPayload,
         createSession,
         createLatestRequestGate,
+        createOperationLock,
         dashboardForRole,
         dashboardAgenda,
         dashboardSummary,

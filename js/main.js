@@ -103,6 +103,7 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (page === 'dashboard-medico.html') setupProfissionalDashboard();
     else if (page === 'dashboard-secretaria.html') setupAdministracaoDashboard();
     else if (page === 'profissionais.html') setupGestaoProfissionaisPage();
+    else if (page === 'pacientes.html') setupPatientsPage();
     else if (page === 'especialidades.html') setupGestaoEspecialidadesPage();
     else if (page === 'equipe.html') setupEquipePage();
     else if (page === 'aceitar-convite.html') setupAceiteConvitePage();
@@ -1094,6 +1095,219 @@ async function setupAdministracaoDashboard() {
             showMessage(status, error.message);
         }
     });
+}
+
+async function setupPatientsPage() {
+    const clinic = requireClinicSession('pacientes.html');
+    if (!clinic) return;
+    applyClinicIdentity(clinic);
+    document.getElementById('clinic-role').textContent = clinic.papel === 'administrador'
+        ? 'Administrador da clínica' : 'Secretaria da clínica';
+
+    const form = document.getElementById('paciente-form');
+    const list = document.getElementById('pacientes-lista');
+    const formStatus = document.getElementById('paciente-form-status');
+    const listStatus = document.getElementById('pacientes-status');
+    const title = document.getElementById('paciente-form-title');
+    const cancel = document.getElementById('cancelar-edicao-paciente');
+    const searchForm = document.getElementById('pacientes-filtros');
+    const previous = document.getElementById('pacientes-anterior');
+    const next = document.getElementById('pacientes-proximo');
+    const pageLabel = document.getElementById('pacientes-pagina');
+    const loadGate = VitalisCore.createLatestRequestGate();
+    const editGate = VitalisCore.createLatestRequestGate();
+    const mutationLock = VitalisCore.createOperationLock();
+    let editingId = null;
+    let editLoading = false;
+    let page = 1;
+    let total = 0;
+    const limit = 20;
+
+    function setFormDisabled(disabled) {
+        form.setAttribute('aria-busy', String(disabled));
+        form.querySelectorAll('input, select, button').forEach((control) => {
+            control.disabled = disabled;
+        });
+    }
+
+    function setEditActionsDisabled(disabled) {
+        list.querySelectorAll('[data-patient-edit]').forEach((button) => {
+            button.disabled = disabled;
+        });
+    }
+
+    function statusBadge(status) {
+        const badge = document.createElement('span');
+        badge.className = `vitalis-status ${status === 'ativo' ? 'vitalis-status-confirmada' : 'vitalis-status-inativo'}`;
+        badge.textContent = status === 'ativo' ? 'Ativo' : 'Inativo';
+        return badge;
+    }
+
+    function clearPatientForm() {
+        editingId = null;
+        form.reset();
+        document.getElementById('paciente-status').value = 'ativo';
+        title.textContent = 'Cadastrar paciente';
+        cancel.hidden = true;
+    }
+
+    function resetForm() {
+        clearPatientForm();
+        showMessage(formStatus, '', 'muted');
+    }
+
+    async function startEdit(id) {
+        if (mutationLock.active) return;
+        const patientId = Number(id);
+        const ticket = editGate.begin(patientId);
+        editLoading = true;
+        clearPatientForm();
+        setFormDisabled(true);
+        showMessage(formStatus, 'Carregando paciente...', 'secondary');
+        try {
+            const patient = await apiRequest(`/pacientes/gestao/${patientId}`);
+            if (!editGate.isCurrent(ticket, patientId)) return;
+            if (VitalisCore.matchingSelectionId(patient.id, patientId) !== patientId) {
+                clearPatientForm();
+                showMessage(formStatus, 'Não foi possível confirmar o paciente selecionado. Tente novamente.');
+                return;
+            }
+            editingId = patient.id;
+            title.textContent = 'Editar paciente';
+            document.getElementById('paciente-nome').value = patient.nome;
+            document.getElementById('paciente-email').value = patient.email ?? '';
+            document.getElementById('paciente-telefone').value = patient.telefone ?? '';
+            document.getElementById('paciente-nascimento').value = patient.data_nascimento
+                ? String(patient.data_nascimento).slice(0, 10) : '';
+            document.getElementById('paciente-status').value = patient.status;
+            cancel.hidden = false;
+            showMessage(formStatus, '', 'muted');
+            form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            document.getElementById('paciente-nome').focus();
+        } catch (error) {
+            if (editGate.isCurrent(ticket, patientId)) {
+                clearPatientForm();
+                showMessage(formStatus, error.message);
+            }
+        } finally {
+            if (editGate.isCurrent(ticket, patientId)) {
+                editLoading = false;
+                if (!mutationLock.active) setFormDisabled(false);
+            }
+        }
+    }
+
+    function render(patients) {
+        list.replaceChildren();
+        if (!patients.length) {
+            const row = document.createElement('tr');
+            const cell = tableCell('Nenhum paciente encontrado nesta clínica.');
+            cell.colSpan = 6;
+            cell.className = 'text-center py-4 text-muted';
+            row.append(cell);
+            list.append(row);
+            return;
+        }
+        patients.forEach((patient) => {
+            const row = document.createElement('tr');
+            const values = [
+                ['Paciente', patient.nome],
+                ['E-mail', patient.email_mascarado || 'Não informado'],
+                ['Telefone', patient.telefone_mascarado || 'Não informado'],
+                ['Nascimento', patient.ano_nascimento || 'Não informado']
+            ];
+            values.forEach(([label, value]) => {
+                const cell = tableCell(value);
+                cell.dataset.label = label;
+                if (label === 'Paciente') cell.className = 'vitalis-patient-name';
+                row.append(cell);
+            });
+            const statusCell = document.createElement('td');
+            statusCell.dataset.label = 'Situação';
+            statusCell.append(statusBadge(patient.status));
+            row.append(statusCell);
+            const actions = document.createElement('td');
+            actions.dataset.label = 'Ações';
+            actions.className = 'vitalis-table-actions';
+            const edit = document.createElement('button');
+            edit.type = 'button';
+            edit.className = 'btn btn-sm btn-outline-primary';
+            edit.dataset.patientEdit = '';
+            edit.disabled = mutationLock.active;
+            edit.innerHTML = '<i class="bi bi-pencil"></i> Editar';
+            edit.setAttribute('aria-label', `Editar ${patient.nome}`);
+            edit.addEventListener('click', () => startEdit(patient.id));
+            actions.append(edit);
+            row.append(actions);
+            list.append(row);
+        });
+    }
+
+    async function loadPatients() {
+        const ticket = loadGate.begin(page);
+        searchForm.querySelectorAll('input, select, button').forEach((control) => { control.disabled = true; });
+        const params = new URLSearchParams({
+            busca: document.getElementById('pacientes-busca').value.trim(),
+            status: document.getElementById('pacientes-filtro-status').value,
+            pagina: String(page), limite: String(limit)
+        });
+        try {
+            const data = await apiRequest(`/pacientes/gestao?${params}`);
+            if (!loadGate.isCurrent(ticket, page)) return;
+            total = data.paginacao.total;
+            render(data.pacientes);
+            pageLabel.textContent = `Página ${page} de ${Math.max(1, Math.ceil(total / limit))}`;
+            previous.disabled = page <= 1;
+            next.disabled = page * limit >= total;
+            showMessage(listStatus, `${total} paciente(s) encontrado(s).`, 'muted');
+        } catch (error) {
+            if (loadGate.isCurrent(ticket, page)) showMessage(listStatus, error.message);
+        } finally {
+            if (loadGate.isCurrent(ticket, page)) {
+                searchForm.querySelectorAll('input, select, button').forEach((control) => { control.disabled = false; });
+            }
+        }
+    }
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (editLoading || !mutationLock.tryBegin()) return;
+        editGate.invalidate();
+        const targetId = editingId;
+        setFormDisabled(true);
+        setEditActionsDisabled(true);
+        const payload = {
+            nome: document.getElementById('paciente-nome').value,
+            email: document.getElementById('paciente-email').value,
+            telefone: document.getElementById('paciente-telefone').value,
+            data_nascimento: document.getElementById('paciente-nascimento').value,
+            status: document.getElementById('paciente-status').value
+        };
+        try {
+            const result = await apiRequest(targetId ? `/pacientes/${targetId}` : '/pacientes', {
+                method: targetId ? 'PUT' : 'POST', body: JSON.stringify(payload)
+            });
+            resetForm();
+            page = 1;
+            await loadPatients();
+            showMessage(formStatus, result.message, 'success');
+        } catch (error) {
+            showMessage(formStatus, error.message);
+        } finally {
+            mutationLock.end();
+            setFormDisabled(false);
+            setEditActionsDisabled(false);
+        }
+    });
+    cancel.addEventListener('click', () => {
+        if (mutationLock.active || editLoading) return;
+        editGate.invalidate();
+        resetForm();
+    });
+    searchForm.addEventListener('submit', (event) => { event.preventDefault(); page = 1; loadPatients(); });
+    previous.addEventListener('click', () => { if (page > 1) { page -= 1; loadPatients(); } });
+    next.addEventListener('click', () => { if (page * limit < total) { page += 1; loadPatients(); } });
+    await loadPatients();
 }
 
 async function setupGestaoProfissionaisPage() {
