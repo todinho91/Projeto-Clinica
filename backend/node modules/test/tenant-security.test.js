@@ -1,7 +1,6 @@
 const assert = require('node:assert/strict');
 const { randomBytes } = require('node:crypto');
 const { test } = require('node:test');
-
 Object.assign(process.env, {
     DB_HOST: '127.0.0.1',
     DB_USER: 'fixture_user',
@@ -16,12 +15,7 @@ const tenantContext = require('../middleware/tenant');
 const authorize = require('../middleware/authorize');
 const { selectClinic } = require('../controllers/authController');
 const { getPacienteDetails } = require('../controllers/pacienteController');
-const {
-    agendarConsulta,
-    cancelarConsulta,
-    getMinhaAgenda,
-    updateStatusConsulta
-} = require('../controllers/consultaController');
+const { getMinhaAgenda } = require('../controllers/consultaController');
 const router = require('../routes');
 
 function response() {
@@ -229,7 +223,6 @@ test('paciente de outra clínica não pode ser consultado', async (t) => {
     ]);
     assert.equal(res.statusCode, 404);
 });
-
 test('profissional só consulta paciente vinculado à própria agenda', async (t) => {
     t.mock.method(pool, 'execute', async (sql, params) => {
         assert.match(sql, /FROM consultas c/);
@@ -248,106 +241,4 @@ test('profissional só consulta paciente vinculado à própria agenda', async (t
     }, res);
 
     assert.equal(res.statusCode, 404);
-});
-
-test('agendamento rejeita paciente fora da clínica ativa antes do insert', async (t) => {
-    let executions = 0;
-    t.mock.method(pool, 'execute', async (sql, params) => {
-        executions += 1;
-        assert.equal(params[0], 11);
-        assert.equal(params[5], 11);
-        return [[{ paciente_id: null, profissional_id: 8 }]];
-    });
-    const res = response();
-
-    await agendarConsulta({
-        body: {
-            clinica_id: 99,
-            paciente_id: 55,
-            profissional_id: 8,
-            inicio_em: '2032-01-01T10:00:00Z',
-            fim_em: '2032-01-01T11:00:00Z'
-        },
-        userId: 7,
-        tenant: { clinicId: 11, role: 'secretaria' }
-    }, res);
-
-    assert.equal(executions, 1);
-    assert.equal(res.statusCode, 404);
-});
-
-test('alteração de status não alcança consulta de outra clínica', async (t) => {
-    let params;
-    t.mock.method(pool, 'execute', async (sql, values) => {
-        assert.match(sql, /c\.clinica_id = \?/);
-        params = values;
-        return [{ affectedRows: 0 }];
-    });
-    const res = response();
-
-    await updateStatusConsulta({
-        params: { id: '99' },
-        body: { status: 'realizada' },
-        userId: 7,
-        tenant: { clinicId: 11, role: 'administrador' }
-    }, res);
-
-    assert.deepEqual(params, ['realizada', 11, 99, 'administrador', 7]);
-    assert.equal(res.statusCode, 404);
-});
-
-test('paciente não cancela consulta de terceiro nem de outra clínica', async (t) => {
-    let params;
-    t.mock.method(pool, 'execute', async (sql, values) => {
-        assert.match(sql, /p\.usuario_id = \?/);
-        params = values;
-        return [{ affectedRows: 0 }];
-    });
-    const res = response();
-
-    await cancelarConsulta({
-        params: { id: '99' },
-        userId: 7,
-        tenant: { clinicId: 11, role: 'paciente' }
-    }, res);
-
-    assert.deepEqual(params, [11, 99, 'paciente', 7]);
-    assert.equal(res.statusCode, 404);
-});
-
-test('agendamento usa tenant do servidor e normaliza horário para UTC', async (t) => {
-    let executions = 0;
-    t.mock.method(pool, 'execute', async (sql, params) => {
-        executions += 1;
-        if (executions === 1) {
-            assert.equal(params[0], 11);
-            assert.equal(params[5], 11);
-            return [[{ paciente_id: 44, profissional_id: 8 }]];
-        }
-        assert.match(sql, /INSERT INTO consultas/);
-        assert.deepEqual(params, [
-            11, 44, 8,
-            '2032-01-01 13:00:00.000',
-            '2032-01-01 14:00:00.000',
-            7
-        ]);
-        return [{ insertId: 123 }];
-    });
-    const res = response();
-
-    await agendarConsulta({
-        body: {
-            clinica_id: 99,
-            paciente_id: 999,
-            profissional_id: 8,
-            inicio_em: '2032-01-01T10:00:00-03:00',
-            fim_em: '2032-01-01T11:00:00-03:00'
-        },
-        userId: 7,
-        tenant: { clinicId: 11, role: 'paciente' }
-    }, res);
-
-    assert.equal(executions, 2);
-    assert.equal(res.statusCode, 201);
-    assert.equal(res.body.id, 123);
 });

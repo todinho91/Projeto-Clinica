@@ -27,7 +27,8 @@ test('migrations criam todas as tabelas previstas para DB-01', async () => {
         'operadores_plataforma',
         'auditoria_plataforma',
         'disponibilidades_profissional',
-        'bloqueios_profissional'
+        'bloqueios_profissional',
+        'consultas_historico'
     ]) {
         assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`));
     }
@@ -77,10 +78,17 @@ test('convites persistem somente hash, expiram e referenciam vínculo da mesma c
     assert.match(sql, /sessao_versao INT UNSIGNED NOT NULL DEFAULT 1/);
 });
 
-test('consultas exigem período válido e evitam mesmo início para o profissional', async () => {
-    const sql = await schemaSql();
-    assert.match(sql, /CHECK \(fim_em > inicio_em\)/);
-    assert.match(sql, /UNIQUE KEY uk_consultas_inicio_profissional \(clinica_id, profissional_id, inicio_em\)/);
+test('consultas exigem período válido, reserva ativa única e histórico tenant-aware', async () => {
+    const sql = await fs.readFile(
+        path.join(migrationsDir, '009_appointment_management.sql'), 'utf8'
+    );
+    assert.match(sql, /DROP INDEX uk_consultas_inicio_profissional/);
+    assert.match(sql, /GENERATED ALWAYS AS \(CASE WHEN status IN \('agendada', 'confirmada'\)/);
+    assert.match(sql, /UNIQUE KEY uk_consultas_reserva_inicio[\s\S]*clinica_id, profissional_id, inicio_em, reserva_ativa/);
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS consultas_historico/);
+    assert.match(sql, /UNIQUE KEY uk_consultas_historico_versao \(clinica_id, consulta_id, versao\)/);
+    assert.match(sql, /FOREIGN KEY \(clinica_id, consulta_id\)[\s\S]*REFERENCES consultas \(clinica_id, id\)/);
+    assert.doesNotMatch(sql, /TRUNCATE|DELETE FROM/i);
 });
 
 test('onboarding profissional adiciona tipo sem criar senha ou convite inseguro no SQL', async () => {

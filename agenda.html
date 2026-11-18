@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agenda — Vitalis</title>
+    <link rel="icon" type="image/png" href="img/icons8-blue-heart-96.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body class="vitalis-dashboard-body vitalis-appointments-page">
+    <aside class="offcanvas-lg offcanvas-start vitalis-sidebar" tabindex="-1" id="vitalis-sidebar" aria-labelledby="sidebar-title">
+        <div class="offcanvas-header d-lg-none"><h2 class="offcanvas-title h5" id="sidebar-title">Menu Vitalis</h2><button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" data-bs-target="#vitalis-sidebar" aria-label="Fechar menu"></button></div>
+        <div class="offcanvas-body d-flex flex-column p-0">
+            <a class="vitalis-brand" href="dashboard-secretaria.html" aria-label="Vitalis — visão geral"><span class="vitalis-brand-mark"><i class="bi bi-heart-pulse-fill"></i></span><span><strong>Vitalis</strong><small>Gestão em saúde</small></span></a>
+            <div class="vitalis-clinic-card"><span>Clínica ativa</span><strong data-clinic-name>Clínica</strong><small id="clinic-role">Perfil autorizado</small></div>
+            <nav class="vitalis-nav" aria-label="Navegação do dashboard">
+                <a href="dashboard-secretaria.html"><i class="bi bi-grid-1x2-fill"></i> Visão geral</a>
+                <a href="pacientes.html"><i class="bi bi-person-vcard"></i> Pacientes</a>
+                <a href="profissionais.html"><i class="bi bi-person-badge"></i> Profissionais</a>
+                <a href="disponibilidade.html"><i class="bi bi-calendar-week"></i> Disponibilidade</a>
+                <a href="especialidades.html"><i class="bi bi-tags"></i> Especialidades</a>
+                <a class="active" href="agenda.html" aria-current="page"><i class="bi bi-calendar3"></i> Agenda</a>
+                <a href="equipe.html"><i class="bi bi-people"></i> Equipe e acessos</a>
+                <a data-admin-only href="configuracoes-clinica.html"><i class="bi bi-gear"></i> Configurações</a>
+            </nav>
+            <div class="vitalis-sidebar-footer"><a href="select-clinic.html"><i class="bi bi-arrow-left-right"></i> Trocar clínica</a><button type="button" id="logout-button"><i class="bi bi-box-arrow-right"></i> Sair</button></div>
+        </div>
+    </aside>
+    <div class="vitalis-dashboard-content">
+        <header class="vitalis-topbar"><button class="btn vitalis-menu-button d-lg-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#vitalis-sidebar" aria-controls="vitalis-sidebar" aria-label="Abrir menu"><i class="bi bi-list"></i></button><div class="vitalis-topbar-title"><span>Clínica ativa</span><strong data-clinic-name>Clínica</strong></div><a class="btn vitalis-switch-button" href="select-clinic.html"><i class="bi bi-arrow-left-right"></i><span class="d-none d-sm-inline"> Trocar clínica</span></a></header>
+        <main class="vitalis-main">
+            <section class="vitalis-welcome" aria-labelledby="page-title"><div><p class="vitalis-eyebrow">M4 — Consultas</p><h1 id="page-title">Agenda da clínica</h1><p>Agende, confirme e acompanhe consultas usando o fuso e a disponibilidade da clínica ativa.</p></div><span class="vitalis-timezone-note"><i class="bi bi-globe-americas"></i><span>Fuso da clínica</span><strong id="agenda-timezone">—</strong></span></section>
+            <div class="vitalis-appointment-grid">
+                <section class="vitalis-panel vitalis-appointment-form" aria-labelledby="appointment-form-title">
+                    <div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Reserva</p><h2 id="appointment-form-title">Nova consulta</h2></div></div>
+                    <form id="consulta-form">
+                        <div class="mb-3"><label class="form-label" for="consulta-paciente-busca">Buscar paciente ativo</label><div class="input-group"><input class="form-control" id="consulta-paciente-busca" minlength="2" maxlength="100" autocomplete="off" placeholder="Nome, e-mail ou telefone"><button class="btn btn-outline-primary" type="button" id="consulta-paciente-buscar"><i class="bi bi-search"></i><span class="visually-hidden">Buscar paciente</span></button></div></div>
+                        <div class="mb-3"><label class="form-label" for="consulta-paciente">Paciente</label><select class="form-select" id="consulta-paciente" required><option value="">Busque e selecione um paciente</option></select></div>
+                        <div class="mb-3"><label class="form-label" for="consulta-especialidade">Especialidade</label><select class="form-select" id="consulta-especialidade" required><option value="">Selecione</option></select></div>
+                        <div class="mb-3"><label class="form-label" for="consulta-profissional">Profissional</label><select class="form-select" id="consulta-profissional" required disabled><option value="">Selecione a especialidade</option></select></div>
+                        <div class="row g-3 mb-3"><div class="col-sm-7"><label class="form-label" for="consulta-data">Data</label><input class="form-control" type="date" id="consulta-data" required></div><div class="col-sm-5"><label class="form-label" for="consulta-duracao">Duração</label><select class="form-select" id="consulta-duracao"><option value="30">30 min</option><option value="45">45 min</option><option value="60">60 min</option></select></div></div>
+                        <div class="mb-3"><label class="form-label" for="consulta-horario">Horário disponível</label><select class="form-select" id="consulta-horario" required disabled><option value="">Informe data e profissional</option></select></div>
+                        <div class="d-flex gap-2 flex-wrap"><button class="btn vitalis-primary-button flex-grow-1" type="submit"><i class="bi bi-calendar-plus"></i> <span id="consulta-submit-label">Agendar consulta</span></button><button class="btn btn-outline-secondary" type="button" id="consulta-cancelar-reagendamento" hidden>Cancelar</button></div>
+                        <div id="consulta-form-status" role="status" aria-live="polite"></div>
+                    </form>
+                </section>
+                <section class="vitalis-panel" aria-labelledby="appointments-title">
+                    <div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Clínica ativa</p><h2 id="appointments-title">Consultas</h2></div></div>
+                    <form id="agenda-filtros" class="vitalis-appointment-filters mb-3" role="search">
+                        <div><label class="form-label" for="agenda-data-inicio">De</label><input class="form-control" type="date" id="agenda-data-inicio" required></div>
+                        <div><label class="form-label" for="agenda-data-fim">Até</label><input class="form-control" type="date" id="agenda-data-fim" required></div>
+                        <div><label class="form-label" for="agenda-filtro-status">Situação</label><select class="form-select" id="agenda-filtro-status"><option value="todos">Todas</option><option value="agendada">Agendada</option><option value="confirmada">Confirmada</option><option value="realizada">Realizada</option><option value="cancelada">Cancelada</option><option value="nao_compareceu">Não compareceu</option></select></div>
+                        <button class="btn btn-outline-primary" type="submit"><i class="bi bi-funnel"></i> Filtrar</button>
+                    </form>
+                    <div id="agenda-status" role="status" aria-live="polite"></div>
+                    <div class="table-responsive vitalis-appointment-table-wrap"><table class="table vitalis-agenda-table vitalis-management-table vitalis-appointment-table mb-0"><thead><tr><th>Data</th><th>Paciente</th><th>Atendimento</th><th>Situação</th><th class="text-end">Ações</th></tr></thead><tbody id="agenda-lista"><tr><td colspan="5" class="text-center py-4 text-muted">Carregando consultas...</td></tr></tbody></table></div>
+                    <div class="vitalis-pagination"><button class="btn btn-sm btn-outline-secondary" id="agenda-anterior" type="button">Anterior</button><span id="agenda-pagina">Página 1</span><button class="btn btn-sm btn-outline-secondary" id="agenda-proximo" type="button">Próxima</button></div>
+                </section>
+            </div>
+        </main>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script><script src="js/vitalis-client.js"></script><script src="js/main.js"></script>
+</body>
+</html>

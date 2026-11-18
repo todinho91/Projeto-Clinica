@@ -104,6 +104,7 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (page === 'dashboard-secretaria.html') setupAdministracaoDashboard();
     else if (page === 'profissionais.html') setupGestaoProfissionaisPage();
     else if (page === 'pacientes.html') setupPatientsPage();
+    else if (page === 'agenda.html') setupAppointmentsPage();
     else if (page === 'especialidades.html') setupGestaoEspecialidadesPage();
     else if (page === 'equipe.html') setupEquipePage();
     else if (page === 'aceitar-convite.html') setupAceiteConvitePage();
@@ -1095,6 +1096,281 @@ async function setupAdministracaoDashboard() {
             showMessage(status, error.message);
         }
     });
+}
+
+async function setupAppointmentsPage() {
+    const clinic = requireClinicSession('agenda.html');
+    if (!clinic) return;
+    applyClinicIdentity(clinic);
+    document.getElementById('clinic-role').textContent = clinic.papel === 'administrador'
+        ? 'Administrador da clínica' : 'Secretaria da clínica';
+
+    const form = document.getElementById('consulta-form');
+    const formStatus = document.getElementById('consulta-form-status');
+    const patientSearch = document.getElementById('consulta-paciente-busca');
+    const patientSelect = document.getElementById('consulta-paciente');
+    const specialtySelect = document.getElementById('consulta-especialidade');
+    const professionalSelect = document.getElementById('consulta-profissional');
+    const dateInput = document.getElementById('consulta-data');
+    const durationSelect = document.getElementById('consulta-duracao');
+    const slotSelect = document.getElementById('consulta-horario');
+    const cancelReschedule = document.getElementById('consulta-cancelar-reagendamento');
+    const submitLabel = document.getElementById('consulta-submit-label');
+    const filterForm = document.getElementById('agenda-filtros');
+    const list = document.getElementById('agenda-lista');
+    const listStatus = document.getElementById('agenda-status');
+    const previous = document.getElementById('agenda-anterior');
+    const next = document.getElementById('agenda-proximo');
+    const pageLabel = document.getElementById('agenda-pagina');
+    const mutationLock = VitalisCore.createOperationLock();
+    const slotsGate = VitalisCore.createLatestRequestGate();
+    const listGate = VitalisCore.createLatestRequestGate();
+    let specialties = [];
+    let editingId = null;
+    let page = 1;
+    let total = 0;
+    const limit = 20;
+
+    let today = new Date().toISOString().slice(0, 10);
+    dateInput.min = today;
+    dateInput.value = today;
+    document.getElementById('agenda-data-inicio').value = today;
+    document.getElementById('agenda-data-fim').value = today;
+
+    function setBusy(busy) {
+        form.setAttribute('aria-busy', String(busy));
+        form.querySelectorAll('input, select, button').forEach((control) => { control.disabled = busy; });
+        list.querySelectorAll('button').forEach((button) => { button.disabled = busy; });
+        if (!busy) {
+            professionalSelect.disabled = !specialty();
+            slotSelect.disabled = slotSelect.options.length <= 1;
+        }
+    }
+
+    function specialty() {
+        return specialties.find((item) => item.id === Number(specialtySelect.value));
+    }
+
+    function fillProfessionals(selected = '') {
+        professionalSelect.replaceChildren(new Option('Selecione', ''));
+        (specialty()?.profissionais || []).forEach((item) => {
+            professionalSelect.append(new Option(item.nome_exibicao, String(item.id)));
+        });
+        professionalSelect.disabled = !specialty();
+        professionalSelect.value = String(selected || '');
+        slotSelect.replaceChildren(new Option('Informe data e profissional', ''));
+        slotSelect.disabled = true;
+    }
+
+    async function searchPatients() {
+        const query = patientSearch.value.trim();
+        if (query.length < 2) {
+            showMessage(formStatus, 'Informe pelo menos dois caracteres para buscar pacientes.');
+            return;
+        }
+        try {
+            const patients = await apiRequest(`/pacientes/busca?q=${encodeURIComponent(query)}`);
+            patientSelect.replaceChildren(new Option('Selecione o paciente', ''));
+            patients.forEach((patient) => {
+                const suffix = patient.ano_nascimento ? ` — ${patient.ano_nascimento}` : '';
+                patientSelect.append(new Option(`${patient.nome}${suffix}`, String(patient.id)));
+            });
+            showMessage(formStatus, `${patients.length} paciente(s) encontrado(s).`, 'muted');
+        } catch (error) { showMessage(formStatus, error.message); }
+    }
+
+    async function loadSlots() {
+        slotsGate.invalidate();
+        const professionalId = professionalSelect.value;
+        const specialtyId = specialtySelect.value;
+        if (!professionalId || !specialtyId || !dateInput.value) {
+            slotSelect.replaceChildren(new Option('Informe data e profissional', ''));
+            slotSelect.disabled = true;
+            return;
+        }
+        const key = `${professionalId}:${specialtyId}:${dateInput.value}:${durationSelect.value}`;
+        const ticket = slotsGate.begin(key);
+        slotSelect.replaceChildren(new Option('Consultando horários...', ''));
+        slotSelect.disabled = true;
+        try {
+            const params = new URLSearchParams({
+                profissional_id: professionalId, especialidade_id: specialtyId,
+                data: dateInput.value, duracao_minutos: durationSelect.value
+            });
+            const data = await apiRequest(`/consultas/horarios?${params}`);
+            if (!slotsGate.isCurrent(ticket, key)) return;
+            slotSelect.replaceChildren(new Option(
+                data.horarios.length ? 'Selecione um horário' : 'Nenhum horário disponível', ''
+            ));
+            data.horarios.forEach((slot) => {
+                slotSelect.append(new Option(slot.inicio_local.slice(11, 16), slot.inicio_local));
+            });
+            slotSelect.disabled = data.horarios.length === 0;
+        } catch (error) {
+            if (slotsGate.isCurrent(ticket, key)) {
+                slotSelect.replaceChildren(new Option('Falha ao consultar horários', ''));
+                showMessage(formStatus, error.message);
+            }
+        }
+    }
+
+    function badge(status) {
+        const labels = {
+            agendada: 'Agendada', confirmada: 'Confirmada', realizada: 'Realizada',
+            cancelada: 'Cancelada', nao_compareceu: 'Não compareceu'
+        };
+        const element = document.createElement('span');
+        element.className = `vitalis-status vitalis-status-${status.replaceAll('_', '-')}`;
+        element.textContent = labels[status] || status;
+        return element;
+    }
+
+    function actionButton(label, icon, style, handler) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = `btn btn-sm ${style}`;
+        button.innerHTML = `<i class="bi ${icon}"></i> ${label}`;
+        button.addEventListener('click', handler);
+        return button;
+    }
+
+    async function mutate(path, options, confirmation) {
+        if (!mutationLock.tryBegin()) return;
+        if (confirmation && !window.confirm(confirmation)) { mutationLock.end(); return; }
+        setBusy(true);
+        try {
+            const result = await apiRequest(path, options);
+            showMessage(listStatus, result.message, 'success');
+            await loadAgenda();
+        } catch (error) { showMessage(listStatus, error.message); }
+        finally { mutationLock.end(); setBusy(false); }
+    }
+
+    function beginReschedule(item) {
+        editingId = item.id;
+        patientSelect.replaceChildren(new Option(item.paciente_nome, String(item.paciente_id), true, true));
+        specialtySelect.value = String(item.especialidade_id || '');
+        fillProfessionals(item.profissional_id);
+        dateInput.value = item.inicio_local.slice(0, 10);
+        const duration = Math.round((new Date(item.fim_em) - new Date(item.inicio_em)) / 60000);
+        if ([30, 45, 60].includes(duration)) durationSelect.value = String(duration);
+        submitLabel.textContent = 'Confirmar reagendamento';
+        document.getElementById('appointment-form-title').textContent = 'Reagendar consulta';
+        cancelReschedule.hidden = false;
+        loadSlots();
+        form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function resetForm() {
+        editingId = null; form.reset(); patientSelect.replaceChildren(new Option('Busque e selecione um paciente', ''));
+        dateInput.min = today; dateInput.value = today; fillProfessionals();
+        submitLabel.textContent = 'Agendar consulta';
+        document.getElementById('appointment-form-title').textContent = 'Nova consulta';
+        cancelReschedule.hidden = true;
+        showMessage(formStatus, '', 'muted');
+    }
+
+    function render(items) {
+        list.replaceChildren();
+        if (!items.length) {
+            const row = document.createElement('tr'); const cell = tableCell('Nenhuma consulta encontrada.');
+            cell.colSpan = 5; cell.className = 'text-center py-4 text-muted'; row.append(cell); list.append(row); return;
+        }
+        items.forEach((item) => {
+            const row = document.createElement('tr');
+            const values = [
+                ['Data', `${item.inicio_local.slice(8, 10)}/${item.inicio_local.slice(5, 7)}/${item.inicio_local.slice(0, 4)} ${item.inicio_local.slice(11, 16)}`],
+                ['Paciente', item.paciente_nome],
+                ['Atendimento', `${item.profissional_nome}${item.especialidade_nome ? ` — ${item.especialidade_nome}` : ''}`]
+            ];
+            values.forEach(([label, value]) => { const cell = tableCell(value); cell.dataset.label = label; row.append(cell); });
+            const status = document.createElement('td'); status.dataset.label = 'Situação'; status.append(badge(item.status)); row.append(status);
+            const actions = document.createElement('td'); actions.dataset.label = 'Ações'; actions.className = 'vitalis-appointment-actions';
+            if (['agendada', 'confirmada'].includes(item.status)) {
+                actions.append(actionButton('Reagendar', 'bi-calendar-event', 'btn-outline-primary', () => beginReschedule(item)));
+                actions.append(actionButton('Cancelar', 'bi-x-circle', 'btn-outline-danger', () => mutate(
+                    `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'cancelada' }) },
+                    'Cancelar esta consulta? O histórico será preservado.'
+                )));
+            }
+            if (item.status === 'agendada') actions.append(actionButton('Confirmar', 'bi-check-circle', 'btn-outline-success', () => mutate(
+                `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'confirmada' }) }
+            )));
+            if (['agendada', 'confirmada'].includes(item.status)) {
+                actions.append(actionButton('Realizada', 'bi-check2-all', 'btn-outline-success', () => mutate(
+                    `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'realizada' }) }
+                )));
+                actions.append(actionButton('Faltou', 'bi-person-x', 'btn-outline-warning', () => mutate(
+                    `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'nao_compareceu' }) }
+                )));
+            }
+            if (!actions.children.length) actions.textContent = 'Histórico preservado';
+            row.append(actions); list.append(row);
+        });
+    }
+
+    async function loadAgenda() {
+        const key = `${page}:${document.getElementById('agenda-data-inicio').value}:${document.getElementById('agenda-data-fim').value}:${document.getElementById('agenda-filtro-status').value}`;
+        const ticket = listGate.begin(key);
+        const params = new URLSearchParams({
+            data_inicio: document.getElementById('agenda-data-inicio').value,
+            data_fim: document.getElementById('agenda-data-fim').value,
+            status: document.getElementById('agenda-filtro-status').value,
+            pagina: String(page), limite: String(limit)
+        });
+        try {
+            const data = await apiRequest(`/consultas/gestao?${params}`);
+            if (!listGate.isCurrent(ticket, key)) return;
+            total = data.paginacao.total; render(data.consultas);
+            pageLabel.textContent = `Página ${page} de ${Math.max(1, Math.ceil(total / limit))}`;
+            previous.disabled = page <= 1; next.disabled = page * limit >= total;
+            showMessage(listStatus, `${total} consulta(s) encontrada(s).`, 'muted');
+        } catch (error) { if (listGate.isCurrent(ticket, key)) showMessage(listStatus, error.message); }
+    }
+
+    try {
+        const context = await apiRequest('/consultas/contexto');
+        specialties = context.especialidades;
+        document.getElementById('agenda-timezone').textContent = context.timezone;
+        const dateParts = new Intl.DateTimeFormat('en-US', {
+            timeZone: context.timezone, year: 'numeric', month: '2-digit', day: '2-digit'
+        }).formatToParts(new Date()).reduce((parts, item) => {
+            if (item.type !== 'literal') parts[item.type] = item.value;
+            return parts;
+        }, {});
+        today = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+        dateInput.min = today;
+        dateInput.value = today;
+        document.getElementById('agenda-data-inicio').value = today;
+        document.getElementById('agenda-data-fim').value = today;
+        specialties.forEach((item) => specialtySelect.append(new Option(item.nome, String(item.id))));
+    } catch (error) { showMessage(formStatus, error.message); form.hidden = true; return; }
+
+    document.getElementById('consulta-paciente-buscar').addEventListener('click', searchPatients);
+    patientSearch.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); searchPatients(); } });
+    specialtySelect.addEventListener('change', () => { fillProfessionals(); });
+    [professionalSelect, dateInput, durationSelect].forEach((control) => control.addEventListener('change', loadSlots));
+    cancelReschedule.addEventListener('click', resetForm);
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!mutationLock.tryBegin()) return;
+        setBusy(true);
+        const payload = {
+            paciente_id: Number(patientSelect.value), especialidade_id: Number(specialtySelect.value),
+            profissional_id: Number(professionalSelect.value), inicio_local: slotSelect.value,
+            duracao_minutos: Number(durationSelect.value)
+        };
+        try {
+            const result = await apiRequest(editingId ? `/consultas/${editingId}/reagendar` : '/consultas', {
+                method: editingId ? 'PATCH' : 'POST', body: JSON.stringify(payload)
+            });
+            resetForm(); page = 1; await loadAgenda(); showMessage(formStatus, result.message, 'success');
+        } catch (error) { showMessage(formStatus, error.message); }
+        finally { mutationLock.end(); setBusy(false); }
+    });
+    filterForm.addEventListener('submit', (event) => { event.preventDefault(); page = 1; loadAgenda(); });
+    previous.addEventListener('click', () => { if (page > 1) { page -= 1; loadAgenda(); } });
+    next.addEventListener('click', () => { if (page * limit < total) { page += 1; loadAgenda(); } });
+    await loadAgenda();
 }
 
 async function setupPatientsPage() {
