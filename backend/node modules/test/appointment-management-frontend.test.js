@@ -36,11 +36,35 @@ test('troca de contexto descarta horários e listagens antigas', async () => {
         main.indexOf('async function setupPatientsPage()')
     );
     assert.match(setup, /const slotsGate = VitalisCore\.createLatestRequestGate\(\)/);
+    assert.match(setup, /const patientSearchGate = VitalisCore\.createLatestRequestGate\(\)/);
     assert.match(setup, /const listGate = VitalisCore\.createLatestRequestGate\(\)/);
     assert.match(setup, /slotsGate\.isCurrent\(ticket, key\)/);
     assert.match(setup, /listGate\.isCurrent\(ticket, key\)/);
     assert.match(setup, /const mutationLock = VitalisCore\.createOperationLock\(\)/);
     assert.match(setup, /!mutationLock\.tryBegin\(\)/);
+    assert.match(setup, /patientSearchGate\.isCurrent\(ticket, query\)/);
+    assert.match(setup, /patientSelect\.disabled = Boolean\(editingId\)/);
+    assert.match(setup, /versao: editingVersion/);
+    assert.match(setup, /localMinutes\(item\.fim_local\) - localMinutes\(item\.inicio_local\)/);
+});
+
+test('autoagendamento do paciente usa especialidade e slots no fuso da clínica', async () => {
+    const [page, main] = await Promise.all([
+        fs.readFile(path.join(root, 'dashboard-paciente.html'), 'utf8'),
+        fs.readFile(path.join(root, 'js', 'main.js'), 'utf8')
+    ]);
+    const setup = main.slice(
+        main.indexOf('async function setupPacienteDashboard()'),
+        main.indexOf('async function setupProfissionalDashboard()')
+    );
+    assert.match(page, /id="especialidade-select"/);
+    assert.match(page, /id="horario-consulta"/);
+    assert.match(setup, /apiRequest\('\/consultas\/contexto'\)/);
+    assert.match(setup, /\/consultas\/horarios/);
+    assert.match(setup, /VitalisCore\.appointmentPayload\([\s\S]*specialtySelect\.value/);
+    assert.match(setup, /slotsGate\.isCurrent\(ticket, key\)/);
+    assert.match(setup, /versao: Number\(appointment\.versao\)/);
+    assert.doesNotMatch(setup, /apiRequest\('\/profissionais'\)/);
 });
 
 test('agenda mantém cartões responsivos em 390 e 360 px sem rolagem horizontal', async () => {

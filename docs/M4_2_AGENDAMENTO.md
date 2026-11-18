@@ -15,6 +15,11 @@ do profissional com `FOR UPDATE`, valida grade semanal, descanso, bloqueios e co
 ativas, e somente então grava consulta, histórico e auditoria. Requisições concorrentes do
 mesmo profissional são serializadas; qualquer falha desfaz todas as escritas.
 
+Bloqueios novos são recusados quando cruzam uma consulta agendada ou confirmada. Alterações
+da grade semanal também são recusadas quando deixariam uma consulta futura fora do período
+de atendimento ou dentro de um descanso. Nenhuma dessas operações cancela ou modifica uma
+consulta silenciosamente.
+
 Horários recorrentes continuam como horário civil da clínica. Datas de consultas e bloqueios
 são convertidas do fuso IANA de `clinicas.timezone` para UTC antes da persistência.
 
@@ -35,15 +40,21 @@ As transições aceitas são explícitas:
 - `confirmada` → `realizada`, `cancelada` ou `nao_compareceu`;
 - `realizada`, `cancelada` e `nao_compareceu` são terminais.
 
+Além da matriz, existem limites temporais no backend: `realizada` somente a partir do início,
+`nao_compareceu` somente após o fim, e confirmação/cancelamento somente antes do fim. Toda
+alteração recebe a `versao` exibida pela API; uma tela desatualizada recebe conflito e precisa
+recarregar a agenda.
+
 ## APIs
 
 - `GET /api/consultas/contexto`: especialidades e profissionais ativos da clínica;
 - `GET /api/consultas/horarios`: horários livres após grade, descanso, bloqueios e reservas;
 - `GET /api/consultas/gestao`: agenda paginada e filtrada;
 - `POST /api/consultas`: criação transacional;
-- `PATCH /api/consultas/:id/status`: transição explícita;
-- `PATCH /api/consultas/:id/reagendar`: alteração transacional do período/profissional;
-- `DELETE /api/consultas/:id`: cancelamento compatível com os fluxos existentes;
+- `PUT /api/consultas/:id/status`: transição explícita com versão esperada;
+- `PATCH /api/consultas/:id/reagendar`: alteração transacional do período/profissional com
+  paciente original e versão esperada obrigatórios;
+- `DELETE /api/consultas/:id`: cancelamento com versão esperada no corpo;
 - `GET /api/consultas/:id/historico`: trilha versionada autorizada.
 
 ## Preparação para confirmação multicanal
@@ -86,8 +97,10 @@ npm run test:appointments:integration
 ```
 
 O cenário cria somente dados sintéticos, agenda duas requisições concorrentes, exige um único
-sucesso, testa ID de paciente de outro tenant, transição inválida, histórico/auditoria e
-rollback provocado por uma restrição SQL real. Não exige `SUPER`, trigger ou mudança global.
+sucesso, testa sobreposição parcial, versão desatualizada, paciente inativo, ID de outro
+tenant, bloqueio e grade incompatíveis, cancelamento/reagendamento concorrentes,
+histórico/auditoria e rollback depois da inserção da consulta, provocado por uma restrição
+SQL real no histórico. Não exige `SUPER`, trigger ou mudança global.
 
 ## Validação visual
 
@@ -100,3 +113,7 @@ Com o backend em `http://localhost:3000`, sirva o frontend pelo Go Live em
 - bloqueios, descanso e sobreposição parcial;
 - troca Aurora/Horizonte sem reaproveitar opções ou consultas;
 - layouts 1366×768, 1280×720, 390×844 e 360×800.
+
+O painel legado do paciente usa o mesmo contexto e endpoint de horários da agenda: escolhe
+especialidade e profissional, recebe somente slots válidos no fuso da clínica e preserva o
+autoagendamento. As issues #55, #59 e #60 permanecem fora desta PR.

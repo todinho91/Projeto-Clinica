@@ -73,6 +73,22 @@ function canTransition(from, to) {
     return STATUSES.has(to) && Boolean(TRANSITIONS.get(from)?.has(to));
 }
 
+function transitionAllowedAt(appointment, target, now = new Date()) {
+    const utcDate = (value) => {
+        if (value instanceof Date) return value;
+        const text = String(value).replace(' ', 'T');
+        return new Date(/(?:Z|[+-]\d{2}:\d{2})$/i.test(text) ? text : `${text}Z`);
+    };
+    const start = utcDate(appointment?.inicio_em);
+    const end = utcDate(appointment?.fim_em);
+    if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())
+        || !Number.isFinite(now.getTime())) return false;
+    if (target === 'realizada') return now >= start;
+    if (target === 'nao_compareceu') return now >= end;
+    if (target === 'confirmada' || target === 'cancelada') return now < end;
+    return false;
+}
+
 async function activeOperator(connection, req) {
     const [rows] = await connection.execute(`
         SELECT cu.papel FROM clinica_usuarios cu
@@ -296,17 +312,17 @@ exports.agendarConsulta = async (req, res) => {
     let connection;
     try {
         connection = await pool.getConnection(); await connection.beginTransaction();
-        if (!await activeOperator(connection, req)) return rollback(connection, res, 403, 'Vínculo ativo não autorizado.');
+        if (!await activeOperator(connection, req)) return await rollback(connection, res, 403, 'Vínculo ativo não autorizado.');
         const clinic = await activeClinic(connection, req.tenant.clinicId, true);
         const period = clinic && appointmentPeriod(req.body, clinic.timezone);
-        if (!period) return rollback(connection, res, 400, 'Data, horário ou duração inválida.');
+        if (!period) return await rollback(connection, res, 400, 'Data, horário ou duração inválida.');
         const professional = await activeProfessional(connection, req.tenant.clinicId, professionalId, specialtyId, true);
         const patient = await activePatient(connection, req, patientId, true);
         if (!professional || !patient) {
-            return rollback(connection, res, 404, 'Paciente, profissional ou especialidade não encontrado na clínica ativa.');
+            return await rollback(connection, res, 404, 'Paciente, profissional ou especialidade não encontrado na clínica ativa.');
         }
         const valid = await validateReservation(connection, req.tenant.clinicId, professionalId, period, clinic.timezone);
-        if (!valid.ok) return rollback(connection, res, 409, 'Horário indisponível para este profissional.');
+        if (!valid.ok) return await rollback(connection, res, 409, 'Horário indisponível para este profissional.');
         const start = mysqlUtc(period.start); const end = mysqlUtc(period.end);
         const [insert] = await connection.execute(`INSERT INTO consultas (
             clinica_id, paciente_id, profissional_id, especialidade_id, inicio_em, fim_em,
@@ -395,7 +411,7 @@ exports.listForManagement = async (req, res) => {
 exports.getMinhaAgenda = async (req, res) => {
     const { clinicId, role } = req.tenant;
     try {
-        const [rows] = await pool.execute(`SELECT c.id, c.inicio_em, c.fim_em, c.status,
+        const [rows] = await pool.execute(`SELECT c.id, c.inicio_em, c.fim_em, c.status, c.versao,
             pa.id AS paciente_id, pa.nome AS nome_paciente,
             p.id AS profissional_id, p.nome_exibicao AS nome_profissional,
             e.id AS especialidade_id, e.nome AS nome_especialidade
@@ -417,27 +433,34 @@ exports.getMinhaAgenda = async (req, res) => {
 async function changeStatus(req, res, forced = null) {
     const appointmentId = positiveId(req.params.id);
     const target = forced || req.body?.status;
-    if (!appointmentId || !STATUSES.has(target) || target === 'agendada') {
-        return res.status(400).json({ error: 'Consulta ou status inválido.' });
+    const expectedVersion = positiveId(req.body?.versao);
+    if (!appointmentId || !expectedVersion || !STATUSES.has(target) || target === 'agendada') {
+        return res.status(400).json({ error: 'Consulta, versão ou status inválido.' });
     }
     let connection;
     try {
         connection = await pool.getConnection(); await connection.beginTransaction();
         const role = await activeOperator(connection, req);
-        if (!role) return rollback(connection, res, 403, 'Vínculo ativo não autorizado.');
+        if (!role) return await rollback(connection, res, 403, 'Vínculo ativo não autorizado.');
         const appointment = await lockedAppointment(connection, req, appointmentId);
-        if (!appointment || !accessible(req, appointment)) return rollback(connection, res, 404, 'Consulta não encontrada.');
+        if (!appointment || !accessible(req, appointment)) return await rollback(connection, res, 404, 'Consulta não encontrada.');
+        if (Number(appointment.versao) !== expectedVersion) {
+            return await rollback(connection, res, 409, 'A consulta foi alterada. Atualize a agenda antes de continuar.');
+        }
         if (role === 'paciente' && target !== 'cancelada') {
-            return rollback(connection, res, 403, 'Paciente somente pode cancelar a própria consulta.');
+            return await rollback(connection, res, 403, 'Paciente somente pode cancelar a própria consulta.');
         }
         if (!canTransition(appointment.status, target)) {
-            return rollback(connection, res, 409, 'Transição de status não permitida.');
+            return await rollback(connection, res, 409, 'Transição de status não permitida.');
+        }
+        if (!transitionAllowedAt(appointment, target)) {
+            return await rollback(connection, res, 409, 'Esta alteração não é permitida no momento da consulta.');
         }
         const previous = { ...appointment }; const version = Number(appointment.versao) + 1;
         const [update] = await connection.execute(`UPDATE consultas SET status = ?, versao = ?
             WHERE clinica_id = ? AND id = ? AND versao = ?`,
         [target, version, req.tenant.clinicId, appointmentId, appointment.versao]);
-        if (update.affectedRows !== 1) return rollback(connection, res, 409, 'A consulta foi alterada por outra operação.');
+        if (update.affectedRows !== 1) return await rollback(connection, res, 409, 'A consulta foi alterada por outra operação.');
         Object.assign(appointment, { status: target, versao: version });
         await history(connection, req, appointment, target === 'cancelada' ? 'cancelada' : 'status_alterado', previous);
         await audit(connection, req, `consulta_${target}`, appointmentId, {
@@ -459,28 +482,40 @@ exports.reschedule = async (req, res) => {
     const appointmentId = positiveId(req.params.id);
     const professionalId = positiveId(req.body?.profissional_id);
     const specialtyId = positiveId(req.body?.especialidade_id);
-    if (!appointmentId || !professionalId || !specialtyId) {
-        return res.status(400).json({ error: 'Consulta, profissional e especialidade são obrigatórios.' });
+    const patientId = positiveId(req.body?.paciente_id);
+    const expectedVersion = positiveId(req.body?.versao);
+    if (!appointmentId || !professionalId || !specialtyId || !patientId || !expectedVersion) {
+        return res.status(400).json({
+            error: 'Consulta, versão, paciente, profissional e especialidade são obrigatórios.'
+        });
     }
     let connection;
     try {
         connection = await pool.getConnection(); await connection.beginTransaction();
         const role = await activeOperator(connection, req);
         if (!['administrador', 'secretaria'].includes(role)) {
-            return rollback(connection, res, 403, 'Papel não autorizado a reagendar consultas.');
+            return await rollback(connection, res, 403, 'Papel não autorizado a reagendar consultas.');
         }
         const clinic = await activeClinic(connection, req.tenant.clinicId, true);
         const period = clinic && appointmentPeriod(req.body, clinic.timezone);
         const professional = await activeProfessional(connection, req.tenant.clinicId, professionalId, specialtyId, true);
         const appointment = await lockedAppointment(connection, req, appointmentId);
-        if (!appointment) return rollback(connection, res, 404, 'Consulta não encontrada.');
-        if (!ACTIVE.has(appointment.status)) return rollback(connection, res, 409, 'Somente consultas ativas podem ser reagendadas.');
-        if (!period) return rollback(connection, res, 400, 'Data, horário ou duração inválida.');
-        if (!professional) return rollback(connection, res, 404, 'Profissional ou especialidade não encontrado na clínica ativa.');
+        if (!appointment) return await rollback(connection, res, 404, 'Consulta não encontrada.');
+        if (Number(appointment.versao) !== expectedVersion) {
+            return await rollback(connection, res, 409, 'A consulta foi alterada. Atualize a agenda antes de continuar.');
+        }
+        if (Number(appointment.paciente_id) !== patientId) {
+            return await rollback(connection, res, 409, 'O paciente da consulta não pode ser alterado no reagendamento.');
+        }
+        const patient = await activePatient(connection, req, appointment.paciente_id, true);
+        if (!patient) return await rollback(connection, res, 409, 'O paciente da consulta não está ativo.');
+        if (!ACTIVE.has(appointment.status)) return await rollback(connection, res, 409, 'Somente consultas ativas podem ser reagendadas.');
+        if (!period) return await rollback(connection, res, 400, 'Data, horário ou duração inválida.');
+        if (!professional) return await rollback(connection, res, 404, 'Profissional ou especialidade não encontrado na clínica ativa.');
         const valid = await validateReservation(
             connection, req.tenant.clinicId, professionalId, period, clinic.timezone, appointmentId
         );
-        if (!valid.ok) return rollback(connection, res, 409, 'Horário indisponível para este profissional.');
+        if (!valid.ok) return await rollback(connection, res, 409, 'Horário indisponível para este profissional.');
         const previous = { ...appointment }; const version = Number(appointment.versao) + 1;
         const start = mysqlUtc(period.start); const end = mysqlUtc(period.end);
         const [update] = await connection.execute(`UPDATE consultas SET profissional_id = ?,
@@ -489,7 +524,7 @@ exports.reschedule = async (req, res) => {
             professionalId, specialtyId, start, end, version,
             req.tenant.clinicId, appointmentId, appointment.versao
         ]);
-        if (update.affectedRows !== 1) return rollback(connection, res, 409, 'A consulta foi alterada por outra operação.');
+        if (update.affectedRows !== 1) return await rollback(connection, res, 409, 'A consulta foi alterada por outra operação.');
         Object.assign(appointment, {
             profissional_id: professionalId, especialidade_id: specialtyId,
             inicio_em: start, fim_em: end, status: 'agendada', versao: version
@@ -533,6 +568,7 @@ exports.getHistory = async (req, res) => {
 
 exports.appointmentPeriod = appointmentPeriod;
 exports.canTransition = canTransition;
+exports.transitionAllowedAt = transitionAllowedAt;
 exports.localPeriod = localPeriod;
 exports.periodFitsWeekly = periodFitsWeekly;
 exports.validateReservation = validateReservation;

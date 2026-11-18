@@ -117,6 +117,8 @@ test('atualização semanal usa tenant autenticado, preserva histórico e audita
     const db = connection(async (sql, params) => {
         executions.push({ sql, params });
         if (/SELECT p\.id/.test(sql)) return [[{ id: 8, nome_exibicao: 'Profissional' }]];
+        if (/SELECT timezone FROM clinicas/.test(sql)) return [[{ timezone: 'America/Sao_Paulo' }]];
+        if (/FROM consultas/.test(sql)) return [[]];
         return [{ affectedRows: 1 }];
     });
     const commit = t.mock.method(db, 'commit');
@@ -141,6 +143,8 @@ test('falha parcial da grade semanal realiza rollback', async (t) => {
     t.mock.method(console, 'error', () => {});
     const db = connection(async (sql) => {
         if (/SELECT p\.id/.test(sql)) return [[{ id: 8 }]];
+        if (/SELECT timezone FROM clinicas/.test(sql)) return [[{ timezone: 'America/Sao_Paulo' }]];
+        if (/FROM consultas/.test(sql)) return [[]];
         if (/INSERT INTO disponibilidades_profissional/.test(sql)) throw Object.assign(new Error('falha'), { code: 'ER_TEST' });
         return [{ affectedRows: 1 }];
     });
@@ -190,6 +194,7 @@ test('bloqueio válido converte o fuso, usa tenant do token e registra auditoria
         if (/SELECT p\.id/.test(sql)) return [[{ id: 8 }]];
         if (/SELECT timezone FROM clinicas/.test(sql)) return [[{ timezone: 'America/Manaus' }]];
         if (/SELECT id FROM bloqueios_profissional/.test(sql)) return [[]];
+        if (/SELECT id FROM consultas/.test(sql)) return [[]];
         if (/INSERT INTO bloqueios_profissional/.test(sql)) return [{ insertId: 52 }];
         return [{ affectedRows: 1 }];
     });
@@ -215,6 +220,54 @@ test('bloqueio válido converte o fuso, usa tenant do token e registra auditoria
     ]);
     assert.equal(executions.some((item) => item.params?.includes(999)), false);
     assert.ok(executions.some((item) => /INSERT INTO auditoria/.test(item.sql)));
+});
+
+test('bloqueio que cruza consulta ativa é recusado sem cancelar a reserva', async (t) => {
+    const db = connection(async (sql) => {
+        if (/SELECT p\.id/.test(sql)) return [[{ id: 8 }]];
+        if (/SELECT timezone FROM clinicas/.test(sql)) return [[{ timezone: 'America/Sao_Paulo' }]];
+        if (/FROM bloqueios_profissional/.test(sql)) return [[]];
+        if (/FROM consultas/.test(sql)) return [[{ id: 77 }]];
+        throw new Error('nenhuma escrita deveria ocorrer');
+    });
+    const rollback = t.mock.method(db, 'rollback');
+    t.mock.method(pool, 'getConnection', async () => db);
+    const res = response();
+    await controller.createBlock({
+        params: { professionalId: '8' }, userId: 4,
+        tenant: { clinicId: 11, role: 'secretaria' },
+        body: {
+            tipo: 'indisponibilidade', inicio_local: '2032-06-15T08:00',
+            fim_local: '2032-06-15T18:00'
+        }
+    }, res);
+    assert.equal(res.statusCode, 409);
+    assert.match(res.body.error, /consulta ativa/);
+    assert.equal(rollback.mock.callCount(), 1);
+});
+
+test('grade incompatível com consulta futura é recusada antes de desativar intervalos', async (t) => {
+    const executions = [];
+    const db = connection(async (sql) => {
+        executions.push(sql);
+        if (/SELECT p\.id/.test(sql)) return [[{ id: 8 }]];
+        if (/SELECT timezone FROM clinicas/.test(sql)) return [[{ timezone: 'America/Sao_Paulo' }]];
+        if (/FROM consultas/.test(sql)) return [[{
+            id: 77, inicio_em: '2032-01-05 12:00:00.000', fim_em: '2032-01-05 12:30:00.000'
+        }]];
+        throw new Error('nenhuma escrita deveria ocorrer');
+    });
+    t.mock.method(pool, 'getConnection', async () => db);
+    const res = response();
+    await controller.replaceWeeklyAvailability({
+        params: { professionalId: '8' }, userId: 4,
+        tenant: { clinicId: 11, role: 'administrador' },
+        body: { intervalos: [
+            { dia_semana: 1, tipo: 'atendimento', inicio: '13:00', fim: '17:00' }
+        ] }
+    }, res);
+    assert.equal(res.statusCode, 409);
+    assert.equal(executions.some((sql) => /UPDATE disponibilidades_profissional/.test(sql)), false);
 });
 
 test('consulta exige identidade, vínculo e perfil ativos da mesma clínica', async (t) => {

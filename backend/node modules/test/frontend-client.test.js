@@ -63,16 +63,18 @@ test('gestão de especialidades mantém menu, acessibilidade e desativação ló
     assert.doesNotMatch(main, /method: 'DELETE'[\s\S]{0,120}especialidades/);
 });
 
-test('agendamento converte o horário local com fuso para intervalo UTC', () => {
+test('agendamento preserva horário civil para conversão no fuso da clínica pelo backend', () => {
     assert.deepEqual(
-        core.appointmentPayload('2032-01-01T10:00:00-03:00', 45, '8'),
+        core.appointmentPayload('2032-01-01T10:00', 45, '8', '5'),
         {
             profissional_id: 8,
-            inicio_em: '2032-01-01T13:00:00.000Z',
-            fim_em: '2032-01-01T13:45:00.000Z'
+            especialidade_id: 5,
+            inicio_local: '2032-01-01T10:00',
+            duracao_minutos: 45
         }
     );
-    assert.throws(() => core.appointmentPayload('', 45, 8), /inválidos/);
+    assert.throws(() => core.appointmentPayload('', 45, 8, 5), /inválidos/);
+    assert.throws(() => core.appointmentPayload('2032-01-01T10:00', 45, 8, 0), /inválidos/);
 });
 
 test('resumo conta somente datas válidas e status compatíveis com cada indicador', () => {

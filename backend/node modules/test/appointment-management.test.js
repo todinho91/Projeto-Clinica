@@ -58,6 +58,15 @@ test('integração confirma banco selecionado e MySQL 8 antes de qualquer limpez
     assert.deepEqual(calls, ['SELECT DATABASE() AS database_name', 'SELECT VERSION() AS version']);
 });
 
+test('fixture MySQL usa somente colunas existentes na disponibilidade da migration 007', async () => {
+    const integration = await fs.readFile(
+        path.join(__dirname, 'appointment-management.integration.test.js'), 'utf8'
+    );
+    const insert = integration.match(/INSERT INTO disponibilidades_profissional[\s\S]*?\)`,/)[0];
+    assert.doesNotMatch(insert, /criado_por_usuario_id/);
+    assert.match(insert, /clinica_id, profissional_id, dia_semana, tipo, inicio_local, fim_local, status/);
+});
+
 test('período usa fuso da clínica e limita duração', () => {
     const period = controller.appointmentPeriod({
         inicio_local: '2032-01-05T09:00', duracao_minutos: 45
@@ -87,6 +96,18 @@ test('matriz de estados é explícita e terminal', () => {
     assert.equal(controller.canTransition('agendada', 'invalida'), false);
 });
 
+test('limites temporais impedem realização e falta antes do atendimento', () => {
+    const appointment = {
+        inicio_em: '2032-01-05T12:00:00.000Z', fim_em: '2032-01-05T12:30:00.000Z'
+    };
+    assert.equal(controller.transitionAllowedAt(appointment, 'realizada', new Date('2032-01-05T11:59:59Z')), false);
+    assert.equal(controller.transitionAllowedAt(appointment, 'realizada', new Date('2032-01-05T12:00:00Z')), true);
+    assert.equal(controller.transitionAllowedAt(appointment, 'nao_compareceu', new Date('2032-01-05T12:29:59Z')), false);
+    assert.equal(controller.transitionAllowedAt(appointment, 'nao_compareceu', new Date('2032-01-05T12:30:00Z')), true);
+    assert.equal(controller.transitionAllowedAt(appointment, 'confirmada', new Date('2032-01-05T12:29:59Z')), true);
+    assert.equal(controller.transitionAllowedAt(appointment, 'cancelada', new Date('2032-01-05T12:30:00Z')), false);
+});
+
 test('secretaria agenda no tenant autenticado com transação, histórico e auditoria', async (t) => {
     let insertParams;
     const connection = transaction(t, async (sql, params) => {
@@ -113,6 +134,9 @@ test('secretaria agenda no tenant autenticado com transação, histórico e audi
     }, res);
     assert.equal(res.statusCode, 201);
     assert.deepEqual(insertParams.slice(0, 4), [11, 44, 8, 5]);
+    assert.deepEqual(insertParams.slice(4, 6), [
+        '2032-01-05 12:00:00.000', '2032-01-05 12:30:00.000'
+    ]);
     assert.equal(connection.commit.mock.callCount(), 1);
     assert.equal(connection.rollback.mock.callCount(), 0);
     assert.equal(connection.execute.mock.calls.some((call) => /consultas_historico/.test(call.arguments[0])), true);
@@ -177,7 +201,8 @@ test('cancelamento autorizado é transacional, versionado e preserva histórico'
     t.mock.method(pool, 'getConnection', async () => connection);
     const res = response();
     await controller.cancelarConsulta({
-        userId: 7, tenant: { clinicId: 11, role: 'secretaria' }, params: { id: '123' }, body: {}
+        userId: 7, tenant: { clinicId: 11, role: 'secretaria' }, params: { id: '123' },
+        body: { versao: 1 }
     }, res);
     assert.equal(res.statusCode, 200);
     assert.equal(connection.commit.mock.callCount(), 1);
@@ -196,6 +221,7 @@ test('reagendamento revalida profissional e disponibilidade antes de atualizar',
             inicio_em: '2032-01-05 12:00:00.000', fim_em: '2032-01-05 12:30:00.000',
             status: 'confirmada', versao: 2, profissional_usuario_id: 90, paciente_usuario_id: 91
         }]];
+        if (/SELECT id, nome FROM pacientes/.test(sql)) return [[{ id: 44, nome: 'Paciente' }]];
         if (/FROM disponibilidades_profissional/.test(sql)) return [[{ tipo: 'atendimento', inicio: '08:00', fim: '12:00' }]];
         if (/FROM bloqueios_profissional/.test(sql) || /SELECT id FROM consultas/.test(sql)) return [[]];
         if (/UPDATE consultas SET profissional_id/.test(sql)) return [{ affectedRows: 1 }];
@@ -206,7 +232,10 @@ test('reagendamento revalida profissional e disponibilidade antes de atualizar',
     const res = response();
     await controller.reschedule({
         userId: 7, tenant: { clinicId: 11, role: 'administrador' }, params: { id: '123' },
-        body: { profissional_id: 8, especialidade_id: 5, inicio_local: '2032-01-05T10:00', duracao_minutos: 45 }
+        body: {
+            paciente_id: 44, profissional_id: 8, especialidade_id: 5,
+            inicio_local: '2032-01-05T10:00', duracao_minutos: 45, versao: 2
+        }
     }, res);
     assert.equal(res.statusCode, 200);
     assert.equal(connection.commit.mock.callCount(), 1);
@@ -214,6 +243,160 @@ test('reagendamento revalida profissional e disponibilidade antes de atualizar',
     assert.ok(calls.findIndex((sql) => /SELECT p\.id, p\.nome_exibicao/.test(sql))
         < calls.findIndex((sql) => /FROM consultas c/.test(sql)));
     assert.equal(calls.some((sql) => /consultas_historico/.test(sql)), true);
+});
+
+test('ID de paciente de outra clínica é recusado antes de inserir consulta', async (t) => {
+    const connection = transaction(t, async (sql, params) => {
+        if (/SELECT cu\.papel/.test(sql)) return [[{ papel: 'secretaria' }]];
+        if (/SELECT id, timezone FROM clinicas/.test(sql)) return [[{ id: 11, timezone: 'America/Sao_Paulo' }]];
+        if (/SELECT p\.id, p\.nome_exibicao/.test(sql)) return [[{ id: 8, especialidade_id: 5 }]];
+        if (/SELECT id, nome FROM pacientes/.test(sql)) {
+            assert.equal(params[0], 11);
+            assert.equal(params.at(-1), 99);
+            return [[]];
+        }
+        throw new Error('nenhuma escrita deveria ocorrer');
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await controller.agendarConsulta({
+        userId: 7, tenant: { clinicId: 11, role: 'secretaria' },
+        body: {
+            paciente_id: 99, profissional_id: 8, especialidade_id: 5,
+            inicio_local: '2032-01-05T09:00', duracao_minutos: 30
+        }
+    }, res);
+    assert.equal(res.statusCode, 404);
+    assert.equal(connection.execute.mock.calls.some((call) => /INSERT INTO consultas \(/.test(call.arguments[0])), false);
+});
+
+test('alteração de status não alcança consulta de outra clínica', async (t) => {
+    const connection = transaction(t, async (sql) => {
+        if (/SELECT cu\.papel/.test(sql)) return [[{ papel: 'administrador' }]];
+        if (/FROM consultas c/.test(sql)) return [[]];
+        throw new Error('nenhuma atualização deveria ocorrer');
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await controller.updateStatusConsulta({
+        userId: 7, tenant: { clinicId: 11, role: 'administrador' },
+        params: { id: '99' }, body: { status: 'realizada', versao: 1 }
+    }, res);
+    assert.equal(res.statusCode, 404);
+    assert.equal(connection.execute.mock.calls.some((call) => /UPDATE consultas SET status/.test(call.arguments[0])), false);
+});
+
+test('paciente não cancela consulta de terceiro', async (t) => {
+    const connection = transaction(t, async (sql) => {
+        if (/SELECT cu\.papel/.test(sql)) return [[{ papel: 'paciente' }]];
+        if (/FROM consultas c/.test(sql)) return [[{
+            id: 123, paciente_id: 44, profissional_id: 8, especialidade_id: 5,
+            inicio_em: '2032-01-05 12:00:00.000', fim_em: '2032-01-05 12:30:00.000',
+            status: 'agendada', versao: 1, profissional_usuario_id: 90, paciente_usuario_id: 999
+        }]];
+        throw new Error('nenhuma atualização deveria ocorrer');
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await controller.cancelarConsulta({
+        userId: 7, tenant: { clinicId: 11, role: 'paciente' },
+        params: { id: '123' }, body: { versao: 1 }
+    }, res);
+    assert.equal(res.statusCode, 404);
+    assert.equal(connection.execute.mock.calls.some((call) => /UPDATE consultas SET status/.test(call.arguments[0])), false);
+});
+
+test('retorno antecipado aguarda rollback antes de liberar conexão', async (t) => {
+    const order = [];
+    const connection = transaction(t, async (sql) => {
+        if (/SELECT cu\.papel/.test(sql)) return [[]];
+        throw new Error('SQL inesperado');
+    });
+    connection.rollback = t.mock.fn(async () => {
+        await new Promise((resolve) => setImmediate(resolve));
+        order.push('rollback');
+    });
+    connection.release = t.mock.fn(() => order.push('release'));
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await controller.agendarConsulta({
+        userId: 7, tenant: { clinicId: 11, role: 'secretaria' },
+        body: {
+            paciente_id: 44, profissional_id: 8, especialidade_id: 5,
+            inicio_local: '2032-01-05T09:00', duracao_minutos: 30
+        }
+    }, res);
+    assert.equal(res.statusCode, 403);
+    assert.deepEqual(order, ['rollback', 'release']);
+});
+
+test('versão desatualizada não sobrescreve alteração concorrente', async (t) => {
+    const connection = transaction(t, async (sql) => {
+        if (/SELECT cu\.papel/.test(sql)) return [[{ papel: 'secretaria' }]];
+        if (/FROM consultas c/.test(sql)) return [[{
+            id: 123, paciente_id: 44, profissional_id: 8, especialidade_id: 5,
+            inicio_em: '2032-01-05 12:00:00.000', fim_em: '2032-01-05 12:30:00.000',
+            status: 'agendada', versao: 2, profissional_usuario_id: 90, paciente_usuario_id: 91
+        }]];
+        throw new Error('nenhuma atualização deveria ocorrer');
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await controller.updateStatusConsulta({
+        userId: 7, tenant: { clinicId: 11, role: 'secretaria' },
+        params: { id: '123' }, body: { status: 'confirmada', versao: 1 }
+    }, res);
+    assert.equal(res.statusCode, 409);
+    assert.equal(connection.execute.mock.calls.some((call) => /UPDATE consultas SET status/.test(call.arguments[0])), false);
+});
+
+test('consulta futura não pode ser marcada como realizada pelo backend', async (t) => {
+    const connection = transaction(t, async (sql) => {
+        if (/SELECT cu\.papel/.test(sql)) return [[{ papel: 'profissional' }]];
+        if (/FROM consultas c/.test(sql)) return [[{
+            id: 123, paciente_id: 44, profissional_id: 8, especialidade_id: 5,
+            inicio_em: '2999-01-05 12:00:00.000', fim_em: '2999-01-05 12:30:00.000',
+            status: 'confirmada', versao: 1, profissional_usuario_id: 7, paciente_usuario_id: 91
+        }]];
+        throw new Error('nenhuma atualização deveria ocorrer');
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await controller.updateStatusConsulta({
+        userId: 7, tenant: { clinicId: 11, role: 'profissional' },
+        params: { id: '123' }, body: { status: 'realizada', versao: 1 }
+    }, res);
+    assert.equal(res.statusCode, 409);
+});
+
+test('reagendamento rejeita troca de paciente e paciente original inativo', async (t) => {
+    const baseAppointment = {
+        id: 123, paciente_id: 44, profissional_id: 8, especialidade_id: 5,
+        inicio_em: '2032-01-05 12:00:00.000', fim_em: '2032-01-05 12:30:00.000',
+        status: 'agendada', versao: 1, profissional_usuario_id: 90, paciente_usuario_id: 91
+    };
+    for (const requestedPatient of [99, 44]) {
+        const connection = transaction(t, async (sql) => {
+            if (/SELECT cu\.papel/.test(sql)) return [[{ papel: 'administrador' }]];
+            if (/SELECT id, timezone FROM clinicas/.test(sql)) return [[{ id: 11, timezone: 'America/Sao_Paulo' }]];
+            if (/SELECT p\.id, p\.nome_exibicao/.test(sql)) return [[{ id: 8, especialidade_id: 5 }]];
+            if (/FROM consultas c/.test(sql)) return [[baseAppointment]];
+            if (/SELECT id, nome FROM pacientes/.test(sql)) return [[]];
+            throw new Error('nenhuma atualização deveria ocorrer');
+        });
+        t.mock.method(pool, 'getConnection', async () => connection);
+        const res = response();
+        await controller.reschedule({
+            userId: 7, tenant: { clinicId: 11, role: 'administrador' }, params: { id: '123' },
+            body: {
+                paciente_id: requestedPatient, profissional_id: 8, especialidade_id: 5,
+                inicio_local: '2032-01-05T10:00', duracao_minutos: 30, versao: 1
+            }
+        }, res);
+        assert.equal(res.statusCode, 409);
+        assert.equal(connection.execute.mock.calls.some((call) => /UPDATE consultas SET profissional_id/.test(call.arguments[0])), false);
+        t.mock.restoreAll();
+    }
 });
 
 test('rotas de gestão não permitem paciente nem profissional', () => {

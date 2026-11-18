@@ -46,14 +46,20 @@
             <h2>Marcar Nova Consulta</h2>
             <form id="agendamento-form">
                 <div class="mb-3">
-                    <label for="profissional-select" class="form-label">Escolha o profissional:</label>
-                    <select id="profissional-select" class="form-select" required>
-                        <option selected disabled>Carregando profissionais...</option>
+                    <label for="especialidade-select" class="form-label">Especialidade:</label>
+                    <select id="especialidade-select" class="form-select" required>
+                        <option value="">Carregando especialidades...</option>
                     </select>
                 </div>
                 <div class="mb-3">
-                    <label for="inicio-consulta" class="form-label">Data e hora:</label>
-                    <input type="datetime-local" id="inicio-consulta" class="form-control" required>
+                    <label for="profissional-select" class="form-label">Profissional:</label>
+                    <select id="profissional-select" class="form-select" required disabled>
+                        <option value="">Selecione a especialidade</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label for="data-consulta" class="form-label">Data:</label>
+                    <input type="date" id="data-consulta" class="form-control" required>
                 </div>
                 <div class="mb-3">
                     <label for="duracao-consulta" class="form-label">Duração:</label>
@@ -62,6 +68,13 @@
                         <option value="45" selected>45 minutos</option>
                         <option value="60">60 minutos</option>
                     </select>
+                </div>
+                <div class="mb-3">
+                    <label for="horario-consulta" class="form-label">Horário disponível:</label>
+                    <select id="horario-consulta" class="form-select" required disabled>
+                        <option value="">Informe data e profissional</option>
+                    </select>
+                    <div class="form-text">Os horários seguem o fuso da clínica: <strong id="paciente-agenda-timezone">—</strong>.</div>
                 </div>
                 <button type="submit" class="btn btn-primary">
                     <i class="bi bi-calendar-plus"></i> Confirmar Agendamento

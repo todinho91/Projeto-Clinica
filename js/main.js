@@ -891,8 +891,63 @@ async function setupPacienteDashboard() {
     if (!clinic) return;
     applyClinicIdentity(clinic);
     const table = document.getElementById('tabela-consultas-paciente');
+    const specialtySelect = document.getElementById('especialidade-select');
     const professionalSelect = document.getElementById('profissional-select');
+    const dateInput = document.getElementById('data-consulta');
+    const durationSelect = document.getElementById('duracao-consulta');
+    const slotSelect = document.getElementById('horario-consulta');
     const status = document.getElementById('agendamento-status');
+    const form = document.getElementById('agendamento-form');
+    const slotsGate = VitalisCore.createLatestRequestGate();
+    const mutationLock = VitalisCore.createOperationLock();
+    let specialties = [];
+
+    function selectedSpecialty() {
+        return specialties.find((item) => item.id === Number(specialtySelect.value));
+    }
+
+    function fillProfessionals() {
+        slotsGate.invalidate();
+        professionalSelect.replaceChildren(new Option('Selecione', ''));
+        (selectedSpecialty()?.profissionais || []).forEach((professional) => {
+            professionalSelect.append(new Option(professional.nome_exibicao, String(professional.id)));
+        });
+        professionalSelect.disabled = !selectedSpecialty();
+        slotSelect.replaceChildren(new Option('Informe data e profissional', ''));
+        slotSelect.disabled = true;
+    }
+
+    async function loadSlots() {
+        slotsGate.invalidate();
+        const key = `${specialtySelect.value}:${professionalSelect.value}:${dateInput.value}:${durationSelect.value}`;
+        if (!specialtySelect.value || !professionalSelect.value || !dateInput.value) {
+            slotSelect.replaceChildren(new Option('Informe data e profissional', ''));
+            slotSelect.disabled = true;
+            return;
+        }
+        const ticket = slotsGate.begin(key);
+        slotSelect.replaceChildren(new Option('Consultando horários...', ''));
+        slotSelect.disabled = true;
+        try {
+            const params = new URLSearchParams({
+                especialidade_id: specialtySelect.value,
+                profissional_id: professionalSelect.value,
+                data: dateInput.value,
+                duracao_minutos: durationSelect.value
+            });
+            const data = await apiRequest(`/consultas/horarios?${params}`);
+            if (!slotsGate.isCurrent(ticket, key)) return;
+            slotSelect.replaceChildren(new Option(
+                data.horarios.length ? 'Selecione um horário' : 'Nenhum horário disponível', ''
+            ));
+            data.horarios.forEach((slot) => {
+                slotSelect.append(new Option(slot.inicio_local.slice(11, 16), slot.inicio_local));
+            });
+            slotSelect.disabled = data.horarios.length === 0;
+        } catch (error) {
+            if (slotsGate.isCurrent(ticket, key)) showMessage(status, error.message);
+        }
+    }
 
     async function loadAgenda() {
         try {
@@ -915,14 +970,16 @@ async function setupPacienteDashboard() {
                     tableCell(appointment.status)
                 );
                 const actions = document.createElement('td');
-                if (!['cancelada', 'realizada'].includes(appointment.status)) {
+                if (['agendada', 'confirmada'].includes(appointment.status)) {
                     const button = document.createElement('button');
                     button.type = 'button';
                     button.className = 'btn btn-sm btn-outline-danger';
                     button.textContent = 'Cancelar';
                     button.addEventListener('click', async () => {
                         try {
-                            await apiRequest(`/consultas/${appointment.id}`, { method: 'DELETE' });
+                            await apiRequest(`/consultas/${appointment.id}`, {
+                                method: 'DELETE', body: JSON.stringify({ versao: Number(appointment.versao) })
+                            });
                             await loadAgenda();
                         } catch (error) {
                             showMessage(status, error.message);
@@ -939,37 +996,56 @@ async function setupPacienteDashboard() {
     }
 
     try {
-        const professionals = await apiRequest('/profissionais');
-        professionalSelect.replaceChildren();
-        professionals.forEach((professional) => {
-            const option = document.createElement('option');
-            option.value = professional.id;
-            option.textContent = professional.especialidades
-                ? `${professional.nome} — ${professional.especialidades}`
-                : professional.nome;
-            professionalSelect.append(option);
+        const context = await apiRequest('/consultas/contexto');
+        specialties = context.especialidades;
+        document.getElementById('paciente-agenda-timezone').textContent = context.timezone;
+        specialtySelect.replaceChildren(new Option('Selecione', ''));
+        specialties.forEach((specialty) => {
+            specialtySelect.append(new Option(specialty.nome, String(specialty.id)));
         });
+        const localParts = new Intl.DateTimeFormat('en-US', {
+            timeZone: context.timezone, year: 'numeric', month: '2-digit', day: '2-digit'
+        }).formatToParts(new Date()).reduce((parts, item) => {
+            if (item.type !== 'literal') parts[item.type] = item.value;
+            return parts;
+        }, {});
+        dateInput.min = `${localParts.year}-${localParts.month}-${localParts.day}`;
+        dateInput.value = dateInput.min;
     } catch (error) {
         showMessage(status, error.message);
+        form.hidden = true;
+        return;
     }
 
-    document.getElementById('agendamento-form')?.addEventListener('submit', async (event) => {
+    specialtySelect.addEventListener('change', fillProfessionals);
+    [professionalSelect, dateInput, durationSelect].forEach((control) => {
+        control.addEventListener('change', loadSlots);
+    });
+    form.addEventListener('submit', async (event) => {
         event.preventDefault();
+        if (!mutationLock.tryBegin()) return;
+        form.querySelectorAll('input, select, button').forEach((control) => { control.disabled = true; });
         try {
             const payload = VitalisCore.appointmentPayload(
-                document.getElementById('inicio-consulta').value,
-                document.getElementById('duracao-consulta').value,
-                professionalSelect.value
+                slotSelect.value, durationSelect.value,
+                professionalSelect.value, specialtySelect.value
             );
             const data = await apiRequest('/consultas', {
                 method: 'POST',
                 body: JSON.stringify(payload)
             });
             showMessage(status, data.message, 'success');
-            event.currentTarget.reset();
+            form.reset();
+            dateInput.value = dateInput.min;
+            fillProfessionals();
             await loadAgenda();
         } catch (error) {
             showMessage(status, error.message);
+        } finally {
+            mutationLock.end();
+            form.querySelectorAll('input, select, button').forEach((control) => { control.disabled = false; });
+            professionalSelect.disabled = !selectedSpecialty();
+            slotSelect.disabled = slotSelect.options.length <= 1;
         }
     });
 
@@ -1004,7 +1080,9 @@ async function setupProfissionalDashboard() {
                         try {
                             await apiRequest(`/consultas/${appointment.id}/status`, {
                                 method: 'PUT',
-                                body: JSON.stringify({ status: 'realizada' })
+                                body: JSON.stringify({
+                                    status: 'realizada', versao: Number(appointment.versao)
+                                })
                             });
                             await loadAgenda();
                         } catch (error) {
@@ -1123,10 +1201,12 @@ async function setupAppointmentsPage() {
     const next = document.getElementById('agenda-proximo');
     const pageLabel = document.getElementById('agenda-pagina');
     const mutationLock = VitalisCore.createOperationLock();
+    const patientSearchGate = VitalisCore.createLatestRequestGate();
     const slotsGate = VitalisCore.createLatestRequestGate();
     const listGate = VitalisCore.createLatestRequestGate();
     let specialties = [];
     let editingId = null;
+    let editingVersion = null;
     let page = 1;
     let total = 0;
     const limit = 20;
@@ -1142,6 +1222,7 @@ async function setupAppointmentsPage() {
         form.querySelectorAll('input, select, button').forEach((control) => { control.disabled = busy; });
         list.querySelectorAll('button').forEach((button) => { button.disabled = busy; });
         if (!busy) {
+            patientSelect.disabled = Boolean(editingId);
             professionalSelect.disabled = !specialty();
             slotSelect.disabled = slotSelect.options.length <= 1;
         }
@@ -1164,19 +1245,24 @@ async function setupAppointmentsPage() {
 
     async function searchPatients() {
         const query = patientSearch.value.trim();
+        patientSearchGate.invalidate();
         if (query.length < 2) {
             showMessage(formStatus, 'Informe pelo menos dois caracteres para buscar pacientes.');
             return;
         }
+        const ticket = patientSearchGate.begin(query);
         try {
             const patients = await apiRequest(`/pacientes/busca?q=${encodeURIComponent(query)}`);
+            if (!patientSearchGate.isCurrent(ticket, query) || patientSearch.value.trim() !== query) return;
             patientSelect.replaceChildren(new Option('Selecione o paciente', ''));
             patients.forEach((patient) => {
                 const suffix = patient.ano_nascimento ? ` — ${patient.ano_nascimento}` : '';
                 patientSelect.append(new Option(`${patient.nome}${suffix}`, String(patient.id)));
             });
             showMessage(formStatus, `${patients.length} paciente(s) encontrado(s).`, 'muted');
-        } catch (error) { showMessage(formStatus, error.message); }
+        } catch (error) {
+            if (patientSearchGate.isCurrent(ticket, query)) showMessage(formStatus, error.message);
+        }
     }
 
     async function loadSlots() {
@@ -1247,12 +1333,18 @@ async function setupAppointmentsPage() {
 
     function beginReschedule(item) {
         editingId = item.id;
+        editingVersion = Number(item.versao);
         patientSelect.replaceChildren(new Option(item.paciente_nome, String(item.paciente_id), true, true));
+        patientSelect.disabled = true;
         specialtySelect.value = String(item.especialidade_id || '');
         fillProfessionals(item.profissional_id);
         dateInput.value = item.inicio_local.slice(0, 10);
-        const duration = Math.round((new Date(item.fim_em) - new Date(item.inicio_em)) / 60000);
-        if ([30, 45, 60].includes(duration)) durationSelect.value = String(duration);
+        const localMinutes = (value) => Number(value.slice(11, 13)) * 60 + Number(value.slice(14, 16));
+        const duration = localMinutes(item.fim_local) - localMinutes(item.inicio_local);
+        if (![...durationSelect.options].some((option) => Number(option.value) === duration)) {
+            durationSelect.append(new Option(`${duration} min`, String(duration)));
+        }
+        durationSelect.value = String(duration);
         submitLabel.textContent = 'Confirmar reagendamento';
         document.getElementById('appointment-form-title').textContent = 'Reagendar consulta';
         cancelReschedule.hidden = false;
@@ -1261,7 +1353,9 @@ async function setupAppointmentsPage() {
     }
 
     function resetForm() {
-        editingId = null; form.reset(); patientSelect.replaceChildren(new Option('Busque e selecione um paciente', ''));
+        editingId = null; editingVersion = null; form.reset();
+        patientSelect.replaceChildren(new Option('Busque e selecione um paciente', ''));
+        patientSelect.disabled = false;
         dateInput.min = today; dateInput.value = today; fillProfessionals();
         submitLabel.textContent = 'Agendar consulta';
         document.getElementById('appointment-form-title').textContent = 'Nova consulta';
@@ -1288,19 +1382,19 @@ async function setupAppointmentsPage() {
             if (['agendada', 'confirmada'].includes(item.status)) {
                 actions.append(actionButton('Reagendar', 'bi-calendar-event', 'btn-outline-primary', () => beginReschedule(item)));
                 actions.append(actionButton('Cancelar', 'bi-x-circle', 'btn-outline-danger', () => mutate(
-                    `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'cancelada' }) },
+                    `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'cancelada', versao: item.versao }) },
                     'Cancelar esta consulta? O histórico será preservado.'
                 )));
             }
             if (item.status === 'agendada') actions.append(actionButton('Confirmar', 'bi-check-circle', 'btn-outline-success', () => mutate(
-                `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'confirmada' }) }
+                `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'confirmada', versao: item.versao }) }
             )));
             if (['agendada', 'confirmada'].includes(item.status)) {
                 actions.append(actionButton('Realizada', 'bi-check2-all', 'btn-outline-success', () => mutate(
-                    `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'realizada' }) }
+                    `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'realizada', versao: item.versao }) }
                 )));
                 actions.append(actionButton('Faltou', 'bi-person-x', 'btn-outline-warning', () => mutate(
-                    `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'nao_compareceu' }) }
+                    `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'nao_compareceu', versao: item.versao }) }
                 )));
             }
             if (!actions.children.length) actions.textContent = 'Histórico preservado';
@@ -1347,6 +1441,7 @@ async function setupAppointmentsPage() {
 
     document.getElementById('consulta-paciente-buscar').addEventListener('click', searchPatients);
     patientSearch.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); searchPatients(); } });
+    patientSearch.addEventListener('input', () => patientSearchGate.invalidate());
     specialtySelect.addEventListener('change', () => { fillProfessionals(); });
     [professionalSelect, dateInput, durationSelect].forEach((control) => control.addEventListener('change', loadSlots));
     cancelReschedule.addEventListener('click', resetForm);
@@ -1357,7 +1452,8 @@ async function setupAppointmentsPage() {
         const payload = {
             paciente_id: Number(patientSelect.value), especialidade_id: Number(specialtySelect.value),
             profissional_id: Number(professionalSelect.value), inicio_local: slotSelect.value,
-            duracao_minutos: Number(durationSelect.value)
+            duracao_minutos: Number(durationSelect.value),
+            ...(editingId ? { versao: editingVersion } : {})
         };
         try {
             const result = await apiRequest(editingId ? `/consultas/${editingId}/reagendar` : '/consultas', {
