@@ -52,6 +52,8 @@ recarregar a agenda.
 - `GET /api/consultas/gestao`: agenda paginada e filtrada;
 - `POST /api/consultas`: criação transacional;
 - `PUT /api/consultas/:id/status`: transição explícita com versão esperada;
+- `PUT /api/consultas/:id/concluir`: conclusão pelo profissional responsável, com versão
+  esperada e somente a partir do início da consulta;
 - `PATCH /api/consultas/:id/reagendar`: alteração transacional do período/profissional com
   paciente original e versão esperada obrigatórios;
 - `DELETE /api/consultas/:id`: cancelamento com versão esperada no corpo;
@@ -117,3 +119,10 @@ Com o backend em `http://localhost:3000`, sirva o frontend pelo Go Live em
 O painel legado do paciente usa o mesmo contexto e endpoint de horários da agenda: escolhe
 especialidade e profissional, recebe somente slots válidos no fuso da clínica e preserva o
 autoagendamento. As issues #55, #59 e #60 permanecem fora desta PR.
+
+Na área profissional, somente o médico/profissional vinculado à consulta pode concluir o
+atendimento. Identidade, vínculo, perfil, clínica, autoria e versão são revalidados dentro da
+transação; histórico e auditoria permanecem obrigatórios. A gestão não pode marcar uma
+consulta como realizada. A agenda administrativa pode registrar não comparecimento somente
+após o término informado pelo servidor e se atualiza sob demanda, ao retornar à aba e a cada
+30 segundos enquanto a página estiver visível.

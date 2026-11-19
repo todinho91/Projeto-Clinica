@@ -161,8 +161,13 @@ router.get(
 );
 router.put(
     '/consultas/:id/status',
-    authorize('administrador', 'secretaria', 'profissional'),
+    authorize('administrador', 'secretaria'),
     consultaController.updateStatusConsulta
+);
+router.put(
+    '/consultas/:id/concluir',
+    authorize('profissional'),
+    consultaController.concluirAtendimento
 );
 router.patch(
     '/consultas/:id/reagendar',

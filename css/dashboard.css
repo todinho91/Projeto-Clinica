@@ -63,7 +63,7 @@ html { scroll-behavior: smooth; }
 .vitalis-agenda-table td { color: var(--vitalis-text); border-bottom-color: #edf2f7; }
 .vitalis-status { display: inline-flex; padding: .3rem .58rem; border-radius: 999px; font-size: .73rem; font-weight: 700; }
 .vitalis-status-agendada { color: #1554a0; background: #e9f3ff; }
-.vitalis-status-confirmada { color: #087f5b; background: #e6f8f1; }
+.vitalis-status-confirmada { color: #0f6f78; background: #e2f7f7; }
 .vitalis-status-inativo { color: #7d3b12; background: #fff0e5; }
 .vitalis-privacy-note { margin: 1rem 0 0; color: var(--vitalis-muted); font-size: .78rem; }
 .vitalis-privacy-note i { color: #15926d; }
@@ -178,9 +178,16 @@ html { scroll-behavior: smooth; }
 .vitalis-appointment-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .35rem; }
 .vitalis-appointment-actions .btn { margin: 0; }
 .vitalis-status-agendada { color: #1554a0; background: #e9f3ff; }
-.vitalis-status-realizada { color: #087f5b; background: #e6f8f1; }
-.vitalis-status-cancelada { color: #9a3412; background: #ffede5; }
-.vitalis-status-nao-compareceu { color: #73510d; background: #fff4d6; }
+.vitalis-status-confirmada { color: #0f6f78; background: #e2f7f7; }
+.vitalis-status-realizada { color: #157347; background: #e8f5e9; }
+.vitalis-status-cancelada { color: #52606d; background: #edf1f5; }
+.vitalis-status-nao-compareceu { color: #9a3412; background: #ffede5; }
+.vitalis-professional-page .vitalis-appointment-table th:nth-child(1) { width: 28%; }
+.vitalis-professional-page .vitalis-appointment-table th:nth-child(2) { width: 25%; }
+.vitalis-professional-page .vitalis-appointment-table th:nth-child(3) { width: 17%; }
+.vitalis-professional-page .vitalis-appointment-table th:nth-child(4) { width: 30%; }
+.vitalis-professional-page .vitalis-appointment-actions { justify-content: flex-start; }
+.vitalis-professional-page .vitalis-appointment-actions .btn { white-space: normal; }
 
 /* PR50: responsividade e rolagem interna */
 html, body.vitalis-dashboard-body {
@@ -279,6 +286,8 @@ html, body.vitalis-dashboard-body {
     .vitalis-appointment-table td[colspan] { display: block; }
     .vitalis-appointment-table td[colspan]::before { content: none; }
     .vitalis-appointment-actions { justify-content: flex-start; }
+    .vitalis-professional-page .vitalis-welcome { align-items: stretch; flex-direction: column; }
+    .vitalis-professional-page .vitalis-refresh-button { width: 100%; }
 
     .vitalis-team-page .vitalis-main { padding: 1rem; }
     .vitalis-team-page .vitalis-welcome { margin-bottom: 1.25rem; }

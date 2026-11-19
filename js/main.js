@@ -1058,6 +1058,19 @@ async function setupProfissionalDashboard() {
     applyClinicIdentity(clinic);
     const table = document.getElementById('tabela-agenda');
     const status = document.getElementById('agenda-status');
+    const refresh = document.getElementById('atualizar-agenda-medico');
+    const mutationLock = VitalisCore.createOperationLock();
+
+    function appointmentStatus(value) {
+        const labels = {
+            agendada: 'Agendada', confirmada: 'Confirmada', realizada: 'Realizada',
+            cancelada: 'Cancelada', nao_compareceu: 'Não compareceu'
+        };
+        const badge = document.createElement('span');
+        badge.className = `vitalis-status vitalis-status-${value.replaceAll('_', '-')}`;
+        badge.textContent = labels[value] || value;
+        return badge;
+    }
 
     async function loadAgenda() {
         try {
@@ -1067,29 +1080,43 @@ async function setupProfissionalDashboard() {
                 const row = document.createElement('tr');
                 row.append(
                     tableCell(`${formatDate(appointment.inicio_em)} — ${formatDate(appointment.fim_em)}`),
-                    tableCell(appointment.nome_paciente),
-                    tableCell(appointment.status)
+                    tableCell(appointment.nome_paciente)
                 );
+                row.children[0].dataset.label = 'Data e hora';
+                row.children[1].dataset.label = 'Paciente';
+                const statusCell = document.createElement('td');
+                statusCell.dataset.label = 'Situação';
+                statusCell.append(appointmentStatus(appointment.status));
+                row.append(statusCell);
                 const actions = document.createElement('td');
-                if (!['realizada', 'cancelada'].includes(appointment.status)) {
+                actions.dataset.label = 'Ação';
+                actions.className = 'vitalis-appointment-actions';
+                if (['agendada', 'confirmada'].includes(appointment.status)) {
                     const button = document.createElement('button');
                     button.type = 'button';
                     button.className = 'btn btn-sm btn-success';
-                    button.textContent = 'Marcar realizada';
+                    button.innerHTML = '<i class="bi bi-check2-circle"></i> Concluir atendimento';
+                    button.disabled = !appointment.pode_concluir;
+                    if (button.disabled) button.title = 'Disponível somente a partir do início da consulta.';
                     button.addEventListener('click', async () => {
+                        if (!mutationLock.tryBegin()) return;
+                        button.disabled = true;
                         try {
-                            await apiRequest(`/consultas/${appointment.id}/status`, {
+                            const result = await apiRequest(`/consultas/${appointment.id}/concluir`, {
                                 method: 'PUT',
-                                body: JSON.stringify({
-                                    status: 'realizada', versao: Number(appointment.versao)
-                                })
+                                body: JSON.stringify({ versao: Number(appointment.versao) })
                             });
+                            showMessage(status, result.message, 'success');
                             await loadAgenda();
                         } catch (error) {
                             showMessage(status, error.message);
+                        } finally {
+                            mutationLock.end();
                         }
                     });
                     actions.append(button);
+                } else {
+                    actions.textContent = 'Atendimento encerrado';
                 }
                 row.append(actions);
                 table.append(row);
@@ -1102,10 +1129,15 @@ async function setupProfissionalDashboard() {
                 row.append(cell);
                 table.append(row);
             }
+            showMessage(status, 'Agenda atualizada.', 'muted');
         } catch (error) {
             showMessage(status, error.message);
         }
     }
+    refresh?.addEventListener('click', loadAgenda);
+    const agendaTimer = window.setInterval(() => { if (!document.hidden) loadAgenda(); }, 30000);
+    window.addEventListener('pagehide', () => window.clearInterval(agendaTimer), { once: true });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) loadAgenda(); });
     await loadAgenda();
 }
 
@@ -1390,12 +1422,12 @@ async function setupAppointmentsPage() {
                 `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'confirmada', versao: item.versao }) }
             )));
             if (['agendada', 'confirmada'].includes(item.status)) {
-                actions.append(actionButton('Realizada', 'bi-check2-all', 'btn-outline-success', () => mutate(
-                    `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'realizada', versao: item.versao }) }
-                )));
-                actions.append(actionButton('Faltou', 'bi-person-x', 'btn-outline-warning', () => mutate(
+                const absent = actionButton('Faltou', 'bi-person-x', 'btn-outline-warning', () => mutate(
                     `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'nao_compareceu', versao: item.versao }) }
-                )));
+                ));
+                absent.disabled = !item.pode_marcar_falta;
+                if (absent.disabled) absent.title = 'Disponível somente após o término da consulta.';
+                actions.append(absent);
             }
             if (!actions.children.length) actions.textContent = 'Histórico preservado';
             row.append(actions); list.append(row);
@@ -1466,6 +1498,10 @@ async function setupAppointmentsPage() {
     filterForm.addEventListener('submit', (event) => { event.preventDefault(); page = 1; loadAgenda(); });
     previous.addEventListener('click', () => { if (page > 1) { page -= 1; loadAgenda(); } });
     next.addEventListener('click', () => { if (page * limit < total) { page += 1; loadAgenda(); } });
+    document.getElementById('agenda-atualizar').addEventListener('click', loadAgenda);
+    const agendaTimer = window.setInterval(() => { if (!document.hidden) loadAgenda(); }, 30000);
+    window.addEventListener('pagehide', () => window.clearInterval(agendaTimer), { once: true });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) loadAgenda(); });
     await loadAgenda();
 }
 

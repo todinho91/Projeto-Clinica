@@ -356,17 +356,109 @@ test('consulta futura não pode ser marcada como realizada pelo backend', async 
         if (/FROM consultas c/.test(sql)) return [[{
             id: 123, paciente_id: 44, profissional_id: 8, especialidade_id: 5,
             inicio_em: '2999-01-05 12:00:00.000', fim_em: '2999-01-05 12:30:00.000',
-            status: 'confirmada', versao: 1, profissional_usuario_id: 7, paciente_usuario_id: 91
+            status: 'confirmada', versao: 1, profissional_usuario_id: 7,
+            profissional_status: 'ativo', paciente_usuario_id: 91
+        }]];
+        throw new Error('nenhuma atualização deveria ocorrer');
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await controller.concluirAtendimento({
+        userId: 7, tenant: { clinicId: 11, role: 'profissional' },
+        params: { id: '123' }, body: { versao: 1 }
+    }, res);
+    assert.equal(res.statusCode, 409);
+});
+
+test('médico ativo conclui a própria consulta com versão, histórico e auditoria', async (t) => {
+    const connection = transaction(t, async (sql) => {
+        if (/SELECT cu\.papel/.test(sql)) return [[{ papel: 'profissional' }]];
+        if (/FROM consultas c/.test(sql)) return [[{
+            id: 123, paciente_id: 44, profissional_id: 8, especialidade_id: 5,
+            inicio_em: '2020-01-05 12:00:00.000', fim_em: '2020-01-05 12:30:00.000',
+            status: 'confirmada', versao: 3, profissional_usuario_id: 7,
+            profissional_status: 'ativo', paciente_usuario_id: 91
+        }]];
+        if (/UPDATE consultas SET status/.test(sql)) return [{ affectedRows: 1 }];
+        if (/INSERT INTO consultas_historico/.test(sql) || /INSERT INTO auditoria/.test(sql)) {
+            return [{ insertId: 1 }];
+        }
+        throw new Error(`SQL inesperado: ${sql}`);
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await controller.concluirAtendimento({
+        userId: 7, tenant: { clinicId: 11, role: 'profissional' },
+        params: { id: '123' }, body: { versao: 3 }
+    }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(connection.commit.mock.callCount(), 1);
+    const update = connection.execute.mock.calls.find((call) => /UPDATE consultas SET status/.test(call.arguments[0]));
+    assert.deepEqual(update.arguments[1], ['realizada', 4, 11, 123, 3]);
+    assert.equal(connection.execute.mock.calls.some((call) => /consultas_historico/.test(call.arguments[0])), true);
+    assert.equal(connection.execute.mock.calls.some((call) => /INSERT INTO auditoria/.test(call.arguments[0])), true);
+});
+
+test('secretaria não consegue forçar realização pela API', async (t) => {
+    const connection = transaction(t, async (sql) => {
+        if (/SELECT cu\.papel/.test(sql)) return [[{ papel: 'secretaria' }]];
+        if (/FROM consultas c/.test(sql)) return [[{
+            id: 123, paciente_id: 44, profissional_id: 8, especialidade_id: 5,
+            inicio_em: '2020-01-05 12:00:00.000', fim_em: '2020-01-05 12:30:00.000',
+            status: 'confirmada', versao: 1, profissional_usuario_id: 90,
+            profissional_status: 'ativo', paciente_usuario_id: 91
         }]];
         throw new Error('nenhuma atualização deveria ocorrer');
     });
     t.mock.method(pool, 'getConnection', async () => connection);
     const res = response();
     await controller.updateStatusConsulta({
-        userId: 7, tenant: { clinicId: 11, role: 'profissional' },
+        userId: 7, tenant: { clinicId: 11, role: 'secretaria' },
         params: { id: '123' }, body: { status: 'realizada', versao: 1 }
     }, res);
-    assert.equal(res.statusCode, 409);
+    assert.equal(res.statusCode, 403);
+    assert.equal(connection.execute.mock.calls.some((call) => /UPDATE consultas SET status/.test(call.arguments[0])), false);
+});
+
+test('médico não conclui consulta de outro profissional e versão antiga é recusada', async (t) => {
+    for (const scenario of [
+        { professionalUser: 99, version: 1, expected: 404 },
+        { professionalUser: 7, version: 2, expected: 409 }
+    ]) {
+        const connection = transaction(t, async (sql) => {
+            if (/SELECT cu\.papel/.test(sql)) return [[{ papel: 'profissional' }]];
+            if (/FROM consultas c/.test(sql)) return [[{
+                id: 123, paciente_id: 44, profissional_id: 8, especialidade_id: 5,
+                inicio_em: '2020-01-05 12:00:00.000', fim_em: '2020-01-05 12:30:00.000',
+                status: 'confirmada', versao: 1, profissional_usuario_id: scenario.professionalUser,
+                profissional_status: 'ativo', paciente_usuario_id: 91
+            }]];
+            throw new Error('nenhuma atualização deveria ocorrer');
+        });
+        t.mock.method(pool, 'getConnection', async () => connection);
+        const res = response();
+        await controller.concluirAtendimento({
+            userId: 7, tenant: { clinicId: 11, role: 'profissional' },
+            params: { id: '123' }, body: { versao: scenario.version }
+        }, res);
+        assert.equal(res.statusCode, scenario.expected);
+        assert.equal(connection.execute.mock.calls.some((call) => /UPDATE consultas SET status/.test(call.arguments[0])), false);
+        t.mock.restoreAll();
+    }
+});
+
+test('rota de conclusão aceita somente profissional e status genérico exclui profissional', () => {
+    const conclude = router.stack.find((layer) => layer.route?.path === '/consultas/:id/concluir');
+    const status = router.stack.find((layer) => layer.route?.path === '/consultas/:id/status');
+    assert.ok(conclude); assert.ok(status);
+    for (const role of ['administrador', 'secretaria', 'paciente']) {
+        const res = response(); let next = false;
+        conclude.route.stack[0].handle({ tenant: { role } }, res, () => { next = true; });
+        assert.equal(res.statusCode, 403); assert.equal(next, false);
+    }
+    const res = response(); let next = false;
+    status.route.stack[0].handle({ tenant: { role: 'profissional' } }, res, () => { next = true; });
+    assert.equal(res.statusCode, 403); assert.equal(next, false);
 });
 
 test('reagendamento rejeita troca de paciente e paciente original inativo', async (t) => {

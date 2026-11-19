@@ -188,6 +188,57 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
         }, incompatibleWeekly);
         assert.equal(incompatibleWeekly.statusCode, 409);
 
+        const forcedBySecretary = response();
+        await controller.updateStatusConsulta({
+            userId: secretaryAurora, tenant: request.tenant,
+            params: { id: String(appointmentId) },
+            body: { status: 'realizada', versao: 2 }
+        }, forcedBySecretary);
+        assert.equal(forcedBySecretary.statusCode, 403);
+
+        const crossClinicDoctor = response();
+        await controller.concluirAtendimento({
+            userId: professionalHorizonteUser,
+            tenant: { clinicId: horizonteId, role: 'profissional' },
+            params: { id: String(appointmentId) }, body: { versao: 2 }
+        }, crossClinicDoctor);
+        assert.equal(crossClinicDoctor.statusCode, 404);
+
+        await setup.execute(`UPDATE consultas
+            SET inicio_em = '2020-05-10 17:00:00.000000', fim_em = '2020-05-10 17:30:00.000000'
+            WHERE clinica_id = ? AND id = ?`, [auroraId, appointmentId]);
+        const concludeFirst = response(); const concludeSecond = response();
+        await Promise.all([
+            controller.concluirAtendimento({
+                userId: professionalAuroraUser,
+                tenant: { clinicId: auroraId, role: 'profissional' },
+                params: { id: String(appointmentId) }, body: { versao: 2 }
+            }, concludeFirst),
+            controller.concluirAtendimento({
+                userId: professionalAuroraUser,
+                tenant: { clinicId: auroraId, role: 'profissional' },
+                params: { id: String(appointmentId) }, body: { versao: 2 }
+            }, concludeSecond)
+        ]);
+        assert.deepEqual([concludeFirst.statusCode, concludeSecond.statusCode].sort(), [200, 409]);
+
+        const doctorAgenda = response();
+        await controller.getMinhaAgenda({
+            userId: professionalAuroraUser,
+            tenant: { clinicId: auroraId, role: 'profissional' }
+        }, doctorAgenda);
+        assert.equal(doctorAgenda.statusCode, 200);
+        assert.equal(doctorAgenda.body.length, 1);
+        assert.equal(doctorAgenda.body[0].status, 'realizada');
+
+        const secretaryAgenda = response();
+        await controller.getMinhaAgenda({
+            userId: secretaryAurora, tenant: request.tenant
+        }, secretaryAgenda);
+        assert.equal(secretaryAgenda.statusCode, 200);
+        assert.equal(secretaryAgenda.body.some((item) => item.id === appointmentId
+            && item.status === 'realizada'), true);
+
         const secondAppointment = response();
         await controller.agendarConsulta({
             ...request, body: { ...request.body, inicio_local: '2032-05-10T15:00' }
@@ -234,8 +285,8 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
             (SELECT COUNT(*) FROM consultas WHERE clinica_id = ?) AS horizonte`,
         [auroraId, auroraId, auroraId, horizonteId]);
         assert.equal(Number(evidence.consultas), 2);
-        assert.equal(Number(evidence.historico), 4);
-        assert.equal(Number(evidence.auditoria), 4);
+        assert.equal(Number(evidence.historico), 5);
+        assert.equal(Number(evidence.auditoria), 5);
         assert.equal(Number(evidence.horizonte), 0);
     } finally {
         await pool?.end();

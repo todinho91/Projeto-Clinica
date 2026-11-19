@@ -188,7 +188,8 @@ async function lockedAppointment(connection, req, appointmentId) {
     const [rows] = await connection.execute(`
         SELECT c.id, c.paciente_id, c.profissional_id, c.especialidade_id,
                c.inicio_em, c.fim_em, c.status, c.versao,
-               p.usuario_id AS profissional_usuario_id, pa.usuario_id AS paciente_usuario_id
+               p.usuario_id AS profissional_usuario_id, p.status AS profissional_status,
+               pa.usuario_id AS paciente_usuario_id
         FROM consultas c
         JOIN profissionais p ON p.clinica_id = c.clinica_id AND p.id = c.profissional_id
         JOIN pacientes pa ON pa.clinica_id = c.clinica_id AND pa.id = c.paciente_id
@@ -375,6 +376,7 @@ exports.listForManagement = async (req, res) => {
         const offset = (page - 1) * limit;
         const [[rows], [totals]] = await Promise.all([
             pool.execute(`SELECT c.id, c.inicio_em, c.fim_em, c.status, c.versao,
+                c.fim_em <= UTC_TIMESTAMP(6) AS pode_marcar_falta,
                 pa.id AS paciente_id, pa.nome AS paciente_nome,
                 p.id AS profissional_id, p.nome_exibicao AS profissional_nome,
                 e.id AS especialidade_id, e.nome AS especialidade_nome
@@ -398,7 +400,8 @@ exports.listForManagement = async (req, res) => {
                 profissional_id: Number(item.profissional_id),
                 especialidade_id: item.especialidade_id ? Number(item.especialidade_id) : null,
                 versao: Number(item.versao), inicio_local: utcToLocal(item.inicio_em, clinic.timezone),
-                fim_local: utcToLocal(item.fim_em, clinic.timezone)
+                fim_local: utcToLocal(item.fim_em, clinic.timezone),
+                pode_marcar_falta: Boolean(item.pode_marcar_falta)
             })),
             paginacao: { pagina: page, limite: limit, total: Number(totals[0]?.total || 0) }
         });
@@ -412,6 +415,7 @@ exports.getMinhaAgenda = async (req, res) => {
     const { clinicId, role } = req.tenant;
     try {
         const [rows] = await pool.execute(`SELECT c.id, c.inicio_em, c.fim_em, c.status, c.versao,
+            c.inicio_em <= UTC_TIMESTAMP(6) AS pode_concluir,
             pa.id AS paciente_id, pa.nome AS nome_paciente,
             p.id AS profissional_id, p.nome_exibicao AS nome_profissional,
             e.id AS especialidade_id, e.nome AS nome_especialidade
@@ -419,11 +423,20 @@ exports.getMinhaAgenda = async (req, res) => {
             JOIN pacientes pa ON pa.clinica_id = c.clinica_id AND pa.id = c.paciente_id
             JOIN profissionais p ON p.clinica_id = c.clinica_id AND p.id = c.profissional_id
             LEFT JOIN especialidades e ON e.clinica_id = c.clinica_id AND e.id = c.especialidade_id
+            JOIN clinica_usuarios actor ON actor.clinica_id = c.clinica_id
+              AND actor.usuario_id = ? AND actor.papel = ? AND actor.status = 'ativo'
+            JOIN usuarios actor_user ON actor_user.id = actor.usuario_id AND actor_user.status = 'ativo'
             WHERE c.clinica_id = ? AND (? IN ('administrador', 'secretaria')
               OR (? = 'profissional' AND p.usuario_id = ?)
-              OR (? = 'paciente' AND pa.usuario_id = ?)) ORDER BY c.inicio_em`,
-        [clinicId, role, role, req.userId, role, req.userId]);
-        return res.status(200).json(rows);
+              OR (? = 'paciente' AND pa.usuario_id = ?))
+              AND (? <> 'profissional' OR p.status = 'ativo')
+            ORDER BY c.inicio_em`,
+        [req.userId, role, clinicId, role, role, req.userId, role, req.userId, role]);
+        return res.status(200).json(rows.map((item) => ({
+            ...item, id: Number(item.id), paciente_id: Number(item.paciente_id),
+            profissional_id: Number(item.profissional_id), versao: Number(item.versao),
+            pode_concluir: Boolean(item.pode_concluir)
+        })));
     } catch (error) {
         logFailure('my_agenda', error);
         return res.status(500).json({ error: 'Erro ao buscar agenda.' });
@@ -449,6 +462,14 @@ async function changeStatus(req, res, forced = null) {
         }
         if (role === 'paciente' && target !== 'cancelada') {
             return await rollback(connection, res, 403, 'Paciente somente pode cancelar a própria consulta.');
+        }
+        if (target === 'realizada' && (role !== 'profissional'
+            || Number(appointment.profissional_usuario_id) !== req.userId
+            || appointment.profissional_status !== 'ativo')) {
+            return await rollback(connection, res, 403, 'Somente o profissional responsável pode concluir o atendimento.');
+        }
+        if (target === 'nao_compareceu' && !['administrador', 'secretaria'].includes(role)) {
+            return await rollback(connection, res, 403, 'Somente a gestão da clínica pode registrar não comparecimento.');
         }
         if (!canTransition(appointment.status, target)) {
             return await rollback(connection, res, 409, 'Transição de status não permitida.');
@@ -476,6 +497,7 @@ async function changeStatus(req, res, forced = null) {
 }
 
 exports.updateStatusConsulta = (req, res) => changeStatus(req, res);
+exports.concluirAtendimento = (req, res) => changeStatus(req, res, 'realizada');
 exports.cancelarConsulta = (req, res) => changeStatus(req, res, 'cancelada');
 
 exports.reschedule = async (req, res) => {

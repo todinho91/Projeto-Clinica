@@ -195,7 +195,10 @@ test('agenda administrativa usa exclusivamente a clínica ativa', async (t) => {
         tenant: { clinicId: 11, role: 'administrador' }
     }, res);
 
-    assert.deepEqual(params, [11, 'administrador', 'administrador', 7, 'administrador', 7]);
+    assert.deepEqual(params, [
+        7, 'administrador', 11, 'administrador', 'administrador', 7,
+        'administrador', 7, 'administrador'
+    ]);
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.length, 1);
 });

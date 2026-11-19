@@ -76,6 +76,38 @@ test('agenda mantém cartões responsivos em 390 e 360 px sem rolagem horizontal
     assert.match(css, /\.vitalis-appointment-actions[^}]*flex-wrap: wrap/);
 });
 
+test('painel médico conclui somente a própria consulta e secretaria acompanha sem realizar', async () => {
+    const [page, agendaPage, main, css] = await Promise.all([
+        fs.readFile(path.join(root, 'dashboard-medico.html'), 'utf8'),
+        fs.readFile(path.join(root, 'agenda.html'), 'utf8'),
+        fs.readFile(path.join(root, 'js', 'main.js'), 'utf8'),
+        fs.readFile(path.join(root, 'css', 'dashboard.css'), 'utf8')
+    ]);
+    const doctor = main.slice(
+        main.indexOf('async function setupProfissionalDashboard()'),
+        main.indexOf('async function setupAdministracaoDashboard()')
+    );
+    const management = main.slice(
+        main.indexOf('async function setupAppointmentsPage()'),
+        main.indexOf('async function setupPatientsPage()')
+    );
+    assert.match(page, /Concluir|Minha agenda/i);
+    assert.match(page, /id="atualizar-agenda-medico"/);
+    assert.match(page, /css\/dashboard\.css/);
+    assert.match(doctor, /\/consultas\/\$\{appointment\.id\}\/concluir/);
+    assert.match(doctor, /button\.disabled = !appointment\.pode_concluir/);
+    assert.match(doctor, /setInterval\([^)]*loadAgenda|setInterval\(\(\) =>/);
+    assert.match(agendaPage, /id="agenda-atualizar"/);
+    assert.doesNotMatch(management, /actionButton\('Realizada'/);
+    assert.match(management, /absent\.disabled = !item\.pode_marcar_falta/);
+    assert.match(management, /setInterval\(\(\) =>/);
+    assert.match(css, /vitalis-professional-page/);
+    assert.match(css, /@media \(max-width: 767\.98px\)[\s\S]*vitalis-professional-page/);
+    for (const status of ['agendada', 'confirmada', 'realizada', 'cancelada', 'nao-compareceu']) {
+        assert.match(css, new RegExp(`\\.vitalis-status-${status}\\s*\\{`));
+    }
+});
+
 test('todas as páginas administrativas oferecem acesso compartilhado à agenda', async () => {
     const pages = [
         'dashboard-secretaria.html', 'pacientes.html', 'profissionais.html',
