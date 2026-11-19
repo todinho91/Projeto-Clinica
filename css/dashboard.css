@@ -203,6 +203,38 @@ html { scroll-behavior: smooth; }
 .vitalis-professional-page .vitalis-appointment-actions .btn { white-space: normal; }
 .vitalis-action-note { color: var(--vitalis-muted); font-size: .72rem; line-height: 1.35; }
 
+/* M4-03: calendário e agenda por perfil */
+.vitalis-calendar-panel { min-width: 0; }
+.vitalis-calendar-toolbar { display: grid; grid-template-columns: auto minmax(220px, 1fr) auto; gap: 1rem; align-items: center; margin-bottom: 1rem; }
+.vitalis-calendar-toolbar h2 { margin: 0; color: var(--vitalis-navy); font-size: clamp(1.05rem, 2vw, 1.35rem); text-align: center; text-transform: capitalize; }
+.vitalis-calendar-navigation { display: flex; gap: .4rem; }
+.vitalis-calendar-navigation .btn { min-width: 42px; }
+.vitalis-calendar-views .btn[aria-pressed="true"] { color: #fff; background: var(--vitalis-blue); }
+.vitalis-calendar-filters { display: grid; grid-template-columns: repeat(3, minmax(145px, 1fr)) auto auto; gap: .65rem; align-items: end; margin-bottom: .85rem; }
+.vitalis-calendar-legend { display: flex; flex-wrap: wrap; gap: .4rem; padding: .75rem 0; border-top: 1px solid var(--vitalis-border); }
+.vitalis-calendar-grid { display: grid; min-width: 0; margin-top: .8rem; overflow: hidden; border: 1px solid var(--vitalis-border); border-radius: 13px; background: var(--vitalis-border); gap: 1px; }
+.vitalis-calendar-week, .vitalis-calendar-month { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.vitalis-calendar-day { min-width: 0; min-height: 148px; padding: .6rem; background: #fff; }
+.vitalis-calendar-day > h3 { margin: 0 0 .55rem; color: var(--vitalis-navy); font-size: .78rem; text-transform: capitalize; }
+.vitalis-calendar-day.is-today { box-shadow: inset 0 0 0 2px var(--vitalis-blue); background: #f7fbff; }
+.vitalis-calendar-day.is-outside { background: #f6f8fa; }
+.vitalis-calendar-day.is-outside > h3 { color: #8999a8; }
+.vitalis-calendar-weekday { padding: .55rem .35rem; color: var(--vitalis-muted); background: #f5f8fb; font-size: .7rem; font-weight: 750; text-align: center; text-transform: uppercase; }
+.vitalis-calendar-events { display: grid; gap: .4rem; }
+.vitalis-calendar-event { min-width: 0; padding: .5rem; border: 1px solid #d9e5f1; border-left: 4px solid #3a86d8; border-radius: 9px; background: #f8fbff; outline: 0; }
+.vitalis-calendar-event:focus-visible { box-shadow: 0 0 0 3px rgb(22 119 255 / 24%); }
+.vitalis-calendar-event strong, .vitalis-calendar-event > span, .vitalis-calendar-event small { display: block; overflow-wrap: anywhere; }
+.vitalis-calendar-event strong { color: var(--vitalis-navy); font-size: .74rem; }
+.vitalis-calendar-event > span:not(.vitalis-status) { margin-top: .15rem; color: var(--vitalis-text); font-size: .78rem; font-weight: 650; }
+.vitalis-calendar-event small { margin: .15rem 0 .4rem; color: var(--vitalis-muted); font-size: .68rem; }
+.vitalis-calendar-event .vitalis-status { font-size: .62rem; }
+.vitalis-calendar-event-confirmada { border-left-color: #1596a1; background: #f3fcfc; }
+.vitalis-calendar-event-realizada { border-left-color: #15926d; background: #f4fbf8; }
+.vitalis-calendar-event-cancelada { border-left-color: #8996a3; background: #f7f8f9; }
+.vitalis-calendar-event-nao-compareceu { border-left-color: #d2672d; background: #fff8f3; }
+.vitalis-calendar-empty { margin: 0; color: #8a9aaa; font-size: .7rem; }
+.vitalis-calendar-month .vitalis-calendar-event small { display: none; }
+
 /* PR50: responsividade e rolagem interna */
 html, body.vitalis-dashboard-body {
     overflow-x: clip;
@@ -243,6 +275,14 @@ html, body.vitalis-dashboard-body {
     .vitalis-availability-grid { grid-template-columns: minmax(0, 1fr); }
     .vitalis-appointment-grid { grid-template-columns: minmax(0, 1fr); }
     .vitalis-appointment-form { position: static; }
+    .vitalis-calendar-toolbar { grid-template-columns: minmax(0, 1fr) auto; }
+    .vitalis-calendar-toolbar h2 { grid-column: 1 / -1; grid-row: 1; }
+    .vitalis-calendar-navigation { grid-column: 1; grid-row: 2; }
+    .vitalis-calendar-views { grid-column: 2; grid-row: 2; }
+    .vitalis-calendar-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .vitalis-calendar-filters .btn { width: 100%; }
+    .vitalis-calendar-week, .vitalis-calendar-month { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .vitalis-calendar-weekday { display: none; }
 }
 @media (max-width: 1399.98px) and (min-width: 992px) {
     .vitalis-appointments-page .vitalis-appointment-grid { grid-template-columns: minmax(0, 1fr); }
@@ -312,6 +352,14 @@ html, body.vitalis-dashboard-body {
     .vitalis-doctor-filters .btn { width: 100%; }
     .vitalis-professional-page .vitalis-appointment-actions { align-items: stretch; }
     .vitalis-professional-page .vitalis-appointment-actions .btn { width: 100%; }
+    .vitalis-calendar-toolbar { display: flex; align-items: stretch; flex-direction: column; }
+    .vitalis-calendar-toolbar h2 { order: -1; text-align: left; }
+    .vitalis-calendar-navigation, .vitalis-calendar-views { display: flex; width: 100%; }
+    .vitalis-calendar-navigation .btn, .vitalis-calendar-views .btn { flex: 1 1 0; }
+    .vitalis-calendar-filters { grid-template-columns: minmax(0, 1fr); }
+    .vitalis-calendar-week, .vitalis-calendar-month { grid-template-columns: minmax(0, 1fr); }
+    .vitalis-calendar-day { min-height: 112px; }
+    .vitalis-calendar-month .vitalis-calendar-event small { display: block; }
 
     .vitalis-team-page .vitalis-main { padding: 1rem; }
     .vitalis-team-page .vitalis-welcome { margin-bottom: 1.25rem; }
@@ -362,5 +410,7 @@ html, body.vitalis-dashboard-body {
     .vitalis-doctor-filters { grid-template-columns: minmax(0, 1fr); }
     .vitalis-professional-page .vitalis-main { padding: .75rem; }
     .vitalis-professional-page .vitalis-panel { padding: .85rem; border-radius: 14px; }
+    .vitalis-calendar-page .vitalis-main { padding: .75rem; }
+    .vitalis-calendar-page .vitalis-panel { padding: .85rem; border-radius: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }

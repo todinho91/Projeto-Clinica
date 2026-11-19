@@ -110,6 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (page === 'profissionais.html') setupGestaoProfissionaisPage();
     else if (page === 'pacientes.html') setupPatientsPage();
     else if (page === 'agenda.html') setupAppointmentsPage();
+    else if (page === 'calendario.html') setupCalendarPage();
     else if (page === 'especialidades.html') setupGestaoEspecialidadesPage();
     else if (page === 'equipe.html') setupEquipePage();
     else if (page === 'aceitar-convite.html') setupAceiteConvitePage();
@@ -1303,6 +1304,216 @@ async function setupAdministracaoDashboard() {
             showMessage(status, error.message);
         }
     });
+}
+
+async function setupCalendarPage() {
+    const clinic = requireClinicSession('calendario.html');
+    if (!clinic) return;
+    applyClinicIdentity(clinic);
+    const isProfessional = clinic.papel === 'profissional';
+    document.querySelectorAll(isProfessional ? '[data-management-only]' : '[data-professional-only]')
+        .forEach((element) => element.remove());
+    document.getElementById('calendar-role').textContent = isProfessional
+        ? 'Agenda do profissional' : clinic.papel === 'administrador' ? 'Administrador da clínica' : 'Secretaria da clínica';
+    document.getElementById('calendar-description').textContent = isProfessional
+        ? 'Seus atendimentos na clínica ativa, no fuso configurado pela clínica.'
+        : 'Atendimentos autorizados da clínica ativa, com filtros por profissional e especialidade.';
+
+    const grid = document.getElementById('calendar-grid');
+    const periodLabel = document.getElementById('calendar-period-label');
+    const status = document.getElementById('calendar-status');
+    const filters = document.getElementById('calendar-filters');
+    const professionalFilter = document.getElementById('calendar-professional');
+    const specialtyFilter = document.getElementById('calendar-specialty');
+    const statusFilter = document.getElementById('calendar-status-filter');
+    const gate = VitalisCore.createLatestRequestGate();
+    let view = 'week';
+    let referenceDate = '';
+    let today = '';
+    let timeZone = '';
+    let appointments = [];
+
+    const dateFromKey = (key) => new Date(`${key}T00:00:00Z`);
+    const dateKey = (date) => date.toISOString().slice(0, 10);
+    const addDays = (key, amount) => {
+        const date = dateFromKey(key); date.setUTCDate(date.getUTCDate() + amount); return dateKey(date);
+    };
+    const startOfWeek = (key) => {
+        const date = dateFromKey(key);
+        const offset = (date.getUTCDay() + 6) % 7;
+        date.setUTCDate(date.getUTCDate() - offset);
+        return dateKey(date);
+    };
+    const addMonths = (key, amount) => {
+        const date = dateFromKey(`${key.slice(0, 7)}-01`);
+        date.setUTCMonth(date.getUTCMonth() + amount);
+        return dateKey(date);
+    };
+    const formatDateKey = (key, options) => new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'UTC', ...options
+    }).format(dateFromKey(key));
+
+    function currentPeriod() {
+        if (view === 'day') return { start: referenceDate, end: referenceDate, dates: [referenceDate] };
+        if (view === 'week') {
+            const start = startOfWeek(referenceDate);
+            return { start, end: addDays(start, 6), dates: Array.from({ length: 7 }, (_, index) => addDays(start, index)) };
+        }
+        const first = `${referenceDate.slice(0, 7)}-01`;
+        const start = startOfWeek(first);
+        return { start, end: addDays(start, 41), dates: Array.from({ length: 42 }, (_, index) => addDays(start, index)) };
+    }
+
+    function updatePeriodLabel(period) {
+        if (view === 'day') {
+            periodLabel.textContent = formatDateKey(period.start, {
+                weekday: 'long', day: '2-digit', month: 'long', year: 'numeric'
+            });
+        } else if (view === 'week') {
+            periodLabel.textContent = `${formatDateKey(period.start, { day: '2-digit', month: 'short' })} – ${formatDateKey(period.end, { day: '2-digit', month: 'short', year: 'numeric' })}`;
+        } else {
+            periodLabel.textContent = formatDateKey(`${referenceDate.slice(0, 7)}-01`, {
+                month: 'long', year: 'numeric'
+            });
+        }
+    }
+
+    function statusMeta(value) {
+        return {
+            agendada: ['Agendada', 'vitalis-status-agendada'],
+            confirmada: ['Confirmada', 'vitalis-status-confirmada'],
+            realizada: ['Realizada', 'vitalis-status-realizada'],
+            cancelada: ['Cancelada', 'vitalis-status-cancelada'],
+            nao_compareceu: ['Não compareceu', 'vitalis-status-nao-compareceu']
+        }[value] || [value, ''];
+    }
+
+    function eventCard(item) {
+        const meta = statusMeta(item.status);
+        const event = document.createElement('article');
+        event.className = `vitalis-calendar-event vitalis-calendar-event-${item.status.replaceAll('_', '-')}`;
+        event.tabIndex = 0;
+        event.dataset.consultaId = String(item.id);
+        event.setAttribute('aria-label', `${item.inicio_local.slice(11, 16)}, ${item.paciente_nome}, ${meta[0]}`);
+        const time = document.createElement('strong');
+        time.textContent = `${item.inicio_local.slice(11, 16)}–${item.fim_local.slice(11, 16)}`;
+        const patient = document.createElement('span'); patient.textContent = item.paciente_nome;
+        const details = document.createElement('small');
+        details.textContent = `${item.profissional_nome}${item.especialidade_nome ? ` · ${item.especialidade_nome}` : ''}`;
+        const badge = document.createElement('span'); badge.className = `vitalis-status ${meta[1]}`; badge.textContent = meta[0];
+        event.append(time, patient, details, badge);
+        return event;
+    }
+
+    function renderCalendar() {
+        const period = currentPeriod();
+        updatePeriodLabel(period);
+        grid.replaceChildren();
+        grid.className = `vitalis-calendar-grid vitalis-calendar-${view}`;
+        if (view !== 'day') {
+            ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'].forEach((name) => {
+                const heading = document.createElement('div');
+                heading.className = 'vitalis-calendar-weekday'; heading.setAttribute('role', 'columnheader');
+                heading.textContent = name; grid.append(heading);
+            });
+        }
+        period.dates.forEach((key) => {
+            const day = document.createElement('section');
+            day.className = 'vitalis-calendar-day'; day.setAttribute('role', 'gridcell');
+            if (key === today) day.classList.add('is-today');
+            if (view === 'month' && key.slice(0, 7) !== referenceDate.slice(0, 7)) day.classList.add('is-outside');
+            const heading = document.createElement('h3');
+            heading.textContent = view === 'day'
+                ? formatDateKey(key, { weekday: 'long', day: '2-digit', month: 'long' })
+                : formatDateKey(key, { day: '2-digit', month: 'short' });
+            const events = document.createElement('div'); events.className = 'vitalis-calendar-events';
+            const dayAppointments = appointments.filter((item) => item.inicio_local?.slice(0, 10) === key);
+            dayAppointments.forEach((item) => events.append(eventCard(item)));
+            if (!dayAppointments.length) {
+                const empty = document.createElement('p'); empty.className = 'vitalis-calendar-empty';
+                empty.textContent = 'Sem consultas'; events.append(empty);
+            }
+            day.append(heading, events); grid.append(day);
+        });
+        grid.setAttribute('aria-busy', 'false');
+    }
+
+    async function loadCalendar() {
+        const period = currentPeriod();
+        const key = [view, period.start, period.end, professionalFilter.value, specialtyFilter.value, statusFilter.value].join(':');
+        const ticket = gate.begin(key);
+        grid.setAttribute('aria-busy', 'true');
+        const params = new URLSearchParams({
+            data_inicio: period.start, data_fim: period.end, status: statusFilter.value
+        });
+        if (professionalFilter.value) params.set('profissional_id', professionalFilter.value);
+        if (specialtyFilter.value) params.set('especialidade_id', specialtyFilter.value);
+        try {
+            const data = await apiRequest(`/consultas/calendario?${params}`);
+            if (!gate.isCurrent(ticket, key)) return;
+            appointments = data.consultas; renderCalendar();
+            showMessage(status, `${appointments.length} consulta(s) no período selecionado.`, 'muted');
+        } catch (error) {
+            if (!gate.isCurrent(ticket, key)) return;
+            grid.setAttribute('aria-busy', 'false'); showMessage(status, error.message);
+        }
+    }
+
+    function selectView(selected) {
+        view = selected;
+        document.querySelectorAll('[data-calendar-view]').forEach((button) => {
+            const active = button.dataset.calendarView === view;
+            button.setAttribute('aria-pressed', String(active)); button.classList.toggle('active', active);
+        });
+        loadCalendar();
+    }
+
+    try {
+        const context = await apiRequest('/consultas/calendario/contexto');
+        timeZone = context.timezone; today = context.today; referenceDate = today;
+        document.getElementById('calendar-timezone').textContent = timeZone;
+        context.profissionais.forEach((item) => professionalFilter.append(new Option(item.nome_exibicao, String(item.id))));
+        context.especialidades.forEach((item) => specialtyFilter.append(new Option(item.nome, String(item.id))));
+        if (isProfessional) {
+            professionalFilter.value = String(context.professional_id);
+            professionalFilter.disabled = true;
+        }
+    } catch (error) {
+        showMessage(status, error.message); filters.hidden = true; grid.setAttribute('aria-busy', 'false'); return;
+    }
+
+    document.querySelectorAll('[data-calendar-view]').forEach((button) => {
+        button.addEventListener('click', () => selectView(button.dataset.calendarView));
+    });
+    document.getElementById('calendar-previous').addEventListener('click', () => {
+        referenceDate = view === 'month' ? addMonths(referenceDate, -1) : addDays(referenceDate, view === 'week' ? -7 : -1);
+        loadCalendar();
+    });
+    document.getElementById('calendar-next').addEventListener('click', () => {
+        referenceDate = view === 'month' ? addMonths(referenceDate, 1) : addDays(referenceDate, view === 'week' ? 7 : 1);
+        loadCalendar();
+    });
+    document.getElementById('calendar-today').addEventListener('click', () => { referenceDate = today; loadCalendar(); });
+    filters.addEventListener('submit', (event) => { event.preventDefault(); loadCalendar(); });
+    document.getElementById('calendar-clear-filters').addEventListener('click', () => {
+        filters.reset();
+        if (isProfessional) professionalFilter.value = professionalFilter.options[1]?.value || '';
+        loadCalendar();
+    });
+    grid.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+        const events = [...grid.querySelectorAll('.vitalis-calendar-event')];
+        const current = events.indexOf(document.activeElement);
+        if (current < 0 || !events.length) return;
+        event.preventDefault();
+        const target = event.key === 'Home' ? 0 : event.key === 'End' ? events.length - 1
+            : Math.max(0, Math.min(events.length - 1, current + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1)));
+        events[target].focus();
+    });
+    const timer = window.setInterval(() => { if (!document.hidden) loadCalendar(); }, 30000);
+    window.addEventListener('pagehide', () => window.clearInterval(timer), { once: true });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) loadCalendar(); });
+    selectView('week');
 }
 
 async function setupAppointmentsPage() {
