@@ -87,9 +87,84 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
         ]);
         assert.deepEqual([first.statusCode, concurrent.statusCode].sort(), [201, 409]);
 
+        const incompleteFirst = response(); const incompleteConcurrent = response();
+        const incomplete = patientRequest(northId, northAdmin, {
+            nome: 'José   Cadastro Incompleto', email: '', telefone: '', data_nascimento: ''
+        });
+        await Promise.all([
+            controller.createPatient(incomplete, incompleteFirst),
+            controller.createPatient({ ...incomplete, body: { ...incomplete.body } }, incompleteConcurrent)
+        ]);
+        assert.deepEqual([incompleteFirst.statusCode, incompleteConcurrent.statusCode].sort(), [201, 409]);
+        const incompleteDuplicate = incompleteFirst.statusCode === 409 ? incompleteFirst : incompleteConcurrent;
+        assert.equal(incompleteDuplicate.body.code, 'PATIENT_DUPLICATE');
+        const accentAndSpacing = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, {
+            nome: '  jose   cadastro incompleto ', email: '', telefone: '', data_nascimento: ''
+        }), accentAndSpacing);
+        assert.equal(accentAndSpacing.statusCode, 409);
+
+        const homonymBase = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, {
+            nome: 'Ana Homônima', email: '', telefone: '', data_nascimento: '1980-02-10'
+        }), homonymBase);
+        assert.equal(homonymBase.statusCode, 201);
+        const homonymNeedsReview = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, {
+            nome: 'ana homonima', email: '', telefone: '', data_nascimento: '1990-03-20'
+        }), homonymNeedsReview);
+        assert.equal(homonymNeedsReview.statusCode, 409);
+        assert.equal(homonymNeedsReview.body.code, 'PATIENT_REVIEW_REQUIRED');
+        const homonymReviewed = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, {
+            nome: 'ana homonima', email: '', telefone: '', data_nascimento: '1990-03-20',
+            revisao_duplicidade: true, motivo_revisao: 'homonimo_confirmado'
+        }), homonymReviewed);
+        assert.equal(homonymReviewed.statusCode, 201);
+
+        const familyFirst = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, {
+            nome: 'Contato Familiar Um', email: '', telefone: '41988887777', data_nascimento: '1985-01-01'
+        }), familyFirst);
+        assert.equal(familyFirst.statusCode, 201);
+        const familyReviewed = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, {
+            nome: 'Contato Familiar Dois', email: '', telefone: '41988887777', data_nascimento: '2010-01-01',
+            revisao_duplicidade: true, motivo_revisao: 'contato_compartilhado'
+        }), familyReviewed);
+        assert.equal(familyReviewed.statusCode, 201);
+
+        const candidateValues = []; const candidateParams = [];
+        for (let index = 0; index < 11; index += 1) {
+            candidateValues.push("(?, NULL, 'Candidato Limite', NULL, ?, ?, 'ativo')");
+            candidateParams.push(
+                northId,
+                index === 10 ? '41977776666' : `4197000${String(index).padStart(4, '0')}`,
+                `19${String(70 + index).padStart(2, '0')}-01-01`
+            );
+        }
+        await setup.execute(`INSERT INTO pacientes
+            (clinica_id, usuario_id, nome, email, telefone, data_nascimento, status)
+            VALUES ${candidateValues.join(', ')}`, candidateParams);
+        const afterTenthBlocking = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, {
+            nome: 'Candidato Limite', email: '', telefone: '(41) 97777-6666',
+            data_nascimento: '2001-02-02', revisao_duplicidade: true,
+            motivo_revisao: 'dados_conferidos'
+        }), afterTenthBlocking);
+        assert.equal(afterTenthBlocking.statusCode, 409);
+        assert.equal(afterTenthBlocking.body.code, 'PATIENT_DUPLICATE');
+        assert.equal(afterTenthBlocking.body.total_candidatos, 11);
+        assert.equal(afterTenthBlocking.body.candidatos.length, 10);
+
         const south = response();
         await controller.createPatient(patientRequest(southId, southAdmin), south);
         assert.equal(south.statusCode, 201, 'o mesmo e-mail é permitido em clínicas independentes');
+        const isolatedIncomplete = response();
+        await controller.createPatient(patientRequest(southId, southAdmin, {
+            nome: 'José Cadastro Incompleto', email: '', telefone: '', data_nascimento: ''
+        }), isolatedIncomplete);
+        assert.equal(isolatedIncomplete.statusCode, 201, 'nome incompleto igual é isolado por clínica');
 
         const publicRegistration = response();
         await authController.register({ body: {

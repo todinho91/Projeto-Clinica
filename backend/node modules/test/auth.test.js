@@ -181,7 +181,7 @@ test('cadastro público não apropria perfil administrativo preexistente', async
         execute: t.mock.fn(async (sql, params) => {
             if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 7 }]];
             if (/SELECT id FROM pacientes/.test(sql)) {
-                assert.deepEqual(params, [7, 'preexistente@example.test']);
+                assert.deepEqual(params, [7, 'preexistente@example.test', 'Paciente Preexistente']);
                 return [[{ id: 99 }]];
             }
             throw new Error('nenhuma escrita deveria ocorrer');
@@ -202,6 +202,32 @@ test('cadastro público não apropria perfil administrativo preexistente', async
     assert.equal(connection.commit.mock.callCount(), 0);
     assert.equal(hash.mock.callCount(), 1);
     assert.equal(connection.execute.mock.calls.some((call) => /INSERT INTO/.test(call.arguments[0])), false);
+});
+
+test('cadastro público bloqueia nome clínico equivalente com resposta neutra e sem vínculo', async (t) => {
+    const connection = {
+        beginTransaction: t.mock.fn(async () => {}), commit: t.mock.fn(async () => {}),
+        rollback: t.mock.fn(async () => {}), release: t.mock.fn(),
+        execute: t.mock.fn(async (sql, params) => {
+            if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 7 }]];
+            if (/SELECT id FROM pacientes/.test(sql)) {
+                assert.deepEqual(params, [7, 'outra.identidade@example.test', 'Joao da Silva']);
+                return [[{ id: 99 }]];
+            }
+            throw new Error('nenhuma identidade ou vínculo deveria ser criado');
+        })
+    };
+    t.mock.method(bcrypt, 'hash', async () => 'hash-sintetico-uniforme');
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await register({ body: {
+        nome: '  Joao   da Silva ', email: 'outra.identidade@example.test',
+        senha: 'senha-ficticia-forte', clinica_slug: 'demo'
+    } }, res);
+    assert.equal(res.statusCode, 409);
+    assert.deepEqual(res.body, { error: 'Não foi possível concluir o cadastro com os dados informados.' });
+    assert.equal(connection.execute.mock.calls.some((call) => /INSERT INTO/.test(call.arguments[0])), false);
+    assert.equal(connection.rollback.mock.callCount(), 1);
 });
 
 test('conflito tardio de perfil público desfaz usuário e vínculo parciais', async (t) => {

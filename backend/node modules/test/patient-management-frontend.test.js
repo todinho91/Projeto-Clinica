@@ -113,3 +113,21 @@ test('trava comportamental impede gravações simultâneas mesmo com campos opci
     assert.match(setup, /setEditActionsDisabled\(true\)/);
     assert.match(setup, /!mutationLock\.tryBegin\(\)/);
 });
+
+test('cadastro faz pré-verificação, oferece paciente existente e revisão de homônimo', async () => {
+    const [page, main, css] = await Promise.all([
+        fs.readFile(path.join(root, 'pacientes.html'), 'utf8'),
+        fs.readFile(path.join(root, 'js', 'main.js'), 'utf8'),
+        fs.readFile(path.join(root, 'css', 'dashboard.css'), 'utf8')
+    ]);
+    const setup = main.slice(main.indexOf('async function setupPatientsPage()'), main.indexOf('async function setupGestaoProfissionaisPage()'));
+    assert.match(page, /id="paciente-duplicidades"/);
+    assert.match(setup, /apiRequest\('\/pacientes\/duplicidades'/);
+    assert.match(setup, /Usar paciente existente/);
+    assert.match(setup, /startEdit\(candidate\.id\)/);
+    assert.match(setup, /revisao_duplicidade: true/);
+    assert.match(setup, /homonimo_confirmado/);
+    assert.match(setup, /duplicatePanel\.hidden = true/);
+    assert.match(css, /\.vitalis-duplicate-candidate/);
+    assert.match(css, /@media \(max-width: 767\.98px\)[\s\S]*\.vitalis-duplicate-confirm/);
+});

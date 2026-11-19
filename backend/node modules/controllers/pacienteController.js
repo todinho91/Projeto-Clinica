@@ -3,6 +3,7 @@ const pool = require('../config/database');
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const MAX_PAGE = 100000;
+const REVIEW_REASONS = new Set(['homonimo_confirmado', 'contato_compartilhado', 'dados_conferidos']);
 
 function logFailure(operation, error) {
     const code = typeof error?.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(error.code)
@@ -111,22 +112,105 @@ async function operatorCanManage(connection, clinicId, userId) {
     return rows.length > 0;
 }
 
-async function duplicatePatient(connection, clinicId, payload, ignoredId = 0) {
+function canonicalName(value) {
+    return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+async function potentialPatients(connection, clinicId, payload, ignoredId = 0) {
     const [rows] = await connection.execute(`
-        SELECT id FROM pacientes
+        SELECT id, nome, email, telefone, data_nascimento, status
+        FROM pacientes
         WHERE clinica_id = ? AND id <> ?
           AND (
-                (? IS NOT NULL AND email = ?)
-             OR (? IS NOT NULL AND data_nascimento = ? AND nome = ?)
+                LOWER(REGEXP_REPLACE(TRIM(nome), '[[:space:]]+', ' ')) = LOWER(?)
+             OR (? IS NOT NULL AND email = ?)
+             OR (? IS NOT NULL AND telefone = ?)
           )
-        LIMIT 1 FOR UPDATE
+        ORDER BY id
+        FOR UPDATE
     `, [
-        clinicId, ignoredId,
-        payload.email, payload.email,
-        payload.birthDate, payload.birthDate, payload.name
+        clinicId, ignoredId, payload.name,
+        payload.email, payload.email, payload.phone, payload.phone
     ]);
-    return rows.length > 0;
+    const inputName = canonicalName(payload.name);
+    return rows.map((row) => {
+        const storedBirthDate = row.data_nascimento instanceof Date
+            ? row.data_nascimento.toISOString().slice(0, 10) : row.data_nascimento;
+        const nameMatch = canonicalName(row.nome) === inputName;
+        const emailMatch = Boolean(payload.email && row.email === payload.email);
+        const phoneMatch = Boolean(payload.phone && String(row.telefone || '') === payload.phone);
+        const birthNameMatch = Boolean(nameMatch && payload.birthDate
+            && String(storedBirthDate || '').slice(0, 10) === payload.birthDate);
+        const incompleteNameMatch = nameMatch && !payload.email && !payload.phone && !payload.birthDate;
+        return {
+            id: Number(row.id), nome: row.nome, status: row.status,
+            ano_nascimento: storedBirthDate ? Number(String(storedBirthDate).slice(0, 4)) : null,
+            email_mascarado: maskEmail(row.email), telefone_mascarado: maskPhone(row.telefone),
+            bloqueante: emailMatch || birthNameMatch || (nameMatch && phoneMatch) || incompleteNameMatch
+        };
+    });
 }
+
+function duplicateReview(body = {}) {
+    return body.revisao_duplicidade === true && REVIEW_REASONS.has(body.motivo_revisao)
+        ? body.motivo_revisao : null;
+}
+
+function duplicateResult(candidates, reviewReason) {
+    const blocking = candidates.some((candidate) => candidate.bloqueante);
+    return {
+        blocked: blocking || (candidates.length > 0 && !reviewReason),
+        blocking,
+        total: candidates.length,
+        candidates: candidates.slice(0, 10).map(({ bloqueante, ...candidate }) => candidate)
+    };
+}
+
+function duplicateBody(result) {
+    return {
+        error: result.blocking
+            ? 'Possível paciente duplicado. Use o cadastro existente ou informe dados adicionais.'
+            : 'Revise os possíveis cadastros existentes antes de criar um novo paciente.',
+        code: result.blocking ? 'PATIENT_DUPLICATE' : 'PATIENT_REVIEW_REQUIRED',
+        revisao_permitida: !result.blocking,
+        total_candidatos: result.total,
+        candidatos: result.candidates
+    };
+}
+
+exports.previewDuplicates = async (req, res) => {
+    const payload = patientPayload(req.body);
+    if (!payload) return res.status(400).json({ error: 'Dados do paciente inválidos.' });
+    let connection;
+    try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        if (!(await lockActiveClinic(connection, req.tenant.clinicId))) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'Clínica ativa não disponível.' });
+        }
+        if (!(await operatorCanManage(connection, req.tenant.clinicId, req.userId))) {
+            await connection.rollback();
+            return res.status(403).json({ error: 'Permissão insuficiente para gerenciar pacientes.' });
+        }
+        const candidates = await potentialPatients(connection, req.tenant.clinicId, payload);
+        await connection.rollback();
+        const result = duplicateResult(candidates, null);
+        return res.status(200).json({
+            possui_candidatos: candidates.length > 0,
+            bloqueante: result.blocking,
+            revisao_permitida: candidates.length > 0 && !result.blocking,
+            total_candidatos: result.total, candidatos: result.candidates
+        });
+    } catch (error) {
+        if (connection) await connection.rollback().catch(() => {});
+        logFailure('duplicate_preview', error);
+        return res.status(500).json({ error: 'Erro ao verificar possíveis duplicidades.' });
+    } finally {
+        connection?.release();
+    }
+};
 
 exports.listForManagement = async (req, res) => {
     const search = typeof req.query?.busca === 'string' ? req.query.busca.trim() : '';
@@ -235,9 +319,12 @@ exports.createPatient = async (req, res) => {
             await connection.rollback();
             return res.status(403).json({ error: 'Permissão insuficiente para gerenciar pacientes.' });
         }
-        if (await duplicatePatient(connection, req.tenant.clinicId, payload)) {
+        const reviewReason = duplicateReview(req.body);
+        const candidates = await potentialPatients(connection, req.tenant.clinicId, payload);
+        const duplicate = duplicateResult(candidates, reviewReason);
+        if (duplicate.blocked) {
             await connection.rollback();
-            return res.status(409).json({ error: 'Possível paciente duplicado nesta clínica.' });
+            return res.status(409).json(duplicateBody(duplicate));
         }
         const [result] = await connection.execute(`
             INSERT INTO pacientes (
@@ -249,7 +336,9 @@ exports.createPatient = async (req, res) => {
         ]);
         const patientId = Number(result.insertId);
         await audit(connection, req, 'paciente_criado', patientId, {
-            status: payload.status, identidade_global_vinculada: false
+            status: payload.status, identidade_global_vinculada: false,
+            revisao_duplicidade: Boolean(reviewReason), motivo_revisao: reviewReason,
+            candidatos_revisados: candidates.length
         });
         await connection.commit();
         return res.status(201).json({ id: patientId, message: 'Paciente cadastrado com sucesso.' });
@@ -289,9 +378,12 @@ exports.updatePatient = async (req, res) => {
             await connection.rollback();
             return res.status(404).json({ error: 'Paciente não encontrado na clínica ativa.' });
         }
-        if (await duplicatePatient(connection, req.tenant.clinicId, payload, patientId)) {
+        const reviewReason = duplicateReview(req.body);
+        const candidates = await potentialPatients(connection, req.tenant.clinicId, payload, patientId);
+        const duplicate = duplicateResult(candidates, reviewReason);
+        if (duplicate.blocked) {
             await connection.rollback();
-            return res.status(409).json({ error: 'Possível paciente duplicado nesta clínica.' });
+            return res.status(409).json(duplicateBody(duplicate));
         }
         await connection.execute(`
             UPDATE pacientes
@@ -313,7 +405,9 @@ exports.updatePatient = async (req, res) => {
             .filter((field) => String(storedValues[field] ?? '') !== String(nextValues[field] ?? ''));
         await audit(connection, req, 'paciente_atualizado', patientId, {
             campos_alterados: changedFields,
-            identidade_global_preservada: rows[0].usuario_id !== null
+            identidade_global_preservada: rows[0].usuario_id !== null,
+            revisao_duplicidade: Boolean(reviewReason), motivo_revisao: reviewReason,
+            candidatos_revisados: candidates.length
         });
         await connection.commit();
         return res.status(200).json({ message: 'Paciente atualizado com sucesso.' });
@@ -328,6 +422,9 @@ exports.updatePatient = async (req, res) => {
         connection?.release();
     }
 };
+
+exports.canonicalName = canonicalName;
+exports.duplicateResult = duplicateResult;
 
 exports.getPacienteDetails = async (req, res) => {
     const patientId = positiveId(req.params.id);
