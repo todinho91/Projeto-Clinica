@@ -140,14 +140,44 @@ router.post(
     consultaController.agendarConsulta
 );
 router.get(
+    '/consultas/contexto',
+    authorize('administrador', 'secretaria', 'paciente'),
+    consultaController.context
+);
+router.get(
+    '/consultas/horarios',
+    authorize('administrador', 'secretaria', 'paciente'),
+    consultaController.availableSlots
+);
+router.get(
+    '/consultas/gestao',
+    authorize('administrador', 'secretaria'),
+    consultaController.listForManagement
+);
+router.get(
     '/consultas/minha-agenda',
     authorize('administrador', 'secretaria', 'profissional', 'paciente'),
     consultaController.getMinhaAgenda
 );
 router.put(
     '/consultas/:id/status',
-    authorize('administrador', 'secretaria', 'profissional'),
+    authorize('administrador', 'secretaria'),
     consultaController.updateStatusConsulta
+);
+router.put(
+    '/consultas/:id/concluir',
+    authorize('profissional'),
+    consultaController.concluirAtendimento
+);
+router.patch(
+    '/consultas/:id/reagendar',
+    authorize('administrador', 'secretaria'),
+    consultaController.reschedule
+);
+router.get(
+    '/consultas/:id/historico',
+    authorize('administrador', 'secretaria', 'profissional'),
+    consultaController.getHistory
 );
 router.delete(
     '/consultas/:id',
