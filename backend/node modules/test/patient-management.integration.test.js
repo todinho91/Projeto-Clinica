@@ -28,7 +28,7 @@ async function resetSchema(connection, database) {
     await confirmPatientTestEnvironment(connection, database);
     const tables = [
         'auditoria_plataforma', 'convites_clinica', 'bloqueios_profissional',
-        'disponibilidades_profissional', 'auditoria', 'documentos_clinicos', 'consultas',
+        'disponibilidades_profissional', 'auditoria', 'documentos_clinicos', 'consultas_historico', 'consultas',
         'pacientes', 'profissional_especialidades', 'profissionais', 'especialidades',
         'clinica_usuarios', 'operadores_plataforma', 'usuarios', 'clinicas', 'schema_migrations'
     ];

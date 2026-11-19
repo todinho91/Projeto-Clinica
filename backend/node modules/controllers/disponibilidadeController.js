@@ -53,6 +53,19 @@ function blockPayload(body = {}, timeZone) {
     return { type: body.tipo, start, end, reason: reason || null };
 }
 
+function appointmentFitsWeekly(intervals, appointment, timeZone) {
+    const start = utcToLocal(appointment.inicio_em, timeZone);
+    const end = utcToLocal(appointment.fim_em, timeZone);
+    if (!start || !end || start.slice(0, 10) !== end.slice(0, 10)) return false;
+    const minutes = (value) => Number(value.slice(11, 13)) * 60 + Number(value.slice(14, 16));
+    const day = new Date(`${start.slice(0, 10)}T00:00:00Z`).getUTCDay();
+    const startMinute = minutes(start); const endMinute = minutes(end);
+    return intervals.some((item) => item.day === day && item.type === 'atendimento'
+        && startMinute >= item.startMinute && endMinute <= item.endMinute)
+        && !intervals.some((item) => item.day === day && item.type === 'descanso'
+            && startMinute < item.endMinute && endMinute > item.startMinute);
+}
+
 async function audit(connection, req, action, entityType, entityId, metadata = {}) {
     await connection.execute(`
         INSERT INTO auditoria (
@@ -179,6 +192,19 @@ exports.replaceWeeklyAvailability = async (req, res) => {
             await connection.rollback();
             return res.status(404).json({ error: 'Profissional não encontrado na clínica ativa.' });
         }
+        const timeZone = await clinicTimeZone(connection, req.tenant.clinicId);
+        const [appointments] = await connection.execute(`
+            SELECT id, inicio_em, fim_em FROM consultas
+            WHERE clinica_id = ? AND profissional_id = ?
+              AND status IN ('agendada', 'confirmada') AND fim_em > UTC_TIMESTAMP(6)
+            FOR UPDATE
+        `, [req.tenant.clinicId, professionalId]);
+        if (!timeZone || appointments.some((item) => !appointmentFitsWeekly(intervals, item, timeZone))) {
+            await connection.rollback();
+            return res.status(409).json({
+                error: 'A nova grade é incompatível com consultas futuras. Reagende-as antes de alterar.'
+            });
+        }
         await connection.execute(`
             UPDATE disponibilidades_profissional SET status = 'inativo'
             WHERE clinica_id = ? AND profissional_id = ? AND status = 'ativo'
@@ -236,6 +262,19 @@ exports.createBlock = async (req, res) => {
         if (overlaps.length) {
             await connection.rollback();
             return res.status(409).json({ error: 'Já existe um bloqueio sobreposto para este profissional.' });
+        }
+        const [appointments] = await connection.execute(`
+            SELECT id FROM consultas
+            WHERE clinica_id = ? AND profissional_id = ?
+              AND status IN ('agendada', 'confirmada')
+              AND inicio_em < ? AND fim_em > ?
+            LIMIT 1 FOR UPDATE
+        `, [req.tenant.clinicId, professionalId, mysqlUtc(block.end), mysqlUtc(block.start)]);
+        if (appointments.length) {
+            await connection.rollback();
+            return res.status(409).json({
+                error: 'O bloqueio conflita com uma consulta ativa. Reagende-a antes de bloquear.'
+            });
         }
         const [result] = await connection.execute(`
             INSERT INTO bloqueios_profissional (
@@ -299,3 +338,4 @@ exports.cancelBlock = async (req, res) => {
 
 exports.blockPayload = blockPayload;
 exports.weeklyPayload = weeklyPayload;
+exports.appointmentFitsWeekly = appointmentFitsWeekly;

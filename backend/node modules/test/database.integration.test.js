@@ -17,6 +17,7 @@ async function resetTestSchema(connection) {
         'convites_clinica',
         'auditoria',
         'documentos_clinicos',
+        'consultas_historico',
         'consultas',
         'pacientes',
         'profissional_especialidades',
@@ -51,8 +52,8 @@ test('MySQL 8 aplica migrations, repete seed e bloqueia referência entre clíni
         await resetTestSchema(connection);
         const firstMigration = await runMigrations({ connection, migrationsDir, logger: { info() {} } });
         const secondMigration = await runMigrations({ connection, migrationsDir, logger: { info() {} } });
-        assert.equal(firstMigration.applied.length, 8);
-        assert.equal(secondMigration.skipped.length, 8);
+        assert.equal(firstMigration.applied.length, 9);
+        assert.equal(secondMigration.skipped.length, 9);
 
         const password = readSeedPassword();
         const rounds = readBcryptRounds();

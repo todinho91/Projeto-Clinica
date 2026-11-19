@@ -29,7 +29,7 @@ async function resetTestSchema(connection) {
     const tables = [
         'bloqueios_profissional',
         'disponibilidades_profissional',
-        'auditoria_plataforma', 'convites_clinica', 'auditoria', 'documentos_clinicos', 'consultas', 'pacientes',
+        'auditoria_plataforma', 'convites_clinica', 'auditoria', 'documentos_clinicos', 'consultas_historico', 'consultas', 'pacientes',
         'profissional_especialidades', 'profissionais', 'especialidades',
         'clinica_usuarios', 'operadores_plataforma', 'usuarios', 'clinicas', 'schema_migrations'
     ];

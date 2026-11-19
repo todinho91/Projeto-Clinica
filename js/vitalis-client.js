@@ -62,6 +62,7 @@
             'profissionais.html': ['administrador', 'secretaria'],
             'especialidades.html': ['administrador', 'secretaria'],
             'pacientes.html': ['administrador', 'secretaria'],
+            'agenda.html': ['administrador', 'secretaria'],
             'equipe.html': ['administrador', 'secretaria'],
             'configuracoes-clinica.html': ['administrador'],
             'disponibilidade.html': ['administrador', 'secretaria', 'profissional'],
@@ -109,25 +110,28 @@
         return Number.isSafeInteger(loaded) && loaded > 0 && loaded === selected ? loaded : null;
     }
 
-    function appointmentPayload(localStart, durationMinutes, professionalId) {
-        const start = new Date(localStart);
+    function appointmentPayload(localStart, durationMinutes, professionalId, specialtyId) {
         const duration = Number(durationMinutes);
         const professional = Number(professionalId);
+        const specialty = Number(specialtyId);
         if (
-            !Number.isFinite(start.getTime())
+            typeof localStart !== 'string'
+            || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(localStart)
             || !Number.isInteger(duration)
             || duration < 15
             || duration > 240
             || !Number.isSafeInteger(professional)
             || professional <= 0
+            || !Number.isSafeInteger(specialty)
+            || specialty <= 0
         ) {
             throw new Error('Dados do agendamento inválidos.');
         }
-        const end = new Date(start.getTime() + duration * 60 * 1000);
         return {
             profissional_id: professional,
-            inicio_em: start.toISOString(),
-            fim_em: end.toISOString()
+            especialidade_id: specialty,
+            inicio_local: localStart,
+            duracao_minutos: duration
         };
     }
 
