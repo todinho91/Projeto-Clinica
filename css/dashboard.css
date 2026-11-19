@@ -161,6 +161,10 @@ html { scroll-behavior: smooth; }
 .vitalis-patient-table td:nth-child(5),
 .vitalis-patient-table td:nth-child(6) { white-space: nowrap; }
 .vitalis-patient-name { color: var(--vitalis-navy); font-weight: 700; }
+.vitalis-duplicate-list { display: grid; gap: .55rem; margin-top: .75rem; }
+.vitalis-duplicate-candidate { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .7rem; border: 1px solid rgb(138 90 0 / 18%); border-radius: 10px; background: #fffdf6; }
+.vitalis-duplicate-candidate span { min-width: 0; overflow-wrap: anywhere; font-size: .82rem; }
+.vitalis-duplicate-confirm { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .55rem; margin-top: .75rem; }
 .vitalis-pagination { display: flex; align-items: center; justify-content: flex-end; gap: .75rem; margin-top: 1rem; color: var(--vitalis-muted); font-size: .82rem; }
 
 /* PR50: responsividade e rolagem interna */
@@ -233,6 +237,9 @@ html, body.vitalis-dashboard-body {
     .vitalis-patient-table tbody { display: grid; gap: .75rem; }
     .vitalis-patient-table tr { border: 1px solid var(--vitalis-border); border-radius: 12px; overflow: hidden; }
     .vitalis-patient-table td { display: grid; grid-template-columns: minmax(86px, .38fr) minmax(0, 1fr); gap: .6rem; padding: .7rem .8rem; overflow-wrap: anywhere; text-align: left !important; }
+    .vitalis-duplicate-candidate { align-items: stretch; flex-direction: column; }
+    .vitalis-duplicate-candidate .btn { width: 100%; }
+    .vitalis-duplicate-confirm { grid-template-columns: minmax(0, 1fr); }
     .vitalis-patient-table td:nth-child(n) { white-space: normal; }
     .vitalis-patient-table td::before { content: attr(data-label); color: var(--vitalis-muted); font-size: .68rem; font-weight: 700; text-transform: uppercase; }
     .vitalis-patient-table td[colspan] { display: block; }

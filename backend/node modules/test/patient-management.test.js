@@ -96,7 +96,7 @@ test('secretaria cadastra no tenant autenticado sem criar identidade global', as
         executions.push({ sql, params });
         if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
         if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
-        if (/SELECT id FROM pacientes/.test(sql)) return [[]];
+        if (/SELECT id, nome, email/.test(sql)) return [[]];
         if (/INSERT INTO pacientes/.test(sql)) return [{ insertId: 44 }];
         return [{ affectedRows: 1 }];
     });
@@ -120,7 +120,10 @@ test('duplicidade na clínica aborta sem inserir', async (t) => {
         executions.push(sql);
         if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
         if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
-        if (/SELECT id FROM pacientes/.test(sql)) return [[{ id: 5 }]];
+        if (/SELECT id, nome, email/.test(sql)) return [[{
+            id: 5, nome: 'Maria Silva', email: 'maria@example.test',
+            telefone: '41999991234', data_nascimento: '1990-05-20', status: 'ativo'
+        }]];
         return [{ affectedRows: 1 }];
     });
     const rollback = t.mock.method(db, 'rollback');
@@ -130,6 +133,88 @@ test('duplicidade na clínica aborta sem inserir', async (t) => {
     assert.equal(res.statusCode, 409);
     assert.equal(rollback.mock.callCount(), 1);
     assert.equal(executions.some((sql) => /INSERT INTO pacientes/.test(sql)), false);
+});
+
+test('nome canônico trata espaços, caixa e acentuação sem fundir prontuários', () => {
+    assert.equal(controller.canonicalName('  João   da SILVA '), 'joao da silva');
+    const candidates = [{ id: 5, bloqueante: false, nome: 'Maria Silva' }];
+    assert.equal(controller.duplicateResult(candidates, null).blocked, true);
+    assert.equal(controller.duplicateResult(candidates, 'homonimo_confirmado').blocked, false);
+    assert.equal(controller.duplicateResult([{ ...candidates[0], bloqueante: true }], 'dados_conferidos').blocked, true);
+});
+
+test('nome repetido sem contato nem nascimento permanece bloqueado mesmo com revisão', async (t) => {
+    const executions = [];
+    const db = connection(async (sql) => {
+        executions.push(sql);
+        if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
+        if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
+        if (/SELECT id, nome, email/.test(sql)) return [[{
+            id: 5, nome: 'João da Silva', email: null, telefone: null,
+            data_nascimento: null, status: 'ativo'
+        }]];
+        throw new Error('nenhuma escrita deveria ocorrer');
+    });
+    t.mock.method(pool, 'getConnection', async () => db);
+    const res = response();
+    await controller.createPatient(request({ body: {
+        nome: '  joao   da silva ', email: '', telefone: '', data_nascimento: '',
+        status: 'ativo', revisao_duplicidade: true, motivo_revisao: 'homonimo_confirmado'
+    } }), res);
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.body.code, 'PATIENT_DUPLICATE');
+    assert.equal(res.body.revisao_permitida, false);
+    assert.equal(executions.some((sql) => /INSERT INTO pacientes/.test(sql)), false);
+});
+
+test('homônimo com dados distintos exige revisão explícita e auditada', async (t) => {
+    const executions = [];
+    const db = connection(async (sql, params) => {
+        executions.push({ sql, params });
+        if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
+        if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
+        if (/SELECT id, nome, email/.test(sql)) return [[{
+            id: 5, nome: 'Maria Silva', email: null, telefone: null,
+            data_nascimento: '1980-01-10', status: 'ativo'
+        }]];
+        if (/INSERT INTO pacientes/.test(sql)) return [{ insertId: 45 }];
+        if (/INSERT INTO auditoria/.test(sql)) return [{ insertId: 1 }];
+        throw new Error(`SQL inesperado: ${sql}`);
+    });
+    t.mock.method(pool, 'getConnection', async () => db);
+    const res = response();
+    await controller.createPatient(request({ body: {
+        nome: 'Maria Silva', email: '', telefone: '', data_nascimento: '1990-05-20',
+        status: 'ativo', revisao_duplicidade: true, motivo_revisao: 'homonimo_confirmado'
+    } }), res);
+    assert.equal(res.statusCode, 201);
+    const audit = executions.find((entry) => /INSERT INTO auditoria/.test(entry.sql));
+    assert.match(audit.params.at(-1), /"revisao_duplicidade":true/);
+    assert.match(audit.params.at(-1), /"motivo_revisao":"homonimo_confirmado"/);
+});
+
+test('pré-verificação expõe somente candidatos mascarados da clínica ativa', async (t) => {
+    const db = connection(async (sql, params) => {
+        if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
+        if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
+        if (/SELECT id, nome, email/.test(sql)) {
+            assert.equal(params[0], 11);
+            return [[{
+                id: 5, nome: 'Maria Silva', email: 'maria@example.test',
+                telefone: '41999991234', data_nascimento: '1990-05-20', status: 'ativo'
+            }]];
+        }
+        throw new Error(`SQL inesperado: ${sql}`);
+    });
+    t.mock.method(pool, 'getConnection', async () => db);
+    const res = response();
+    await controller.previewDuplicates(request(), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.possui_candidatos, true);
+    assert.equal(res.body.candidatos[0].email_mascarado, 'm***@example.test');
+    assert.equal(res.body.candidatos[0].telefone_mascarado, '***1234');
+    assert.equal('email' in res.body.candidatos[0], false);
+    assert.equal('telefone' in res.body.candidatos[0], false);
 });
 
 test('permissão do operador é revalidada dentro da transação', async (t) => {
@@ -164,7 +249,7 @@ test('falha parcial provoca rollback e não confirma a transação', async (t) =
     const db = connection(async (sql) => {
         if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
         if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
-        if (/SELECT id FROM pacientes/.test(sql)) return [[]];
+        if (/SELECT id, nome, email/.test(sql)) return [[]];
         if (/INSERT INTO pacientes/.test(sql)) return [{ insertId: 44 }];
         throw new Error('falha de auditoria');
     });
@@ -199,7 +284,8 @@ test('rotas de gestão aceitam apenas administrador e secretaria', () => {
     const routes = router.stack.filter((layer) => layer.route).map((layer) => ({
         path: layer.route.path, methods: layer.route.methods, handlers: layer.route.stack.map((item) => item.handle)
     }));
-    for (const path of ['/pacientes/gestao', '/pacientes/busca', '/pacientes/gestao/:id', '/pacientes', '/pacientes/:id']) {
+    for (const path of ['/pacientes/gestao', '/pacientes/busca', '/pacientes/gestao/:id',
+        '/pacientes/duplicidades', '/pacientes', '/pacientes/:id']) {
         assert.ok(routes.some((route) => route.path === path), `rota ausente: ${path}`);
     }
     const create = routes.find((route) => route.path === '/pacientes' && route.methods.post);

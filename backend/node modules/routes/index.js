@@ -170,6 +170,11 @@ router.get(
     pacienteController.getForManagement
 );
 router.post(
+    '/pacientes/duplicidades',
+    authorize('administrador', 'secretaria'),
+    pacienteController.previewDuplicates
+);
+router.post(
     '/pacientes',
     authorize('administrador', 'secretaria'),
     pacienteController.createPatient

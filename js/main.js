@@ -43,7 +43,12 @@ async function apiRequest(path, options = {}, authType = 'clinic') {
         window.location.assign('select-clinic.html');
         throw new Error('Selecione novamente uma clínica ativa.');
     }
-    if (!response.ok) throw new Error(data.error || 'Não foi possível concluir a operação.');
+    if (!response.ok) {
+        const error = new Error(data.error || 'Não foi possível concluir a operação.');
+        error.code = data.code;
+        error.details = data;
+        throw error;
+    }
     return data;
 }
 
@@ -1114,11 +1119,13 @@ async function setupPatientsPage() {
     const previous = document.getElementById('pacientes-anterior');
     const next = document.getElementById('pacientes-proximo');
     const pageLabel = document.getElementById('pacientes-pagina');
+    const duplicatePanel = document.getElementById('paciente-duplicidades');
     const loadGate = VitalisCore.createLatestRequestGate();
     const editGate = VitalisCore.createLatestRequestGate();
     const mutationLock = VitalisCore.createOperationLock();
     let editingId = null;
     let editLoading = false;
+    let approvedDuplicateReview = null;
     let page = 1;
     let total = 0;
     const limit = 20;
@@ -1145,10 +1152,84 @@ async function setupPatientsPage() {
 
     function clearPatientForm() {
         editingId = null;
+        approvedDuplicateReview = null;
+        duplicatePanel.hidden = true;
+        duplicatePanel.replaceChildren();
         form.reset();
         document.getElementById('paciente-status').value = 'ativo';
         title.textContent = 'Cadastrar paciente';
         cancel.hidden = true;
+    }
+
+    function patientFormPayload() {
+        return {
+            nome: document.getElementById('paciente-nome').value,
+            email: document.getElementById('paciente-email').value,
+            telefone: document.getElementById('paciente-telefone').value,
+            data_nascimento: document.getElementById('paciente-nascimento').value,
+            status: document.getElementById('paciente-status').value,
+            ...(approvedDuplicateReview ? {
+                revisao_duplicidade: true, motivo_revisao: approvedDuplicateReview
+            } : {})
+        };
+    }
+
+    function showDuplicateCandidates(data) {
+        duplicatePanel.replaceChildren();
+        duplicatePanel.hidden = false;
+        duplicatePanel.className = 'vitalis-duplicate-review alert alert-warning mt-3';
+        const heading = document.createElement('strong');
+        heading.textContent = data.bloqueante
+            ? 'Cadastro possivelmente já existente'
+            : 'Revise os pacientes semelhantes';
+        const description = document.createElement('p');
+        description.className = 'mb-2';
+        description.textContent = data.bloqueante
+            ? 'Use um paciente existente ou informe dados adicionais para diferenciar homônimos.'
+            : 'Confirme um cadastro existente ou registre que os dados foram conferidos.';
+        const listElement = document.createElement('div');
+        listElement.className = 'vitalis-duplicate-list';
+        (data.candidatos || []).forEach((candidate) => {
+            const item = document.createElement('div');
+            item.className = 'vitalis-duplicate-candidate';
+            const summary = document.createElement('span');
+            summary.textContent = [
+                candidate.nome,
+                candidate.ano_nascimento ? `nasc. ${candidate.ano_nascimento}` : 'nascimento não informado',
+                candidate.email_mascarado || candidate.telefone_mascarado || 'contato não informado'
+            ].join(' — ');
+            const use = document.createElement('button');
+            use.type = 'button'; use.className = 'btn btn-sm btn-outline-primary';
+            use.textContent = 'Usar paciente existente';
+            use.addEventListener('click', () => startEdit(candidate.id));
+            item.append(summary, use); listElement.append(item);
+        });
+        duplicatePanel.append(heading, description, listElement);
+        if (data.revisao_permitida) {
+            const review = document.createElement('div');
+            review.className = 'vitalis-duplicate-confirm';
+            const reason = document.createElement('select');
+            reason.className = 'form-select form-select-sm';
+            reason.setAttribute('aria-label', 'Motivo para cadastrar pessoa distinta');
+            reason.append(
+                new Option('Selecione o motivo da revisão', ''),
+                new Option('Homônimo confirmado', 'homonimo_confirmado'),
+                new Option('Contato compartilhado', 'contato_compartilhado'),
+                new Option('Dados conferidos', 'dados_conferidos')
+            );
+            const confirm = document.createElement('button');
+            confirm.type = 'button'; confirm.className = 'btn btn-sm btn-warning';
+            confirm.textContent = 'Cadastrar como pessoa distinta';
+            confirm.addEventListener('click', () => {
+                if (!reason.value) {
+                    showMessage(formStatus, 'Selecione o motivo da revisão antes de continuar.');
+                    return;
+                }
+                approvedDuplicateReview = reason.value;
+                form.requestSubmit();
+            });
+            review.append(reason, confirm); duplicatePanel.append(review);
+        }
     }
 
     function resetForm() {
@@ -1276,14 +1357,18 @@ async function setupPatientsPage() {
         const targetId = editingId;
         setFormDisabled(true);
         setEditActionsDisabled(true);
-        const payload = {
-            nome: document.getElementById('paciente-nome').value,
-            email: document.getElementById('paciente-email').value,
-            telefone: document.getElementById('paciente-telefone').value,
-            data_nascimento: document.getElementById('paciente-nascimento').value,
-            status: document.getElementById('paciente-status').value
-        };
+        const payload = patientFormPayload();
         try {
+            if (!targetId && !approvedDuplicateReview) {
+                const preview = await apiRequest('/pacientes/duplicidades', {
+                    method: 'POST', body: JSON.stringify(payload)
+                });
+                if (preview.possui_candidatos) {
+                    showDuplicateCandidates(preview);
+                    showMessage(formStatus, 'Revise os possíveis cadastros antes de continuar.', 'warning');
+                    return;
+                }
+            }
             const result = await apiRequest(targetId ? `/pacientes/${targetId}` : '/pacientes', {
                 method: targetId ? 'PUT' : 'POST', body: JSON.stringify(payload)
             });
@@ -1292,12 +1377,22 @@ async function setupPatientsPage() {
             await loadPatients();
             showMessage(formStatus, result.message, 'success');
         } catch (error) {
+            if (error.details?.candidatos?.length) showDuplicateCandidates({
+                ...error.details, bloqueante: error.code === 'PATIENT_DUPLICATE'
+            });
             showMessage(formStatus, error.message);
         } finally {
             mutationLock.end();
             setFormDisabled(false);
             setEditActionsDisabled(false);
         }
+    });
+    ['paciente-nome', 'paciente-email', 'paciente-telefone', 'paciente-nascimento'].forEach((id) => {
+        document.getElementById(id).addEventListener('input', () => {
+            approvedDuplicateReview = null;
+            duplicatePanel.hidden = true;
+            duplicatePanel.replaceChildren();
+        });
     });
     cancel.addEventListener('click', () => {
         if (mutationLock.active || editLoading) return;
