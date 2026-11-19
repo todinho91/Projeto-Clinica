@@ -468,6 +468,10 @@ async function changeStatus(req, res, forced = null) {
             || appointment.profissional_status !== 'ativo')) {
             return await rollback(connection, res, 403, 'Somente o profissional responsável pode concluir o atendimento.');
         }
+        if (target === 'realizada'
+            && !await activeClinic(connection, req.tenant.clinicId, true)) {
+            return await rollback(connection, res, 409, 'Clínica ativa não disponível.');
+        }
         if (target === 'nao_compareceu' && !['administrador', 'secretaria'].includes(role)) {
             return await rollback(connection, res, 403, 'Somente a gestão da clínica pode registrar não comparecimento.');
         }

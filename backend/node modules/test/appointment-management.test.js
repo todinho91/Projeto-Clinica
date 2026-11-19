@@ -359,6 +359,9 @@ test('consulta futura não pode ser marcada como realizada pelo backend', async 
             status: 'confirmada', versao: 1, profissional_usuario_id: 7,
             profissional_status: 'ativo', paciente_usuario_id: 91
         }]];
+        if (/SELECT id, timezone FROM clinicas/.test(sql)) {
+            return [[{ id: 11, timezone: 'America/Sao_Paulo' }]];
+        }
         throw new Error('nenhuma atualização deveria ocorrer');
     });
     t.mock.method(pool, 'getConnection', async () => connection);
@@ -379,6 +382,9 @@ test('médico ativo conclui a própria consulta com versão, histórico e audito
             status: 'confirmada', versao: 3, profissional_usuario_id: 7,
             profissional_status: 'ativo', paciente_usuario_id: 91
         }]];
+        if (/SELECT id, timezone FROM clinicas/.test(sql)) {
+            return [[{ id: 11, timezone: 'America/Sao_Paulo' }]];
+        }
         if (/UPDATE consultas SET status/.test(sql)) return [{ affectedRows: 1 }];
         if (/INSERT INTO consultas_historico/.test(sql) || /INSERT INTO auditoria/.test(sql)) {
             return [{ insertId: 1 }];
@@ -397,6 +403,71 @@ test('médico ativo conclui a própria consulta com versão, histórico e audito
     assert.deepEqual(update.arguments[1], ['realizada', 4, 11, 123, 3]);
     assert.equal(connection.execute.mock.calls.some((call) => /consultas_historico/.test(call.arguments[0])), true);
     assert.equal(connection.execute.mock.calls.some((call) => /INSERT INTO auditoria/.test(call.arguments[0])), true);
+});
+
+test('conclusão médica recusa clínica inativa dentro da transação', async (t) => {
+    const connection = transaction(t, async (sql) => {
+        if (/SELECT cu\.papel/.test(sql)) return [[{ papel: 'profissional' }]];
+        if (/FROM consultas c/.test(sql)) return [[{
+            id: 123, paciente_id: 44, profissional_id: 8, especialidade_id: 5,
+            inicio_em: '2020-01-05 12:00:00.000', fim_em: '2020-01-05 12:30:00.000',
+            status: 'confirmada', versao: 1, profissional_usuario_id: 7,
+            profissional_status: 'ativo', paciente_usuario_id: 91
+        }]];
+        if (/SELECT id, timezone FROM clinicas/.test(sql)) return [[]];
+        throw new Error('nenhuma atualização deveria ocorrer');
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await controller.concluirAtendimento({
+        userId: 7, tenant: { clinicId: 11, role: 'profissional' },
+        params: { id: '123' }, body: { versao: 1 }
+    }, res);
+    assert.equal(res.statusCode, 409);
+    assert.equal(connection.rollback.mock.callCount(), 1);
+    assert.equal(connection.execute.mock.calls.some((call) => /UPDATE consultas SET status/.test(call.arguments[0])), false);
+});
+
+test('sessões independentes de médico e secretaria observam a conclusão atualizada', async (t) => {
+    const state = {
+        id: 123, paciente_id: 44, profissional_id: 8, especialidade_id: 5,
+        inicio_em: '2020-01-05 12:00:00.000', fim_em: '2020-01-05 12:30:00.000',
+        status: 'confirmada', versao: 1, profissional_usuario_id: 7,
+        profissional_status: 'ativo', paciente_usuario_id: 91
+    };
+    const connection = transaction(t, async (sql, params) => {
+        if (/SELECT cu\.papel/.test(sql)) return [[{ papel: 'profissional' }]];
+        if (/FROM consultas c/.test(sql)) return [[{ ...state }]];
+        if (/SELECT id, timezone FROM clinicas/.test(sql)) {
+            return [[{ id: 11, timezone: 'America/Sao_Paulo' }]];
+        }
+        if (/UPDATE consultas SET status/.test(sql)) {
+            state.status = params[0]; state.versao = params[1]; return [{ affectedRows: 1 }];
+        }
+        if (/INSERT INTO consultas_historico/.test(sql) || /INSERT INTO auditoria/.test(sql)) return [{ insertId: 1 }];
+        throw new Error(`SQL inesperado: ${sql}`);
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    t.mock.method(pool, 'execute', async (sql) => {
+        assert.match(sql, /JOIN clinica_usuarios actor/);
+        return [[{
+            ...state, nome_paciente: 'Paciente', nome_profissional: 'Profissional',
+            nome_especialidade: 'Clínica Geral', pode_concluir: 1
+        }]];
+    });
+    const doctor = response();
+    await controller.concluirAtendimento({
+        userId: 7, tenant: { clinicId: 11, role: 'profissional' },
+        params: { id: '123' }, body: { versao: 1 }
+    }, doctor);
+    assert.equal(doctor.statusCode, 200);
+    const secretary = response();
+    await controller.getMinhaAgenda({
+        userId: 8, tenant: { clinicId: 11, role: 'secretaria' }
+    }, secretary);
+    assert.equal(secretary.statusCode, 200);
+    assert.equal(secretary.body[0].status, 'realizada');
+    assert.equal(secretary.body[0].versao, 2);
 });
 
 test('secretaria não consegue forçar realização pela API', async (t) => {

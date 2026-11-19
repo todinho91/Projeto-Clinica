@@ -126,3 +126,8 @@ transação; histórico e auditoria permanecem obrigatórios. A gestão não pod
 consulta como realizada. A agenda administrativa pode registrar não comparecimento somente
 após o término informado pelo servidor e se atualiza sob demanda, ao retornar à aba e a cada
 30 segundos enquanto a página estiver visível.
+
+O estado temporal dos botões é independente do estado de carregamento: finalizar uma chamada
+ou substituir a lista não reabilita uma ação que o servidor ainda marcou como indisponível.
+Testes com sessões lógicas separadas confirmam que a conclusão feita pelo profissional é
+observada pela consulta seguinte da secretaria, mantendo a nova versão.

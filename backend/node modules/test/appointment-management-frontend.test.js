@@ -100,6 +100,8 @@ test('painel médico conclui somente a própria consulta e secretaria acompanha 
     assert.match(agendaPage, /id="agenda-atualizar"/);
     assert.doesNotMatch(management, /actionButton\('Realizada'/);
     assert.match(management, /absent\.disabled = !item\.pode_marcar_falta/);
+    assert.match(management, /absent\.dataset\.temporalDisabled = String\(!item\.pode_marcar_falta\)/);
+    assert.match(management, /button\.disabled = busy \|\| button\.dataset\.temporalDisabled === 'true'/);
     assert.match(management, /setInterval\(\(\) =>/);
     assert.match(css, /vitalis-professional-page/);
     assert.match(css, /@media \(max-width: 767\.98px\)[\s\S]*vitalis-professional-page/);

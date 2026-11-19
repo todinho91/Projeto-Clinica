@@ -1252,7 +1252,9 @@ async function setupAppointmentsPage() {
     function setBusy(busy) {
         form.setAttribute('aria-busy', String(busy));
         form.querySelectorAll('input, select, button').forEach((control) => { control.disabled = busy; });
-        list.querySelectorAll('button').forEach((button) => { button.disabled = busy; });
+        list.querySelectorAll('button').forEach((button) => {
+            button.disabled = busy || button.dataset.temporalDisabled === 'true';
+        });
         if (!busy) {
             patientSelect.disabled = Boolean(editingId);
             professionalSelect.disabled = !specialty();
@@ -1426,6 +1428,7 @@ async function setupAppointmentsPage() {
                     `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'nao_compareceu', versao: item.versao }) }
                 ));
                 absent.disabled = !item.pode_marcar_falta;
+                absent.dataset.temporalDisabled = String(!item.pode_marcar_falta);
                 if (absent.disabled) absent.title = 'Disponível somente após o término da consulta.';
                 actions.append(absent);
             }
