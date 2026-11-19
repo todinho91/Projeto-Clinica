@@ -141,6 +141,20 @@ test('nome canônico trata espaços, caixa e acentuação sem fundir prontuário
     assert.equal(controller.duplicateResult(candidates, null).blocked, true);
     assert.equal(controller.duplicateResult(candidates, 'homonimo_confirmado').blocked, false);
     assert.equal(controller.duplicateResult([{ ...candidates[0], bloqueante: true }], 'dados_conferidos').blocked, true);
+    const many = Array.from({ length: 12 }, (_, index) => ({
+        id: index + 1, nome: `Candidato ${index + 1}`, bloqueante: index === 11
+    }));
+    const result = controller.duplicateResult(many, 'dados_conferidos');
+    assert.equal(result.blocked, true, 'candidato bloqueante após o décimo não pode ser ignorado');
+    assert.equal(result.total, 12);
+    assert.equal(result.candidates.length, 10, 'somente a exibição é limitada');
+});
+
+test('telefone formatado é normalizado antes da detecção', () => {
+    const payload = controller.patientPayload({
+        nome: 'Contato Familiar', telefone: '(41) 99999-1234', status: 'ativo'
+    });
+    assert.equal(payload.phone, '41999991234');
 });
 
 test('nome repetido sem contato nem nascimento permanece bloqueado mesmo com revisão', async (t) => {

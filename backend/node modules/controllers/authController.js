@@ -88,15 +88,17 @@ exports.register = async (req, res) => {
         }
 
         const normalizedEmail = email.trim().toLowerCase();
+        const normalizedName = nome.trim().replace(/\s+/g, ' ');
         const clinicId = Number(clinics[0].id);
         // Mantém o custo de derivação equivalente nos dois tipos de conflito,
         // evitando que a resposta ou o tempo revelem a origem do cadastro.
         const senhaHash = await bcrypt.hash(senha, 10);
         const [existingProfiles] = await connection.execute(`
             SELECT id FROM pacientes
-            WHERE clinica_id = ? AND email = ?
-            LIMIT 1 FOR UPDATE
-        `, [clinicId, normalizedEmail]);
+            WHERE clinica_id = ?
+              AND (email = ? OR LOWER(REGEXP_REPLACE(TRIM(nome), '[[:space:]]+', ' ')) = LOWER(?))
+            FOR UPDATE
+        `, [clinicId, normalizedEmail, normalizedName]);
         if (existingProfiles.length > 0) {
             await connection.rollback();
             return res.status(409).json({ error: PUBLIC_REGISTRATION_CONFLICT });
@@ -104,7 +106,7 @@ exports.register = async (req, res) => {
         const [userResult] = await connection.execute(`
             INSERT INTO usuarios (nome, email, senha_hash, status)
             VALUES (?, ?, ?, 'ativo')
-        `, [nome.trim(), normalizedEmail, senhaHash]);
+        `, [normalizedName, normalizedEmail, senhaHash]);
 
         await connection.execute(`
             INSERT INTO clinica_usuarios (clinica_id, usuario_id, papel, status)
@@ -113,7 +115,7 @@ exports.register = async (req, res) => {
         await connection.execute(`
             INSERT INTO pacientes (clinica_id, usuario_id, nome, email, status)
             VALUES (?, ?, ?, ?, 'ativo')
-        `, [clinicId, userResult.insertId, nome.trim(), normalizedEmail]);
+        `, [clinicId, userResult.insertId, normalizedName, normalizedEmail]);
 
         await connection.commit();
         return res.status(201).json({ message: 'Paciente cadastrado com sucesso.' });

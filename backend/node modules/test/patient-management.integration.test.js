@@ -98,6 +98,11 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
         assert.deepEqual([incompleteFirst.statusCode, incompleteConcurrent.statusCode].sort(), [201, 409]);
         const incompleteDuplicate = incompleteFirst.statusCode === 409 ? incompleteFirst : incompleteConcurrent;
         assert.equal(incompleteDuplicate.body.code, 'PATIENT_DUPLICATE');
+        const accentAndSpacing = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, {
+            nome: '  jose   cadastro incompleto ', email: '', telefone: '', data_nascimento: ''
+        }), accentAndSpacing);
+        assert.equal(accentAndSpacing.statusCode, 409);
 
         const homonymBase = response();
         await controller.createPatient(patientRequest(northId, northAdmin, {
@@ -128,6 +133,29 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
             revisao_duplicidade: true, motivo_revisao: 'contato_compartilhado'
         }), familyReviewed);
         assert.equal(familyReviewed.statusCode, 201);
+
+        const candidateValues = []; const candidateParams = [];
+        for (let index = 0; index < 11; index += 1) {
+            candidateValues.push("(?, NULL, 'Candidato Limite', NULL, ?, ?, 'ativo')");
+            candidateParams.push(
+                northId,
+                index === 10 ? '41977776666' : `4197000${String(index).padStart(4, '0')}`,
+                `19${String(70 + index).padStart(2, '0')}-01-01`
+            );
+        }
+        await setup.execute(`INSERT INTO pacientes
+            (clinica_id, usuario_id, nome, email, telefone, data_nascimento, status)
+            VALUES ${candidateValues.join(', ')}`, candidateParams);
+        const afterTenthBlocking = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, {
+            nome: 'Candidato Limite', email: '', telefone: '(41) 97777-6666',
+            data_nascimento: '2001-02-02', revisao_duplicidade: true,
+            motivo_revisao: 'dados_conferidos'
+        }), afterTenthBlocking);
+        assert.equal(afterTenthBlocking.statusCode, 409);
+        assert.equal(afterTenthBlocking.body.code, 'PATIENT_DUPLICATE');
+        assert.equal(afterTenthBlocking.body.total_candidatos, 11);
+        assert.equal(afterTenthBlocking.body.candidatos.length, 10);
 
         const south = response();
         await controller.createPatient(patientRequest(southId, southAdmin), south);

@@ -14,9 +14,17 @@ ativa.
   administrador ou pela secretaria;
 - a revisão registra somente um motivo controlado na auditoria, sem copiar dados pessoais;
 - candidatos exibem apenas nome, ano de nascimento, situação e contatos mascarados;
+- a decisão considera todos os candidatos encontrados; somente a interface limita a exibição
+  aos dez primeiros, informando a quantidade total;
 - a ação **Usar paciente existente** abre o cadastro já existente para edição;
 - a linha da clínica é bloqueada antes da busca e da inserção, serializando cadastros
   concorrentes na mesma clínica.
+
+O cadastro público em `/auth/register` aplica a mesma normalização de nome dentro da clínica.
+Nome equivalente ou e-mail já usado produz a mesma resposta neutra, sem dizer se o conflito
+está na identidade global ou no perfil clínico. Nenhum vínculo ou usuário parcial é mantido,
+e o cadastro público nunca apropria automaticamente um paciente administrativo existente.
+Homônimos bloqueados nesse fluxo devem ser revisados pela equipe autorizada da clínica.
 
 ## Compatibilidade com a migration 008
 

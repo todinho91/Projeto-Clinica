@@ -128,7 +128,7 @@ async function potentialPatients(connection, clinicId, payload, ignoredId = 0) {
              OR (? IS NOT NULL AND telefone = ?)
           )
         ORDER BY id
-        LIMIT 10 FOR UPDATE
+        FOR UPDATE
     `, [
         clinicId, ignoredId, payload.name,
         payload.email, payload.email, payload.phone, payload.phone
@@ -162,7 +162,8 @@ function duplicateResult(candidates, reviewReason) {
     return {
         blocked: blocking || (candidates.length > 0 && !reviewReason),
         blocking,
-        candidates: candidates.map(({ bloqueante, ...candidate }) => candidate)
+        total: candidates.length,
+        candidates: candidates.slice(0, 10).map(({ bloqueante, ...candidate }) => candidate)
     };
 }
 
@@ -173,6 +174,7 @@ function duplicateBody(result) {
             : 'Revise os possíveis cadastros existentes antes de criar um novo paciente.',
         code: result.blocking ? 'PATIENT_DUPLICATE' : 'PATIENT_REVIEW_REQUIRED',
         revisao_permitida: !result.blocking,
+        total_candidatos: result.total,
         candidatos: result.candidates
     };
 }
@@ -199,7 +201,7 @@ exports.previewDuplicates = async (req, res) => {
             possui_candidatos: candidates.length > 0,
             bloqueante: result.blocking,
             revisao_permitida: candidates.length > 0 && !result.blocking,
-            candidatos: result.candidates
+            total_candidatos: result.total, candidatos: result.candidates
         });
     } catch (error) {
         if (connection) await connection.rollback().catch(() => {});
