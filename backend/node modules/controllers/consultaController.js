@@ -416,10 +416,14 @@ exports.getMinhaAgenda = async (req, res) => {
     try {
         const [rows] = await pool.execute(`SELECT c.id, c.inicio_em, c.fim_em, c.status, c.versao,
             c.inicio_em <= UTC_TIMESTAMP(6) AS pode_concluir,
+            c.inicio_em > UTC_TIMESTAMP(6) AS futura,
+            (c.inicio_em <= UTC_TIMESTAMP(6) AND c.fim_em > UTC_TIMESTAMP(6)) AS em_andamento,
             pa.id AS paciente_id, pa.nome AS nome_paciente,
             p.id AS profissional_id, p.nome_exibicao AS nome_profissional,
-            e.id AS especialidade_id, e.nome AS nome_especialidade
+            e.id AS especialidade_id, e.nome AS nome_especialidade,
+            clinic.timezone
             FROM consultas c
+            JOIN clinicas clinic ON clinic.id = c.clinica_id AND clinic.status = 'ativa'
             JOIN pacientes pa ON pa.clinica_id = c.clinica_id AND pa.id = c.paciente_id
             JOIN profissionais p ON p.clinica_id = c.clinica_id AND p.id = c.profissional_id
             LEFT JOIN especialidades e ON e.clinica_id = c.clinica_id AND e.id = c.especialidade_id
@@ -435,7 +439,10 @@ exports.getMinhaAgenda = async (req, res) => {
         return res.status(200).json(rows.map((item) => ({
             ...item, id: Number(item.id), paciente_id: Number(item.paciente_id),
             profissional_id: Number(item.profissional_id), versao: Number(item.versao),
-            pode_concluir: Boolean(item.pode_concluir)
+            pode_concluir: Boolean(item.pode_concluir), futura: Boolean(item.futura),
+            em_andamento: Boolean(item.em_andamento),
+            inicio_local: utcToLocal(item.inicio_em, item.timezone),
+            fim_local: utcToLocal(item.fim_em, item.timezone)
         })));
     } catch (error) {
         logFailure('my_agenda', error);

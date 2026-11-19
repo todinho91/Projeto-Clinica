@@ -182,12 +182,22 @@ html { scroll-behavior: smooth; }
 .vitalis-status-realizada { color: #157347; background: #e8f5e9; }
 .vitalis-status-cancelada { color: #52606d; background: #edf1f5; }
 .vitalis-status-nao-compareceu { color: #9a3412; background: #ffede5; }
-.vitalis-professional-page .vitalis-appointment-table th:nth-child(1) { width: 28%; }
-.vitalis-professional-page .vitalis-appointment-table th:nth-child(2) { width: 25%; }
-.vitalis-professional-page .vitalis-appointment-table th:nth-child(3) { width: 17%; }
-.vitalis-professional-page .vitalis-appointment-table th:nth-child(4) { width: 30%; }
-.vitalis-professional-page .vitalis-appointment-actions { justify-content: flex-start; }
+.vitalis-doctor-metrics { margin-bottom: 1rem; }
+.vitalis-next-appointment { margin-bottom: 1rem; background: linear-gradient(135deg, #fff, #f4f9ff); }
+.vitalis-next-appointment-content { display: grid; grid-template-columns: minmax(210px, .9fr) minmax(0, 1.4fr) auto; gap: 1rem; align-items: center; }
+.vitalis-next-date { display: flex; align-items: center; gap: .65rem; color: var(--vitalis-navy); }
+.vitalis-next-date i { display: grid; width: 42px; height: 42px; flex: 0 0 42px; place-items: center; color: var(--vitalis-blue); background: #e9f3ff; border-radius: 12px; }
+.vitalis-next-details strong, .vitalis-next-details span { display: block; }
+.vitalis-next-details span { margin-top: .2rem; color: var(--vitalis-muted); font-size: .82rem; }
+.vitalis-doctor-filters { display: grid; grid-template-columns: repeat(2, minmax(150px, 1fr)) auto auto; gap: .65rem; align-items: end; }
+.vitalis-professional-page .vitalis-appointment-table th:nth-child(1) { width: 21%; }
+.vitalis-professional-page .vitalis-appointment-table th:nth-child(2) { width: 20%; }
+.vitalis-professional-page .vitalis-appointment-table th:nth-child(3) { width: 18%; }
+.vitalis-professional-page .vitalis-appointment-table th:nth-child(4) { width: 14%; }
+.vitalis-professional-page .vitalis-appointment-table th:nth-child(5) { width: 27%; }
+.vitalis-professional-page .vitalis-appointment-actions { align-items: flex-start; flex-direction: column; justify-content: center; }
 .vitalis-professional-page .vitalis-appointment-actions .btn { white-space: normal; }
+.vitalis-action-note { color: var(--vitalis-muted); font-size: .72rem; line-height: 1.35; }
 
 /* PR50: responsividade e rolagem interna */
 html, body.vitalis-dashboard-body {
@@ -288,6 +298,13 @@ html, body.vitalis-dashboard-body {
     .vitalis-appointment-actions { justify-content: flex-start; }
     .vitalis-professional-page .vitalis-welcome { align-items: stretch; flex-direction: column; }
     .vitalis-professional-page .vitalis-refresh-button { width: 100%; }
+    .vitalis-professional-page .vitalis-doctor-metrics { grid-template-columns: minmax(0, 1fr); }
+    .vitalis-professional-page .vitalis-metric-card { min-height: 108px; }
+    .vitalis-next-appointment-content { grid-template-columns: minmax(0, 1fr); }
+    .vitalis-doctor-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .vitalis-doctor-filters .btn { width: 100%; }
+    .vitalis-professional-page .vitalis-appointment-actions { align-items: stretch; }
+    .vitalis-professional-page .vitalis-appointment-actions .btn { width: 100%; }
 
     .vitalis-team-page .vitalis-main { padding: 1rem; }
     .vitalis-team-page .vitalis-welcome { margin-bottom: 1.25rem; }
@@ -335,5 +352,8 @@ html, body.vitalis-dashboard-body {
     .vitalis-appointment-filters { grid-template-columns: minmax(0, 1fr); }
     .vitalis-appointment-filters .btn { grid-column: auto; }
     .vitalis-appointment-table td { grid-template-columns: minmax(82px, .36fr) minmax(0, 1fr); padding: .65rem; }
+    .vitalis-doctor-filters { grid-template-columns: minmax(0, 1fr); }
+    .vitalis-professional-page .vitalis-main { padding: .75rem; }
+    .vitalis-professional-page .vitalis-panel { padding: .85rem; border-radius: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }

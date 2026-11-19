@@ -185,7 +185,11 @@ test('agenda administrativa usa exclusivamente a clínica ativa', async (t) => {
     t.mock.method(pool, 'execute', async (sql, values) => {
         assert.match(sql, /WHERE c\.clinica_id = \?/);
         params = values;
-        return [[{ id: 1, inicio_em: '2032-01-01T12:00:00.000Z', status: 'agendada' }]];
+        return [[{
+            id: 1, inicio_em: '2032-01-01 12:00:00.000', fim_em: '2032-01-01 12:30:00.000',
+            status: 'agendada', versao: 1, paciente_id: 3, profissional_id: 4,
+            timezone: 'America/Sao_Paulo', pode_concluir: 0, futura: 1, em_andamento: 0
+        }]];
     });
     const res = response();
 
@@ -201,6 +205,9 @@ test('agenda administrativa usa exclusivamente a clínica ativa', async (t) => {
     ]);
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.length, 1);
+    assert.equal(res.body[0].inicio_local, '2032-01-01T09:00');
+    assert.equal(res.body[0].fim_local, '2032-01-01T09:30');
+    assert.equal(res.body[0].timezone, 'America/Sao_Paulo');
 });
 
 test('pool interpreta DATETIME clínico como UTC', () => {

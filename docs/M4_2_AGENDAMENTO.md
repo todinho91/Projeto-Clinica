@@ -131,3 +131,10 @@ O estado temporal dos botões é independente do estado de carregamento: finaliz
 ou substituir a lista não reabilita uma ação que o servidor ainda marcou como indisponível.
 Testes com sessões lógicas separadas confirmam que a conclusão feita pelo profissional é
 observada pela consulta seguinte da secretaria, mantendo a nova versão.
+
+O painel profissional segue o layout administrativo do Vitalis, com menu lateral responsivo,
+identificação do usuário e da clínica, indicadores calculados da agenda recebida, destaque do
+próximo atendimento e filtros locais por data e situação. Datas são formatadas a partir de
+`inicio_local` e `fim_local`, produzidos no backend com o fuso IANA da clínica; o navegador não
+reinterpreta esses horários em seu próprio fuso. Em telas móveis, as linhas tornam-se cartões e
+o motivo de indisponibilidade da conclusão permanece visível em texto.

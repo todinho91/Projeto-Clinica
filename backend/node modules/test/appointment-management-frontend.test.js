@@ -110,6 +110,38 @@ test('painel médico conclui somente a própria consulta e secretaria acompanha 
     }
 });
 
+test('painel médico usa layout Vitalis, dados reais, fuso da clínica e cartões móveis', async () => {
+    const [page, main, css] = await Promise.all([
+        fs.readFile(path.join(root, 'dashboard-medico.html'), 'utf8'),
+        fs.readFile(path.join(root, 'js', 'main.js'), 'utf8'),
+        fs.readFile(path.join(root, 'css', 'dashboard.css'), 'utf8')
+    ]);
+    const doctor = main.slice(
+        main.indexOf('async function setupProfissionalDashboard()'),
+        main.indexOf('async function setupAdministracaoDashboard()')
+    );
+    assert.match(page, /id="vitalis-sidebar"/);
+    assert.match(page, /class="vitalis-sidebar-footer"/);
+    assert.match(page, /data-user-name/);
+    for (const id of [
+        'medico-consultas-hoje', 'medico-proximas-consultas', 'medico-concluidas-hoje',
+        'proximo-atendimento-conteudo', 'filtros-agenda-medico',
+        'filtro-medico-data', 'filtro-medico-status'
+    ]) assert.match(page, new RegExp(`id="${id}"`));
+    assert.match(doctor, /session\.user\?\.nome/);
+    assert.match(doctor, /appointment\.inicio_local/);
+    assert.match(doctor, /appointment\.fim_local/);
+    assert.doesNotMatch(doctor, /formatDate\(appointment\.inicio_em\)/);
+    assert.match(doctor, /agendaGate\.isCurrent/);
+    assert.match(doctor, /Disponível a partir de/);
+    assert.match(doctor, /renderMetrics\(\); renderNextAppointment\(\); renderAgenda\(\)/);
+    assert.match(css, /\.vitalis-doctor-metrics/);
+    assert.match(css, /\.vitalis-next-appointment-content/);
+    assert.match(css, /@media \(max-width: 767\.98px\)[\s\S]*\.vitalis-professional-page \.vitalis-doctor-metrics[^}]*grid-template-columns: minmax\(0, 1fr\)/);
+    assert.match(css, /@media \(max-width: 389\.98px\)[\s\S]*\.vitalis-doctor-filters[^}]*grid-template-columns: minmax\(0, 1fr\)/);
+    assert.doesNotMatch(page, /Paciente (Demo|Fictício)|Dr\. Exemplo|Consulta de exemplo/i);
+});
+
 test('todas as páginas administrativas oferecem acesso compartilhado à agenda', async () => {
     const pages = [
         'dashboard-secretaria.html', 'pacientes.html', 'profissionais.html',

@@ -1056,10 +1056,38 @@ async function setupProfissionalDashboard() {
     const clinic = requireClinicSession('dashboard-medico.html');
     if (!clinic) return;
     applyClinicIdentity(clinic);
+    document.querySelectorAll('[data-user-name]').forEach((element) => {
+        element.textContent = session.user?.nome || 'profissional';
+    });
     const table = document.getElementById('tabela-agenda');
     const status = document.getElementById('agenda-status');
     const refresh = document.getElementById('atualizar-agenda-medico');
+    const filters = document.getElementById('filtros-agenda-medico');
+    const dateFilter = document.getElementById('filtro-medico-data');
+    const statusFilter = document.getElementById('filtro-medico-status');
+    const nextContent = document.getElementById('proximo-atendimento-conteudo');
     const mutationLock = VitalisCore.createOperationLock();
+    const agendaGate = VitalisCore.createLatestRequestGate();
+    let appointments = [];
+
+    function clinicToday(timeZone) {
+        if (!timeZone) return '';
+        const parts = new Intl.DateTimeFormat('en-US', {
+            timeZone, year: 'numeric', month: '2-digit', day: '2-digit'
+        }).formatToParts(new Date()).reduce((result, item) => {
+            if (item.type !== 'literal') result[item.type] = item.value;
+            return result;
+        }, {});
+        return `${parts.year}-${parts.month}-${parts.day}`;
+    }
+
+    function localPeriodLabel(appointment) {
+        const start = appointment.inicio_local;
+        const end = appointment.fim_local;
+        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(start || '')
+            || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(end || '')) return 'Horário indisponível';
+        return `${start.slice(8, 10)}/${start.slice(5, 7)}/${start.slice(0, 4)} · ${start.slice(11, 16)}–${end.slice(11, 16)}`;
+    }
 
     function appointmentStatus(value) {
         const labels = {
@@ -1072,69 +1100,133 @@ async function setupProfissionalDashboard() {
         return badge;
     }
 
-    async function loadAgenda() {
-        try {
-            const appointments = await apiRequest('/consultas/minha-agenda');
-            table.replaceChildren();
-            appointments.forEach((appointment) => {
-                const row = document.createElement('tr');
-                row.append(
-                    tableCell(`${formatDate(appointment.inicio_em)} — ${formatDate(appointment.fim_em)}`),
-                    tableCell(appointment.nome_paciente)
-                );
-                row.children[0].dataset.label = 'Data e hora';
-                row.children[1].dataset.label = 'Paciente';
-                const statusCell = document.createElement('td');
-                statusCell.dataset.label = 'Situação';
-                statusCell.append(appointmentStatus(appointment.status));
-                row.append(statusCell);
-                const actions = document.createElement('td');
-                actions.dataset.label = 'Ação';
-                actions.className = 'vitalis-appointment-actions';
-                if (['agendada', 'confirmada'].includes(appointment.status)) {
-                    const button = document.createElement('button');
-                    button.type = 'button';
-                    button.className = 'btn btn-sm btn-success';
-                    button.innerHTML = '<i class="bi bi-check2-circle"></i> Concluir atendimento';
-                    button.disabled = !appointment.pode_concluir;
-                    if (button.disabled) button.title = 'Disponível somente a partir do início da consulta.';
-                    button.addEventListener('click', async () => {
-                        if (!mutationLock.tryBegin()) return;
-                        button.disabled = true;
-                        try {
-                            const result = await apiRequest(`/consultas/${appointment.id}/concluir`, {
-                                method: 'PUT',
-                                body: JSON.stringify({ versao: Number(appointment.versao) })
-                            });
-                            showMessage(status, result.message, 'success');
-                            await loadAgenda();
-                        } catch (error) {
-                            showMessage(status, error.message);
-                        } finally {
-                            mutationLock.end();
-                        }
-                    });
-                    actions.append(button);
-                } else {
-                    actions.textContent = 'Atendimento encerrado';
-                }
-                row.append(actions);
-                table.append(row);
-            });
-            if (appointments.length === 0) {
-                const row = document.createElement('tr');
-                const cell = tableCell('Nenhuma consulta na agenda.');
-                cell.colSpan = 4;
-                cell.className = 'text-center';
-                row.append(cell);
-                table.append(row);
-            }
-            showMessage(status, 'Agenda atualizada.', 'muted');
-        } catch (error) {
-            showMessage(status, error.message);
+    function renderMetrics() {
+        const timeZone = appointments[0]?.timezone;
+        const today = clinicToday(timeZone);
+        const active = (item) => ['agendada', 'confirmada'].includes(item.status);
+        document.getElementById('medico-consultas-hoje').textContent = String(appointments.filter(
+            (item) => item.inicio_local?.slice(0, 10) === today && item.status !== 'cancelada'
+        ).length);
+        document.getElementById('medico-proximas-consultas').textContent = String(appointments.filter(
+            (item) => active(item) && item.futura
+        ).length);
+        document.getElementById('medico-concluidas-hoje').textContent = String(appointments.filter(
+            (item) => item.inicio_local?.slice(0, 10) === today && item.status === 'realizada'
+        ).length);
+    }
+
+    function renderNextAppointment() {
+        const next = appointments.filter((item) => (
+            ['agendada', 'confirmada'].includes(item.status) && (item.em_andamento || item.futura)
+        )).sort((left, right) => Number(right.em_andamento) - Number(left.em_andamento)
+            || String(left.inicio_local).localeCompare(String(right.inicio_local)))[0];
+        nextContent.replaceChildren();
+        document.getElementById('proximo-atendimento-fuso').textContent = next?.timezone
+            ? `Fuso: ${next.timezone}` : 'Fuso da clínica';
+        if (!next) {
+            const empty = document.createElement('p');
+            empty.className = 'text-muted mb-0';
+            empty.textContent = 'Nenhum atendimento futuro ou em andamento.';
+            nextContent.append(empty); return;
         }
+        const date = document.createElement('div');
+        date.className = 'vitalis-next-date';
+        date.innerHTML = `<i class="bi bi-calendar-event"></i><strong>${localPeriodLabel(next)}</strong>`;
+        const details = document.createElement('div');
+        details.className = 'vitalis-next-details';
+        const patient = document.createElement('strong'); patient.textContent = next.nome_paciente;
+        const specialty = document.createElement('span');
+        specialty.textContent = next.nome_especialidade || 'Especialidade não informada';
+        details.append(patient, specialty);
+        const state = document.createElement('div'); state.append(appointmentStatus(next.status));
+        nextContent.append(date, details, state);
+    }
+
+    function renderAgenda() {
+        const date = dateFilter.value;
+        const selectedStatus = statusFilter.value;
+        const filtered = appointments.filter((appointment) => (
+            (!date || appointment.inicio_local?.slice(0, 10) === date)
+            && (selectedStatus === 'todos' || appointment.status === selectedStatus)
+        ));
+        table.replaceChildren();
+        filtered.forEach((appointment) => {
+            const row = document.createElement('tr');
+            const values = [
+                ['Data e hora', localPeriodLabel(appointment)],
+                ['Paciente', appointment.nome_paciente],
+                ['Especialidade', appointment.nome_especialidade || 'Não informada']
+            ];
+            values.forEach(([label, value]) => {
+                const cell = tableCell(value); cell.dataset.label = label; row.append(cell);
+            });
+            const statusCell = document.createElement('td');
+            statusCell.dataset.label = 'Situação'; statusCell.append(appointmentStatus(appointment.status));
+            row.append(statusCell);
+            const actions = document.createElement('td');
+            actions.dataset.label = 'Ação'; actions.className = 'vitalis-appointment-actions';
+            if (['agendada', 'confirmada'].includes(appointment.status)) {
+                const button = document.createElement('button');
+                button.type = 'button'; button.className = 'btn btn-sm btn-success';
+                button.innerHTML = '<i class="bi bi-check2-circle"></i> Concluir atendimento';
+                button.disabled = !appointment.pode_concluir;
+                button.dataset.temporalDisabled = String(!appointment.pode_concluir);
+                const note = document.createElement('small');
+                note.className = 'vitalis-action-note';
+                note.textContent = button.disabled
+                    ? `Disponível a partir de ${localPeriodLabel(appointment).split(' · ')[1]?.split('–')[0] || 'seu início'}.`
+                    : 'Atendimento disponível para conclusão.';
+                button.title = note.textContent;
+                button.addEventListener('click', async () => {
+                    if (!mutationLock.tryBegin()) return;
+                    button.disabled = true;
+                    try {
+                        const result = await apiRequest(`/consultas/${appointment.id}/concluir`, {
+                            method: 'PUT', body: JSON.stringify({ versao: Number(appointment.versao) })
+                        });
+                        await loadAgenda(); showMessage(status, result.message, 'success');
+                    } catch (error) {
+                        showMessage(status, error.message);
+                        button.disabled = button.dataset.temporalDisabled === 'true';
+                    } finally { mutationLock.end(); }
+                });
+                actions.append(button, note);
+            } else {
+                const closed = document.createElement('span');
+                closed.className = 'vitalis-action-note'; closed.textContent = 'Atendimento encerrado';
+                actions.append(closed);
+            }
+            row.append(actions); table.append(row);
+        });
+        if (!filtered.length) {
+            const row = document.createElement('tr');
+            const cell = tableCell('Nenhuma consulta corresponde aos filtros selecionados.');
+            cell.colSpan = 5; cell.className = 'text-center py-4 text-muted';
+            row.append(cell); table.append(row);
+        }
+        showMessage(status, `${filtered.length} consulta(s) exibida(s).`, 'muted');
+    }
+
+    function renderDashboard() {
+        renderMetrics(); renderNextAppointment(); renderAgenda();
+    }
+
+    async function loadAgenda() {
+        const ticket = agendaGate.begin('agenda-medico');
+        refresh.disabled = true;
+        try {
+            const loaded = await apiRequest('/consultas/minha-agenda');
+            if (!agendaGate.isCurrent(ticket, 'agenda-medico')) return;
+            appointments = loaded; renderDashboard();
+        } catch (error) {
+            if (agendaGate.isCurrent(ticket, 'agenda-medico')) showMessage(status, error.message);
+        } finally { if (agendaGate.isCurrent(ticket, 'agenda-medico')) refresh.disabled = false; }
     }
     refresh?.addEventListener('click', loadAgenda);
+    filters.addEventListener('submit', (event) => { event.preventDefault(); renderAgenda(); });
+    document.getElementById('limpar-filtros-medico').addEventListener('click', () => {
+        filters.reset(); renderAgenda();
+    });
     const agendaTimer = window.setInterval(() => { if (!document.hidden) loadAgenda(); }, 30000);
     window.addEventListener('pagehide', () => window.clearInterval(agendaTimer), { once: true });
     document.addEventListener('visibilitychange', () => { if (!document.hidden) loadAgenda(); });
