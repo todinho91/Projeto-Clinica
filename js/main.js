@@ -7,6 +7,79 @@ function showMessage(element, message, type = 'danger') {
     element.textContent = message;
 }
 
+function confirmationStateBadge(state, channel) {
+    if (!state) return null;
+    const labels = {
+        preparada: 'Confirmação pendente', confirmada: 'Presença confirmada',
+        recusada: 'Não poderá comparecer', expirada: 'Confirmação expirada',
+        revogada: 'Confirmação revogada'
+    };
+    const badge = document.createElement('span');
+    badge.className = `vitalis-confirmation-state vitalis-confirmation-state-${state}`;
+    badge.textContent = `${labels[state] || state}${channel === 'manual' ? ' · registro manual' : ''}`;
+    return badge;
+}
+
+async function requestWhatsAppConfirmation(appointment, statusElement, afterSuccess = async () => {}) {
+    if (!window.confirm('Preparar uma nova solicitação? Links pendentes anteriores serão revogados.')) return;
+    const popup = window.open('about:blank', 'vitalis_whatsapp_confirmation');
+    if (!popup) {
+        showMessage(statusElement, 'Permita pop-ups para abrir o WhatsApp com a mensagem preparada.');
+        return;
+    }
+    popup.opener = null;
+    try {
+        const result = await apiRequest(`/consultas/${appointment.id}/confirmacoes`, {
+            method: 'POST', body: JSON.stringify({ versao: Number(appointment.versao) })
+        });
+        popup.location.replace(result.whatsapp_url);
+        showMessage(statusElement, result.message, 'success');
+        await afterSuccess();
+    } catch (error) {
+        popup.close(); showMessage(statusElement, error.message);
+    }
+}
+
+async function registerManualConfirmation(appointment, answer, statusElement, afterSuccess = async () => {}) {
+    const message = answer === 'confirmada'
+        ? 'Registrar que o paciente confirmou presença diretamente com a clínica?'
+        : 'Registrar que o paciente informou que não poderá comparecer?';
+    if (!window.confirm(message)) return;
+    try {
+        const result = await apiRequest(`/consultas/${appointment.id}/confirmacoes/manual`, {
+            method: 'POST', body: JSON.stringify({ resposta: answer, versao: Number(appointment.versao) })
+        });
+        showMessage(statusElement, result.message, 'success');
+        await afterSuccess();
+    } catch (error) { showMessage(statusElement, error.message); }
+}
+
+async function showConfirmationHistory(appointment, statusElement) {
+    try {
+        const data = await apiRequest(`/consultas/${appointment.id}/confirmacoes`);
+        const dialog = document.createElement('dialog'); dialog.className = 'vitalis-confirmation-history';
+        const title = document.createElement('h2'); title.textContent = 'Histórico de confirmações';
+        const list = document.createElement('div'); list.className = 'vitalis-confirmation-history-list';
+        if (!data.confirmacoes.length) {
+            const empty = document.createElement('p'); empty.textContent = 'Nenhuma solicitação registrada.'; list.append(empty);
+        } else data.confirmacoes.forEach((item) => {
+            const row = document.createElement('article');
+            const state = confirmationStateBadge(item.estado, item.canal);
+            const date = document.createElement('small');
+            date.textContent = `${formatDate(item.criado_em)} · ${item.canal === 'manual' ? 'Registro manual' : 'WhatsApp'}`;
+            const delivery = document.createElement('span');
+            delivery.textContent = item.estado_entrega === 'nao_enviado'
+                ? 'Envio/entrega não comprovados' : `Entrega: ${item.estado_entrega}`;
+            row.append(state, date, delivery); list.append(row);
+        });
+        const close = document.createElement('button'); close.type = 'button';
+        close.className = 'btn btn-outline-secondary'; close.textContent = 'Fechar';
+        close.addEventListener('click', () => dialog.close());
+        dialog.addEventListener('close', () => dialog.remove());
+        dialog.append(title, list, close); document.body.append(dialog); dialog.showModal();
+    } catch (error) { showMessage(statusElement, error.message); }
+}
+
 async function responseBody(response) {
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) return {};
@@ -117,7 +190,54 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (page === 'configuracoes-clinica.html') setupClinicSettingsPage();
     else if (page === 'provisionamento-clinicas.html') setupClinicProvisioningPage();
     else if (page === 'disponibilidade.html') setupAvailabilityPage();
+    else if (page === 'confirmacao-consulta.html') setupAppointmentConfirmationPage();
 });
+
+async function setupAppointmentConfirmationPage() {
+    const loading = document.getElementById('confirmation-loading');
+    const details = document.getElementById('confirmation-details');
+    const status = document.getElementById('confirmation-status');
+    const token = new URLSearchParams(window.location.search).get('token') || '';
+    const controls = [
+        document.getElementById('confirmation-accept'),
+        document.getElementById('confirmation-decline')
+    ];
+    const setBusy = (busy) => controls.forEach((button) => { button.disabled = busy; });
+    const renderUnavailable = (data, message) => {
+        loading.hidden = true; details.hidden = true;
+        showMessage(status, message || 'Este link não está mais disponível.', 'secondary');
+        if (data?.clinica_nome) document.getElementById('confirmation-title').textContent = data.clinica_nome;
+    };
+    if (token.length < 32) { renderUnavailable(null, 'Link de confirmação inválido.'); return; }
+    try {
+        const data = await apiRequest(`/confirmacoes-consulta/${encodeURIComponent(token)}`, {}, null);
+        document.getElementById('confirmation-clinic').textContent = data.clinica_nome;
+        document.getElementById('confirmation-professional').textContent = data.profissional_nome;
+        document.getElementById('confirmation-specialty').textContent = data.especialidade_nome || 'Não informada';
+        const local = data.inicio_local;
+        document.getElementById('confirmation-date').textContent = `${local.slice(8, 10)}/${local.slice(5, 7)}/${local.slice(0, 4)} às ${local.slice(11, 16)}`;
+        loading.hidden = true; details.hidden = false;
+    } catch (error) {
+        renderUnavailable(error.details, error.details?.estado === 'expirada'
+            ? 'Este link expirou. Entre em contato com a clínica para solicitar uma nova confirmação.'
+            : error.message);
+        return;
+    }
+    async function respond(answer) {
+        if (!window.confirm(answer === 'confirmada'
+            ? 'Confirmar que pretende comparecer?' : 'Informar que não poderá comparecer?')) return;
+        setBusy(true);
+        try {
+            const data = await apiRequest(`/confirmacoes-consulta/${encodeURIComponent(token)}/responder`, {
+                method: 'POST', body: JSON.stringify({ resposta: answer })
+            }, null);
+            details.hidden = true;
+            showMessage(status, data.message, answer === 'confirmada' ? 'success' : 'secondary');
+        } catch (error) { showMessage(status, error.message); setBusy(false); }
+    }
+    controls[0].addEventListener('click', () => respond('confirmada'));
+    controls[1].addEventListener('click', () => respond('recusada'));
+}
 
 async function setupClinicSettingsPage() {
     const clinic = requireClinicSession('configuracoes-clinica.html');
@@ -1426,6 +1546,31 @@ async function setupCalendarPage() {
         const specialty = document.createElement('small');
         specialty.textContent = item.especialidade_nome || 'Especialidade não informada';
         card.append(period, patient, professional, specialty);
+        const confirmationBadge = confirmationStateBadge(item.confirmacao_estado, item.confirmacao_canal);
+        if (confirmationBadge) card.append(confirmationBadge);
+        if (!isProfessional && ['agendada', 'confirmada'].includes(item.status)) {
+            const actions = document.createElement('div'); actions.className = 'vitalis-calendar-detail-actions';
+            const requestButton = document.createElement('button');
+            requestButton.type = 'button'; requestButton.className = 'btn btn-sm btn-outline-success';
+            requestButton.innerHTML = '<i class="bi bi-whatsapp"></i> Solicitar confirmação';
+            requestButton.addEventListener('click', () => requestWhatsAppConfirmation(item, status, loadCalendar));
+            const confirmed = document.createElement('button');
+            confirmed.type = 'button'; confirmed.className = 'btn btn-sm btn-outline-primary';
+            confirmed.textContent = 'Registrar confirmação';
+            confirmed.addEventListener('click', () => registerManualConfirmation(item, 'confirmada', status, loadCalendar));
+            const declined = document.createElement('button');
+            declined.type = 'button'; declined.className = 'btn btn-sm btn-outline-secondary';
+            declined.textContent = 'Registrar impossibilidade';
+            declined.addEventListener('click', () => registerManualConfirmation(item, 'recusada', status, loadCalendar));
+            actions.append(requestButton, confirmed, declined); card.append(actions);
+        }
+        if (!isProfessional) {
+            const historyButton = document.createElement('button');
+            historyButton.type = 'button'; historyButton.className = 'btn btn-sm btn-link';
+            historyButton.textContent = 'Ver histórico de confirmações';
+            historyButton.addEventListener('click', () => showConfirmationHistory(item, status));
+            card.append(historyButton);
+        }
         return card;
     }
 
@@ -1814,15 +1959,31 @@ async function setupAppointmentsPage() {
                 ['Atendimento', `${item.profissional_nome}${item.especialidade_nome ? ` — ${item.especialidade_nome}` : ''}`]
             ];
             values.forEach(([label, value]) => { const cell = tableCell(value); cell.dataset.label = label; row.append(cell); });
-            const status = document.createElement('td'); status.dataset.label = 'Situação'; status.append(badge(item.status)); row.append(status);
+            const status = document.createElement('td'); status.dataset.label = 'Situação';
+            status.append(badge(item.status));
+            const confirmationBadge = confirmationStateBadge(item.confirmacao_estado, item.confirmacao_canal);
+            if (confirmationBadge) status.append(confirmationBadge);
+            row.append(status);
             const actions = document.createElement('td'); actions.dataset.label = 'Ações'; actions.className = 'vitalis-appointment-actions';
             if (['agendada', 'confirmada'].includes(item.status)) {
+                actions.append(actionButton('Solicitar confirmação', 'bi-whatsapp', 'btn-outline-success', () => (
+                    requestWhatsAppConfirmation(item, listStatus, loadAgenda)
+                )));
+                actions.append(actionButton('Confirmou', 'bi-person-check', 'btn-outline-success', () => (
+                    registerManualConfirmation(item, 'confirmada', listStatus, loadAgenda)
+                )));
+                actions.append(actionButton('Não poderá', 'bi-person-dash', 'btn-outline-secondary', () => (
+                    registerManualConfirmation(item, 'recusada', listStatus, loadAgenda)
+                )));
                 actions.append(actionButton('Reagendar', 'bi-calendar-event', 'btn-outline-primary', () => beginReschedule(item)));
                 actions.append(actionButton('Cancelar', 'bi-x-circle', 'btn-outline-danger', () => mutate(
                     `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'cancelada', versao: item.versao }) },
                     'Cancelar esta consulta? O histórico será preservado.'
                 )));
             }
+            actions.append(actionButton('Histórico', 'bi-clock-history', 'btn-outline-secondary', () => (
+                showConfirmationHistory(item, listStatus)
+            )));
             if (item.status === 'agendada') actions.append(actionButton('Confirmar', 'bi-check-circle', 'btn-outline-success', () => mutate(
                 `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'confirmada', versao: item.versao }) }
             )));
@@ -1975,6 +2136,7 @@ async function setupPatientsPage() {
             nome: document.getElementById('paciente-nome').value,
             email: document.getElementById('paciente-email').value,
             telefone: document.getElementById('paciente-telefone').value,
+            preferencia_contato: document.getElementById('paciente-preferencia-contato').value,
             data_nascimento: document.getElementById('paciente-nascimento').value,
             status: document.getElementById('paciente-status').value,
             ...(approvedDuplicateReview ? {
@@ -2067,6 +2229,7 @@ async function setupPatientsPage() {
             document.getElementById('paciente-nome').value = patient.nome;
             document.getElementById('paciente-email').value = patient.email ?? '';
             document.getElementById('paciente-telefone').value = patient.telefone ?? '';
+            document.getElementById('paciente-preferencia-contato').value = patient.preferencia_contato ?? 'nenhum';
             document.getElementById('paciente-nascimento').value = patient.data_nascimento
                 ? String(patient.data_nascimento).slice(0, 10) : '';
             document.getElementById('paciente-status').value = patient.status;

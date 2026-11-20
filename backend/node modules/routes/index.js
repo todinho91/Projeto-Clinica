@@ -9,6 +9,7 @@ const pacienteController = require('../controllers/pacienteController');
 const equipeController = require('../controllers/equipeController');
 const clinicaController = require('../controllers/clinicaController');
 const disponibilidadeController = require('../controllers/disponibilidadeController');
+const confirmacaoConsultaController = require('../controllers/confirmacaoConsultaController');
 const multerConfig = require('../config/multerConfig');
 const authenticate = require('../middleware/auth');
 const identityOnly = require('../middleware/identityOnly');
@@ -24,6 +25,16 @@ router.post('/auth/register', authController.register);
 router.post('/auth/login', authController.login);
 router.get('/convites/:token', invitationRateLimit, equipeController.inspectInvitation);
 router.post('/convites/:token/aceitar', invitationRateLimit, optionalAuth, equipeController.acceptInvitation);
+router.get(
+    '/confirmacoes-consulta/:token',
+    invitationRateLimit,
+    confirmacaoConsultaController.inspectPublic
+);
+router.post(
+    '/confirmacoes-consulta/:token/responder',
+    invitationRateLimit,
+    confirmacaoConsultaController.respondPublic
+);
 
 router.use(authenticate);
 router.get('/auth/clinics', identityOnly, authController.listClinics);
@@ -188,6 +199,21 @@ router.get(
     '/consultas/:id/historico',
     authorize('administrador', 'secretaria', 'profissional'),
     consultaController.getHistory
+);
+router.post(
+    '/consultas/:id/confirmacoes',
+    authorize('administrador', 'secretaria'),
+    confirmacaoConsultaController.requestConfirmation
+);
+router.post(
+    '/consultas/:id/confirmacoes/manual',
+    authorize('administrador', 'secretaria'),
+    confirmacaoConsultaController.manualResponse
+);
+router.get(
+    '/consultas/:id/confirmacoes',
+    authorize('administrador', 'secretaria'),
+    confirmacaoConsultaController.history
 );
 router.delete(
     '/consultas/:id',

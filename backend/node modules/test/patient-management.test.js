@@ -28,7 +28,8 @@ function request(overrides = {}) {
 
 test('validação normaliza dados e recusa datas inválidas ou futuras', () => {
     assert.deepEqual(controller.patientPayload(request().body), {
-        name: 'Maria Silva', email: 'maria@example.test', phone: '41999991234', birthDate: '1990-05-20', status: 'ativo'
+        name: 'Maria Silva', email: 'maria@example.test', phone: '41999991234',
+        birthDate: '1990-05-20', status: 'ativo', contactPreference: 'nenhum'
     });
     assert.equal(controller.patientPayload({ nome: 'Maria', data_nascimento: '2999-01-01' }), null);
     assert.equal(controller.patientPayload({ nome: 'Maria', email: 'invalido' }), null);

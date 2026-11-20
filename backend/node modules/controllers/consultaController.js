@@ -1,5 +1,6 @@
 const pool = require('../config/database');
 const { mysqlUtc, utcToLocal, zonedLocalToUtc } = require('../support/clinic-time');
+const { revokePrepared } = require('./confirmacaoConsultaController');
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const STATUSES = new Set(['agendada', 'confirmada', 'realizada', 'cancelada', 'nao_compareceu']);
@@ -356,6 +357,14 @@ exports.listCalendar = async (req, res) => {
         if (!start || !last) return res.status(400).json({ error: 'Período inválido para o fuso da clínica.' });
         const [rows] = await pool.execute(`
             SELECT c.id, c.inicio_em, c.fim_em, c.status, c.versao,
+                (SELECT CASE WHEN cc.estado = 'preparada' AND cc.expira_em <= UTC_TIMESTAMP(6)
+                    THEN 'expirada' ELSE cc.estado END
+                 FROM confirmacoes_consulta cc
+                 WHERE cc.clinica_id = c.clinica_id AND cc.consulta_id = c.id
+                 ORDER BY cc.id DESC LIMIT 1) AS confirmacao_estado,
+                (SELECT cc.canal FROM confirmacoes_consulta cc
+                 WHERE cc.clinica_id = c.clinica_id AND cc.consulta_id = c.id
+                 ORDER BY cc.id DESC LIMIT 1) AS confirmacao_canal,
                 pa.id AS paciente_id, pa.nome AS paciente_nome,
                 p.id AS profissional_id, p.nome_exibicao AS profissional_nome,
                 e.id AS especialidade_id, e.nome AS especialidade_nome
@@ -535,6 +544,14 @@ exports.listForManagement = async (req, res) => {
         const [[rows], [totals]] = await Promise.all([
             pool.execute(`SELECT c.id, c.inicio_em, c.fim_em, c.status, c.versao,
                 c.fim_em <= UTC_TIMESTAMP(6) AS pode_marcar_falta,
+                (SELECT CASE WHEN cc.estado = 'preparada' AND cc.expira_em <= UTC_TIMESTAMP(6)
+                    THEN 'expirada' ELSE cc.estado END
+                 FROM confirmacoes_consulta cc
+                 WHERE cc.clinica_id = c.clinica_id AND cc.consulta_id = c.id
+                 ORDER BY cc.id DESC LIMIT 1) AS confirmacao_estado,
+                (SELECT cc.canal FROM confirmacoes_consulta cc
+                 WHERE cc.clinica_id = c.clinica_id AND cc.consulta_id = c.id
+                 ORDER BY cc.id DESC LIMIT 1) AS confirmacao_canal,
                 pa.id AS paciente_id, pa.nome AS paciente_nome,
                 p.id AS profissional_id, p.nome_exibicao AS profissional_nome,
                 e.id AS especialidade_id, e.nome AS especialidade_nome
@@ -652,6 +669,9 @@ async function changeStatus(req, res, forced = null) {
         [target, version, req.tenant.clinicId, appointmentId, appointment.versao]);
         if (update.affectedRows !== 1) return await rollback(connection, res, 409, 'A consulta foi alterada por outra operação.');
         Object.assign(appointment, { status: target, versao: version });
+        if (['cancelada', 'realizada', 'nao_compareceu'].includes(target)) {
+            await revokePrepared(connection, req.tenant.clinicId, appointmentId, `consulta_${target}`, req.userId);
+        }
         await history(connection, req, appointment, target === 'cancelada' ? 'cancelada' : 'status_alterado', previous);
         await audit(connection, req, `consulta_${target}`, appointmentId, {
             status_anterior: previous.status, status_novo: target, versao: version
@@ -720,6 +740,7 @@ exports.reschedule = async (req, res) => {
             profissional_id: professionalId, especialidade_id: specialtyId,
             inicio_em: start, fim_em: end, status: 'agendada', versao: version
         });
+        await revokePrepared(connection, req.tenant.clinicId, appointmentId, 'consulta_reagendada', req.userId);
         await history(connection, req, appointment, 'reagendada', previous, {
             profissional_anterior_id: Number(previous.profissional_id), profissional_novo_id: professionalId
         });

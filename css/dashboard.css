@@ -453,4 +453,98 @@ html, body.vitalis-dashboard-body {
     .vitalis-calendar-page .vitalis-main { padding: .75rem; }
     .vitalis-calendar-page .vitalis-panel { padding: .85rem; border-radius: 14px; }
 }
+
+.vitalis-confirmation-page {
+    min-height: 100vh;
+    margin: 0;
+    color: var(--vitalis-ink, #17324d);
+    background: radial-gradient(circle at top right, rgba(39, 174, 150, .18), transparent 36%),
+        linear-gradient(145deg, #f4fbff, #eef7f5);
+}
+
+.vitalis-confirmation-shell {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 1.25rem;
+}
+
+.vitalis-confirmation-card {
+    width: min(100%, 560px);
+    padding: clamp(1.25rem, 4vw, 2.5rem);
+    border: 1px solid rgba(31, 114, 133, .16);
+    border-radius: 1.5rem;
+    background: rgba(255, 255, 255, .96);
+    box-shadow: 0 24px 70px rgba(21, 67, 86, .14);
+}
+
+.vitalis-confirmation-brand {
+    display: flex;
+    align-items: center;
+    gap: .7rem;
+    margin-bottom: 1.5rem;
+    font-size: 1.25rem;
+}
+
+.vitalis-confirmation-card h1 { font-size: clamp(1.75rem, 7vw, 2.45rem); }
+.vitalis-confirmation-loading { display: flex; align-items: center; gap: .65rem; margin: 1.5rem 0; }
+.vitalis-confirmation-details { display: grid; gap: .75rem; margin: 1.5rem 0; }
+.vitalis-confirmation-details div { padding: .85rem 1rem; border-radius: .9rem; background: #f3f8fa; }
+.vitalis-confirmation-details dt { color: #587183; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+.vitalis-confirmation-details dd { margin: .2rem 0 0; font-weight: 700; overflow-wrap: anywhere; }
+.vitalis-confirmation-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+.vitalis-confirmation-actions .btn { min-height: 48px; white-space: normal; }
+
+.vitalis-confirmation-state {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    padding: .3rem .55rem;
+    border-radius: 999px;
+    background: #eef3f6;
+    color: #415b6b;
+    font-size: .78rem;
+    font-weight: 700;
+}
+
+.vitalis-confirmation-state-confirmada { background: #e3f7ef; color: #176947; }
+.vitalis-confirmation-state-recusada { background: #fde9e9; color: #9c2f35; }
+.vitalis-confirmation-state-preparada { background: #fff4d9; color: #806019; }
+
+.vitalis-appointment-table td[data-label="Situação"] {
+    vertical-align: middle;
+}
+.vitalis-appointment-table td[data-label="Situação"] > span { display: table; margin: .2rem 0; }
+
+.vitalis-calendar-detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+    margin-top: .65rem;
+}
+
+.vitalis-confirmation-history {
+    width: min(92vw, 560px);
+    max-height: 82vh;
+    padding: 1.4rem;
+    border: 0;
+    border-radius: 1.1rem;
+    color: #17324d;
+    box-shadow: 0 24px 70px rgba(13, 48, 67, .28);
+}
+.vitalis-confirmation-history::backdrop { background: rgba(10, 34, 48, .55); }
+.vitalis-confirmation-history-list { display: grid; gap: .65rem; margin: 1rem 0; overflow-y: auto; }
+.vitalis-confirmation-history-list article {
+    display: grid;
+    gap: .3rem;
+    padding: .8rem;
+    border-radius: .8rem;
+    background: #f3f8fa;
+}
+
+@media (max-width: 389.98px) {
+    .vitalis-confirmation-shell { padding: .75rem; }
+    .vitalis-confirmation-card { padding: 1.1rem; border-radius: 1.1rem; }
+    .vitalis-confirmation-actions { grid-template-columns: minmax(0, 1fr); }
+}
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }

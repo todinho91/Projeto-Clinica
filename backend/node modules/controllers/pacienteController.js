@@ -4,6 +4,7 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const MAX_PAGE = 100000;
 const REVIEW_REASONS = new Set(['homonimo_confirmado', 'contato_compartilhado', 'dados_conferidos']);
+const CONTACT_PREFERENCES = new Set(['nenhum', 'whatsapp', 'telefone', 'email']);
 
 function logFailure(operation, error) {
     const code = typeof error?.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(error.code)
@@ -55,9 +56,11 @@ function patientPayload(body = {}) {
     const phone = normalizedPhone(body.telefone);
     const birthDate = normalizedBirthDate(body.data_nascimento);
     const status = body.status ?? 'ativo';
+    const contactPreference = body.preferencia_contato ?? 'nenhum';
     if (!name || email === undefined || phone === undefined || birthDate === undefined
-        || !['ativo', 'inativo'].includes(status)) return null;
-    return { name, email, phone, birthDate, status };
+        || !['ativo', 'inativo'].includes(status) || !CONTACT_PREFERENCES.has(contactPreference)
+        || (contactPreference === 'whatsapp' && !phone)) return null;
+    return { name, email, phone, birthDate, status, contactPreference };
 }
 
 function boundedInteger(value, fallback, maximum) {
@@ -292,7 +295,7 @@ exports.getForManagement = async (req, res) => {
     if (!patientId) return res.status(400).json({ error: 'Paciente inválido.' });
     try {
         const [rows] = await pool.execute(`
-            SELECT id, nome, email, telefone,
+            SELECT id, nome, email, telefone, preferencia_contato,
                    DATE_FORMAT(data_nascimento, '%Y-%m-%d') AS data_nascimento, status
             FROM pacientes WHERE clinica_id = ? AND id = ? LIMIT 1
         `, [req.tenant.clinicId, patientId]);
@@ -328,11 +331,11 @@ exports.createPatient = async (req, res) => {
         }
         const [result] = await connection.execute(`
             INSERT INTO pacientes (
-                clinica_id, usuario_id, nome, email, telefone, data_nascimento, status
-            ) VALUES (?, NULL, ?, ?, ?, ?, ?)
+                clinica_id, usuario_id, nome, email, telefone, preferencia_contato, data_nascimento, status
+            ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)
         `, [
             req.tenant.clinicId, payload.name, payload.email, payload.phone,
-            payload.birthDate, payload.status
+            payload.contactPreference, payload.birthDate, payload.status
         ]);
         const patientId = Number(result.insertId);
         await audit(connection, req, 'paciente_criado', patientId, {
@@ -371,7 +374,7 @@ exports.updatePatient = async (req, res) => {
             return res.status(403).json({ error: 'Permissão insuficiente para gerenciar pacientes.' });
         }
         const [rows] = await connection.execute(`
-            SELECT id, usuario_id, nome, email, telefone, data_nascimento, status
+            SELECT id, usuario_id, nome, email, telefone, preferencia_contato, data_nascimento, status
             FROM pacientes WHERE clinica_id = ? AND id = ? FOR UPDATE
         `, [req.tenant.clinicId, patientId]);
         if (!rows[0]) {
@@ -387,10 +390,10 @@ exports.updatePatient = async (req, res) => {
         }
         await connection.execute(`
             UPDATE pacientes
-            SET nome = ?, email = ?, telefone = ?, data_nascimento = ?, status = ?
+            SET nome = ?, email = ?, telefone = ?, preferencia_contato = ?, data_nascimento = ?, status = ?
             WHERE clinica_id = ? AND id = ?
         `, [
-            payload.name, payload.email, payload.phone, payload.birthDate, payload.status,
+            payload.name, payload.email, payload.phone, payload.contactPreference, payload.birthDate, payload.status,
             req.tenant.clinicId, patientId
         ]);
         const storedBirthDate = rows[0].data_nascimento instanceof Date
@@ -398,6 +401,7 @@ exports.updatePatient = async (req, res) => {
             : rows[0].data_nascimento;
         const nextValues = {
             nome: payload.name, email: payload.email, telefone: payload.phone,
+            preferencia_contato: payload.contactPreference,
             data_nascimento: payload.birthDate, status: payload.status
         };
         const storedValues = { ...rows[0], data_nascimento: storedBirthDate };

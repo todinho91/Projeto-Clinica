@@ -195,6 +195,7 @@ test('cancelamento autorizado é transacional, versionado e preserva histórico'
             status: 'agendada', versao: 1, profissional_usuario_id: 90, paciente_usuario_id: 91
         }]];
         if (/UPDATE consultas SET status/.test(sql)) return [{ affectedRows: 1 }];
+        if (/confirmacoes_consulta/.test(sql)) return [{ affectedRows: 0 }];
         if (/INSERT INTO consultas_historico/.test(sql) || /INSERT INTO auditoria/.test(sql)) return [{ insertId: 1 }];
         throw new Error(`SQL inesperado: ${sql}`);
     });
@@ -207,6 +208,7 @@ test('cancelamento autorizado é transacional, versionado e preserva histórico'
     assert.equal(res.statusCode, 200);
     assert.equal(connection.commit.mock.callCount(), 1);
     assert.equal(connection.execute.mock.calls.some((call) => /consultas_historico/.test(call.arguments[0])), true);
+    assert.equal(connection.execute.mock.calls.some((call) => /UPDATE confirmacoes_consulta/.test(call.arguments[0])), true);
     const update = connection.execute.mock.calls.find((call) => /UPDATE consultas SET status/.test(call.arguments[0]));
     assert.deepEqual(update.arguments[1], ['cancelada', 2, 11, 123, 1]);
 });
@@ -225,6 +227,7 @@ test('reagendamento revalida profissional e disponibilidade antes de atualizar',
         if (/FROM disponibilidades_profissional/.test(sql)) return [[{ tipo: 'atendimento', inicio: '08:00', fim: '12:00' }]];
         if (/FROM bloqueios_profissional/.test(sql) || /SELECT id FROM consultas/.test(sql)) return [[]];
         if (/UPDATE consultas SET profissional_id/.test(sql)) return [{ affectedRows: 1 }];
+        if (/confirmacoes_consulta/.test(sql)) return [{ affectedRows: 0 }];
         if (/INSERT INTO consultas_historico/.test(sql) || /INSERT INTO auditoria/.test(sql)) return [{ insertId: 1 }];
         throw new Error(`SQL inesperado: ${sql}`);
     });
@@ -243,6 +246,7 @@ test('reagendamento revalida profissional e disponibilidade antes de atualizar',
     assert.ok(calls.findIndex((sql) => /SELECT p\.id, p\.nome_exibicao/.test(sql))
         < calls.findIndex((sql) => /FROM consultas c/.test(sql)));
     assert.equal(calls.some((sql) => /consultas_historico/.test(sql)), true);
+    assert.equal(calls.some((sql) => /UPDATE confirmacoes_consulta/.test(sql)), true);
 });
 
 test('ID de paciente de outra clínica é recusado antes de inserir consulta', async (t) => {
@@ -386,6 +390,7 @@ test('médico ativo conclui a própria consulta com versão, histórico e audito
             return [[{ id: 11, timezone: 'America/Sao_Paulo' }]];
         }
         if (/UPDATE consultas SET status/.test(sql)) return [{ affectedRows: 1 }];
+        if (/confirmacoes_consulta/.test(sql)) return [{ affectedRows: 0 }];
         if (/INSERT INTO consultas_historico/.test(sql) || /INSERT INTO auditoria/.test(sql)) {
             return [{ insertId: 1 }];
         }
@@ -444,6 +449,7 @@ test('sessões independentes de médico e secretaria observam a conclusão atual
         if (/UPDATE consultas SET status/.test(sql)) {
             state.status = params[0]; state.versao = params[1]; return [{ affectedRows: 1 }];
         }
+        if (/confirmacoes_consulta/.test(sql)) return [{ affectedRows: 0 }];
         if (/INSERT INTO consultas_historico/.test(sql) || /INSERT INTO auditoria/.test(sql)) return [{ insertId: 1 }];
         throw new Error(`SQL inesperado: ${sql}`);
     });
