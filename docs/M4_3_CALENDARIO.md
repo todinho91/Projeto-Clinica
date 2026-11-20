@@ -9,6 +9,12 @@ automática trabalham com datas locais produzidas pelo backend no fuso IANA da c
 O calendário é somente leitura. A criação, confirmação, reagendamento, cancelamento e
 conclusão continuam nos fluxos transacionais da M4-02.
 
+Na visão mensal de desktop, cada dia mostra no máximo três consultas compactas e um botão
+`+ N consultas` abre a lista completa daquela data. Em celulares, a grade mensal permanece
+com sete colunas, usando números e marcadores de situação; selecionar um dia apresenta abaixo
+do calendário todas as consultas filtradas, sem descartar eventos. Nas visões diária e semanal,
+os cartões seguem ordem cronológica e podem ser selecionados para abrir seus detalhes.
+
 ## Autorização e isolamento
 
 - `administrador` e `secretaria` consultam a agenda autorizada da clínica ativa;
@@ -31,10 +37,10 @@ os eventos usando o fuso do computador do usuário.
 
 ## Acessibilidade e responsividade
 
-Todos os controles são botões ou campos nativos. Eventos recebem foco e podem ser percorridos
-com setas, `Home` e `End`. Mudanças de período e mensagens usam regiões anunciadas por leitores
-de tela. No desktop o calendário usa sete colunas; no tablet, duas; e no celular, uma coluna,
-sem exigir rolagem horizontal da página.
+Todos os controles são botões ou campos nativos. Dias, eventos e expansão recebem foco e podem
+ser percorridos com setas, `Home` e `End`. Mudanças de período, seleção e mensagens usam regiões
+anunciadas por leitores de tela. A semana usa sete colunas no desktop, duas no tablet e uma no
+celular; o mês preserva sete colunas compactas em todas as resoluções, sem rolagem horizontal.
 
 ## Preparação para a issue #55
 

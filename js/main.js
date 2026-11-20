@@ -1326,12 +1326,16 @@ async function setupCalendarPage() {
     const professionalFilter = document.getElementById('calendar-professional');
     const specialtyFilter = document.getElementById('calendar-specialty');
     const statusFilter = document.getElementById('calendar-status-filter');
+    const selection = document.getElementById('calendar-selection');
+    const selectionTitle = document.getElementById('calendar-selection-title');
+    const selectionList = document.getElementById('calendar-selection-list');
     const gate = VitalisCore.createLatestRequestGate();
     let view = 'week';
     let referenceDate = '';
     let today = '';
     let timeZone = '';
     let appointments = [];
+    let selectedDate = '';
 
     const dateFromKey = (key) => new Date(`${key}T00:00:00Z`);
     const dateKey = (date) => date.toISOString().slice(0, 10);
@@ -1388,11 +1392,12 @@ async function setupCalendarPage() {
         }[value] || [value, ''];
     }
 
-    function eventCard(item) {
+    function eventCard(item, compact = false) {
         const meta = statusMeta(item.status);
-        const event = document.createElement('article');
+        const event = document.createElement('button');
+        event.type = 'button';
         event.className = `vitalis-calendar-event vitalis-calendar-event-${item.status.replaceAll('_', '-')}`;
-        event.tabIndex = 0;
+        if (compact) event.classList.add('is-compact');
         event.dataset.consultaId = String(item.id);
         event.setAttribute('aria-label', `${item.inicio_local.slice(11, 16)}, ${item.paciente_nome}, ${meta[0]}`);
         const time = document.createElement('strong');
@@ -1402,7 +1407,60 @@ async function setupCalendarPage() {
         details.textContent = `${item.profissional_nome}${item.especialidade_nome ? ` · ${item.especialidade_nome}` : ''}`;
         const badge = document.createElement('span'); badge.className = `vitalis-status ${meta[1]}`; badge.textContent = meta[0];
         event.append(time, patient, details, badge);
+        event.addEventListener('click', () => openAppointment(item));
         return event;
+    }
+
+    function selectionCard(item) {
+        const meta = statusMeta(item.status);
+        const card = document.createElement('article');
+        card.className = `vitalis-calendar-detail vitalis-calendar-event-${item.status.replaceAll('_', '-')}`;
+        card.dataset.consultaId = String(item.id);
+        const period = document.createElement('div'); period.className = 'vitalis-calendar-detail-period';
+        const time = document.createElement('strong');
+        time.textContent = `${item.inicio_local.slice(11, 16)}–${item.fim_local.slice(11, 16)}`;
+        const badge = document.createElement('span'); badge.className = `vitalis-status ${meta[1]}`; badge.textContent = meta[0];
+        period.append(time, badge);
+        const patient = document.createElement('h3'); patient.textContent = item.paciente_nome;
+        const professional = document.createElement('p'); professional.textContent = item.profissional_nome;
+        const specialty = document.createElement('small');
+        specialty.textContent = item.especialidade_nome || 'Especialidade não informada';
+        card.append(period, patient, professional, specialty);
+        return card;
+    }
+
+    function showSelection(items, title, focus = true) {
+        selectionList.replaceChildren();
+        selectionTitle.textContent = title;
+        if (items.length) items.forEach((item) => selectionList.append(selectionCard(item)));
+        else {
+            const empty = document.createElement('p'); empty.className = 'vitalis-calendar-selection-empty';
+            empty.textContent = 'Nenhuma consulta nesta data com os filtros atuais.'; selectionList.append(empty);
+        }
+        selection.hidden = false;
+        if (focus) {
+            selectionTitle.focus({ preventScroll: true });
+            selection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }
+
+    function openAppointment(item) {
+        showSelection([item], `Consulta de ${formatDateKey(item.inicio_local.slice(0, 10), {
+            day: '2-digit', month: 'long', year: 'numeric'
+        })}`);
+    }
+
+    function openDay(key, focus = true) {
+        selectedDate = key;
+        const items = appointments.filter((item) => item.inicio_local?.slice(0, 10) === key);
+        grid.querySelectorAll('[data-calendar-date]').forEach((button) => {
+            const selected = button.dataset.calendarDate === key;
+            button.setAttribute('aria-pressed', String(selected));
+            button.closest('.vitalis-calendar-day')?.classList.toggle('is-selected', selected);
+        });
+        showSelection(items, formatDateKey(key, {
+            weekday: 'long', day: '2-digit', month: 'long', year: 'numeric'
+        }), focus);
     }
 
     function renderCalendar() {
@@ -1410,6 +1468,7 @@ async function setupCalendarPage() {
         updatePeriodLabel(period);
         grid.replaceChildren();
         grid.className = `vitalis-calendar-grid vitalis-calendar-${view}`;
+        if (view !== 'month') selection.hidden = true;
         if (view !== 'day') {
             ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'].forEach((name) => {
                 const heading = document.createElement('div');
@@ -1423,18 +1482,49 @@ async function setupCalendarPage() {
             if (key === today) day.classList.add('is-today');
             if (view === 'month' && key.slice(0, 7) !== referenceDate.slice(0, 7)) day.classList.add('is-outside');
             const heading = document.createElement('h3');
-            heading.textContent = view === 'day'
+            const dayButton = document.createElement('button');
+            dayButton.type = 'button'; dayButton.className = 'vitalis-calendar-day-select';
+            dayButton.dataset.calendarDate = key; dayButton.setAttribute('aria-pressed', 'false');
+            dayButton.textContent = view === 'day'
                 ? formatDateKey(key, { weekday: 'long', day: '2-digit', month: 'long' })
-                : formatDateKey(key, { day: '2-digit', month: 'short' });
+                : view === 'month' ? String(Number(key.slice(8, 10))) : formatDateKey(key, { day: '2-digit', month: 'short' });
+            dayButton.addEventListener('click', () => openDay(key)); heading.append(dayButton);
             const events = document.createElement('div'); events.className = 'vitalis-calendar-events';
             const dayAppointments = appointments.filter((item) => item.inicio_local?.slice(0, 10) === key);
-            dayAppointments.forEach((item) => events.append(eventCard(item)));
+            dayButton.setAttribute('aria-label', `${formatDateKey(key, {
+                day: '2-digit', month: 'long', year: 'numeric'
+            })}, ${dayAppointments.length} consulta(s)`);
+            if (key === today) dayButton.setAttribute('aria-current', 'date');
+            let markers = null;
+            const visibleAppointments = view === 'month' ? dayAppointments.slice(0, 3) : dayAppointments;
+            visibleAppointments.forEach((item) => events.append(eventCard(item, view === 'month')));
+            if (view === 'month' && dayAppointments.length > 3) {
+                const more = document.createElement('button'); more.type = 'button';
+                more.className = 'vitalis-calendar-more';
+                more.textContent = `+ ${dayAppointments.length - 3} consultas`;
+                more.addEventListener('click', () => openDay(key)); events.append(more);
+            }
+            if (view === 'month' && dayAppointments.length) {
+                markers = document.createElement('div'); markers.className = 'vitalis-calendar-markers';
+                dayAppointments.slice(0, 4).forEach((item) => {
+                    const marker = document.createElement('span');
+                    marker.className = `vitalis-calendar-marker vitalis-calendar-marker-${item.status.replaceAll('_', '-')}`;
+                    markers.append(marker);
+                });
+                const count = document.createElement('small'); count.textContent = String(dayAppointments.length);
+                markers.append(count);
+            }
             if (!dayAppointments.length) {
                 const empty = document.createElement('p'); empty.className = 'vitalis-calendar-empty';
                 empty.textContent = 'Sem consultas'; events.append(empty);
             }
-            day.append(heading, events); grid.append(day);
+            day.append(heading); if (markers) day.append(markers); day.append(events); grid.append(day);
         });
+        if (view === 'month') {
+            const firstOfMonth = `${referenceDate.slice(0, 7)}-01`;
+            if (!period.dates.includes(selectedDate)) selectedDate = period.dates.includes(today) ? today : firstOfMonth;
+            openDay(selectedDate, false);
+        }
         grid.setAttribute('aria-busy', 'false');
     }
 
@@ -1500,15 +1590,20 @@ async function setupCalendarPage() {
         if (isProfessional) professionalFilter.value = professionalFilter.options[1]?.value || '';
         loadCalendar();
     });
+    document.getElementById('calendar-close-selection').addEventListener('click', () => {
+        selection.hidden = true;
+    });
     grid.addEventListener('keydown', (event) => {
         if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
-        const events = [...grid.querySelectorAll('.vitalis-calendar-event')];
-        const current = events.indexOf(document.activeElement);
-        if (current < 0 || !events.length) return;
+        const controls = [...grid.querySelectorAll(
+            '.vitalis-calendar-day-select, .vitalis-calendar-event, .vitalis-calendar-more'
+        )];
+        const current = controls.indexOf(document.activeElement);
+        if (current < 0 || !controls.length) return;
         event.preventDefault();
-        const target = event.key === 'Home' ? 0 : event.key === 'End' ? events.length - 1
-            : Math.max(0, Math.min(events.length - 1, current + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1)));
-        events[target].focus();
+        const target = event.key === 'Home' ? 0 : event.key === 'End' ? controls.length - 1
+            : Math.max(0, Math.min(controls.length - 1, current + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1)));
+        controls[target].focus();
     });
     const timer = window.setInterval(() => { if (!document.hidden) loadCalendar(); }, 30000);
     window.addEventListener('pagehide', () => window.clearInterval(timer), { once: true });

@@ -157,7 +157,7 @@ test('consulta do médico deriva seu perfil ativo e mantém defesa por usuário 
     assert.equal(calendarParams.at(-1), 70);
 });
 
-test('interface oferece três visões, teclado, atualização automática e extensão futura sem envio', async () => {
+test('interface premium preserva menu, três visões, detalhes, mobile e extensão futura sem envio', async () => {
     const root = path.resolve(__dirname, '..', '..', '..');
     const [page, main, css, client] = await Promise.all([
         fs.readFile(path.join(root, 'calendario.html'), 'utf8'),
@@ -170,16 +170,33 @@ test('interface oferece três visões, teclado, atualização automática e exte
     for (const id of ['calendar-previous', 'calendar-today', 'calendar-next', 'calendar-professional', 'calendar-specialty', 'calendar-status-filter']) {
         assert.match(page, new RegExp(`id="${id}"`));
     }
+    for (const href of [
+        'dashboard-secretaria.html', 'pacientes.html', 'profissionais.html', 'disponibilidade.html',
+        'especialidades.html', 'agenda.html', 'calendario.html', 'equipe.html', 'configuracoes-clinica.html'
+    ]) assert.match(page, new RegExp(`href="${href}"`));
+    assert.match(page, /href="calendario\.html" aria-current="page"/);
+    assert.match(page, /id="calendar-selection"/);
+    assert.match(page, /id="calendar-selection-list"/);
     assert.match(page, /role="grid"/);
     assert.match(setup, /ArrowLeft/); assert.match(setup, /ArrowRight/); assert.match(setup, /\.focus\(\)/);
     assert.match(setup, /createLatestRequestGate/);
     assert.match(setup, /window\.setInterval[\s\S]*30000/);
     assert.match(setup, /data\.consultas/);
     assert.match(setup, /item\.inicio_local/);
+    assert.match(setup, /dayAppointments\.slice\(0, 3\)/);
+    assert.match(setup, /\+ \$\{dayAppointments\.length - 3\} consultas/);
+    assert.match(setup, /vitalis-calendar-markers/);
+    assert.match(setup, /openAppointment\(item\)/);
+    assert.match(setup, /showSelection\(items/);
+    assert.match(setup, /document\.createElement\('button'\)/);
     assert.doesNotMatch(setup, /clinica_id/);
     assert.doesNotMatch(setup, /whatsapp|wa\.me|enviar.*confirma/i);
     assert.match(client, /'calendario\.html': \['administrador', 'secretaria', 'profissional'\]/);
     assert.match(css, /\.vitalis-calendar-week, \.vitalis-calendar-month[^}]*repeat\(7/);
-    assert.match(css, /@media \(max-width: 991\.98px\)[\s\S]*\.vitalis-calendar-week, \.vitalis-calendar-month[^}]*repeat\(2/);
-    assert.match(css, /@media \(max-width: 767\.98px\)[\s\S]*\.vitalis-calendar-week, \.vitalis-calendar-month[^}]*minmax\(0, 1fr\)/);
+    assert.match(css, /\.vitalis-calendar-month \.vitalis-calendar-day[^}]*min-height: 112px/);
+    assert.match(css, /@media \(max-width: 991\.98px\)[\s\S]*\.vitalis-calendar-week[^}]*repeat\(2/);
+    assert.match(css, /@media \(max-width: 767\.98px\)[\s\S]*\.vitalis-calendar-month[^}]*repeat\(7/);
+    assert.match(css, /@media \(max-width: 767\.98px\)[\s\S]*\.vitalis-calendar-month \.vitalis-calendar-events[^}]*display: none/);
+    assert.match(css, /@media \(max-width: 767\.98px\)[\s\S]*\.vitalis-calendar-month \.vitalis-calendar-markers[^}]*display: flex/);
+    assert.match(css, /\.vitalis-calendar-selection-list/);
 });
