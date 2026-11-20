@@ -106,7 +106,11 @@ async function audit(connection, clinicId, userId, action, appointmentId, metada
 exports.requestConfirmation = async (req, res) => {
     const appointmentId = positiveId(req.params.id);
     const expectedVersion = positiveId(req.body?.versao);
-    if (!appointmentId || !expectedVersion) {
+    const replacing = req.body?.substituir === true;
+    const expectedConfirmationId = req.body?.confirmacao_id_esperada === undefined
+        || req.body?.confirmacao_id_esperada === null
+        ? null : positiveId(req.body.confirmacao_id_esperada);
+    if (!appointmentId || !expectedVersion || (replacing && !expectedConfirmationId)) {
         return res.status(400).json({ error: 'Consulta e versão válidas são obrigatórias.' });
     }
     let connection;
@@ -155,10 +159,27 @@ exports.requestConfirmation = async (req, res) => {
                 error: 'O paciente precisa ter telefone válido e preferência explícita por WhatsApp.'
             });
         }
+        const terminal = await latestTerminalConfirmation(
+            connection, req.tenant.clinicId, appointmentId, expectedVersion
+        );
+        if (terminal) {
+            await connection.rollback();
+            return res.status(409).json({
+                error: 'A resposta definitiva do paciente já foi registrada. Utilize a correção administrativa auditável.'
+            });
+        }
         const existing = await currentConfirmation(
             connection, req.tenant.clinicId, appointmentId, expectedVersion
         );
-        if (existing && req.body?.substituir !== true) {
+        if (replacing && (!existing || Number(existing.id) !== expectedConfirmationId)) {
+            await connection.commit();
+            return res.status(200).json({
+                confirmacao_id: existing ? Number(existing.id) : null,
+                estado: existing?.estado ?? null, idempotente: true, whatsapp_url: null,
+                message: 'A solicitação já foi atualizada por outra operação. Nenhum link adicional foi criado.'
+            });
+        }
+        if (existing && !replacing) {
             await connection.commit();
             if (existing.estado === 'preparada') {
                 return res.status(200).json({
@@ -335,10 +356,12 @@ exports.inspectPublic = async (req, res) => {
     try {
         const [rows] = await pool.execute(`
             SELECT cc.estado, cc.expira_em, cc.consulta_versao, c.versao, c.status,
-                   c.inicio_em, clinic.nome AS clinica_nome, clinic.timezone
+                   c.inicio_em, clinic.nome AS clinica_nome, clinic.timezone,
+                   pa.telefone, pa.preferencia_contato, pa.status AS paciente_status
             FROM confirmacoes_consulta cc
             JOIN consultas c ON c.clinica_id = cc.clinica_id AND c.id = cc.consulta_id
             JOIN clinicas clinic ON clinic.id = cc.clinica_id AND clinic.status = 'ativa'
+            JOIN pacientes pa ON pa.clinica_id = c.clinica_id AND pa.id = c.paciente_id
             WHERE cc.token_hash = ? LIMIT 1
         `, [tokenHash]);
         const item = rows[0];
@@ -346,7 +369,9 @@ exports.inspectPublic = async (req, res) => {
         const expired = new Date(item.expira_em) <= new Date();
         const active = item.estado === 'preparada' && !expired && utcDate(item.inicio_em) > new Date()
             && Number(item.consulta_versao) === Number(item.versao)
-            && ['agendada', 'confirmada'].includes(item.status);
+            && ['agendada', 'confirmada'].includes(item.status)
+            && item.paciente_status === 'ativo' && item.preferencia_contato === 'whatsapp'
+            && Boolean(whatsappNumber(item.telefone));
         if (!active) return res.status(404).json({ error: 'Este link não está disponível.' });
         return res.status(200).json({
             clinica_nome: item.clinica_nome,
@@ -368,13 +393,20 @@ exports.respondPublic = async (req, res) => {
     try {
         connection = await pool.getConnection(); await connection.beginTransaction();
         const [references] = await connection.execute(`
-            SELECT clinica_id, consulta_id FROM confirmacoes_consulta WHERE token_hash = ? LIMIT 1
+            SELECT cc.clinica_id, cc.consulta_id, c.paciente_id
+            FROM confirmacoes_consulta cc
+            JOIN consultas c ON c.clinica_id = cc.clinica_id AND c.id = cc.consulta_id
+            WHERE cc.token_hash = ? LIMIT 1
         `, [tokenHash]);
         const reference = references[0];
         if (!reference) {
             await connection.rollback();
             return res.status(404).json({ error: 'Este link não está disponível.' });
         }
+        const [patients] = await connection.execute(`SELECT id, telefone, preferencia_contato, status
+            FROM pacientes WHERE clinica_id = ? AND id = ? LIMIT 1 FOR UPDATE`,
+        [reference.clinica_id, reference.paciente_id]);
+        const patient = patients[0];
         await connection.execute(`SELECT id FROM consultas
             WHERE clinica_id = ? AND id = ? LIMIT 1 FOR UPDATE`,
         [reference.clinica_id, reference.consulta_id]);
@@ -390,7 +422,9 @@ exports.respondPublic = async (req, res) => {
         if (!item) { await connection.rollback(); return res.status(404).json({ error: 'Este link não está disponível.' }); }
         if (item.estado !== 'preparada' || new Date(item.expira_em) <= new Date()
             || Number(item.consulta_versao) !== Number(item.versao) || utcDate(item.inicio_em) <= new Date()
-            || !['agendada', 'confirmada'].includes(item.status)) {
+            || !['agendada', 'confirmada'].includes(item.status)
+            || !patient || patient.status !== 'ativo' || patient.preferencia_contato !== 'whatsapp'
+            || !whatsappNumber(patient.telefone)) {
             await connection.rollback();
             return res.status(409).json({ error: 'Este link não está disponível.' });
         }

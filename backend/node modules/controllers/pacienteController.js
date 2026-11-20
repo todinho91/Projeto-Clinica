@@ -388,14 +388,6 @@ exports.updatePatient = async (req, res) => {
             await connection.rollback();
             return res.status(409).json(duplicateBody(duplicate));
         }
-        await connection.execute(`
-            UPDATE pacientes
-            SET nome = ?, email = ?, telefone = ?, preferencia_contato = ?, data_nascimento = ?, status = ?
-            WHERE clinica_id = ? AND id = ?
-        `, [
-            payload.name, payload.email, payload.phone, payload.contactPreference, payload.birthDate, payload.status,
-            req.tenant.clinicId, patientId
-        ]);
         const storedBirthDate = rows[0].data_nascimento instanceof Date
             ? rows[0].data_nascimento.toISOString().slice(0, 10)
             : rows[0].data_nascimento;
@@ -407,11 +399,41 @@ exports.updatePatient = async (req, res) => {
         const storedValues = { ...rows[0], data_nascimento: storedBirthDate };
         const changedFields = Object.keys(nextValues)
             .filter((field) => String(storedValues[field] ?? '') !== String(nextValues[field] ?? ''));
+        await connection.execute(`
+            UPDATE pacientes
+            SET nome = ?, email = ?, telefone = ?, preferencia_contato = ?, data_nascimento = ?, status = ?
+            WHERE clinica_id = ? AND id = ?
+        `, [
+            payload.name, payload.email, payload.phone, payload.contactPreference, payload.birthDate, payload.status,
+            req.tenant.clinicId, patientId
+        ]);
+        const invalidatesConfirmations = changedFields.includes('telefone')
+            || changedFields.includes('preferencia_contato')
+            || (changedFields.includes('status') && payload.status !== 'ativo');
+        let revokedConfirmations = 0;
+        if (invalidatesConfirmations) {
+            const reason = payload.status !== 'ativo'
+                ? 'paciente_inativado' : 'contato_whatsapp_alterado';
+            await connection.execute(`INSERT INTO confirmacoes_consulta_eventos
+                (clinica_id, confirmacao_id, evento, origem, usuario_id, metadados)
+                SELECT cc.clinica_id, cc.id, 'revogada', 'operador', ?, JSON_OBJECT('motivo', ?)
+                FROM confirmacoes_consulta cc
+                JOIN consultas c ON c.clinica_id = cc.clinica_id AND c.id = cc.consulta_id
+                WHERE cc.clinica_id = ? AND c.paciente_id = ? AND cc.estado = 'preparada'`,
+            [req.userId, reason, req.tenant.clinicId, patientId]);
+            const [revoked] = await connection.execute(`UPDATE confirmacoes_consulta cc
+                JOIN consultas c ON c.clinica_id = cc.clinica_id AND c.id = cc.consulta_id
+                SET cc.estado = 'revogada', cc.revogado_em = UTC_TIMESTAMP(6), cc.motivo_revogacao = ?
+                WHERE cc.clinica_id = ? AND c.paciente_id = ? AND cc.estado = 'preparada'`,
+            [reason, req.tenant.clinicId, patientId]);
+            revokedConfirmations = Number(revoked.affectedRows || 0);
+        }
         await audit(connection, req, 'paciente_atualizado', patientId, {
             campos_alterados: changedFields,
             identidade_global_preservada: rows[0].usuario_id !== null,
             revisao_duplicidade: Boolean(reviewReason), motivo_revisao: reviewReason,
-            candidatos_revisados: candidates.length
+            candidatos_revisados: candidates.length,
+            confirmacoes_revogadas: revokedConfirmations
         });
         await connection.commit();
         return res.status(200).json({ message: 'Paciente atualizado com sucesso.' });

@@ -39,7 +39,8 @@ async function requestWhatsAppConfirmation(appointment, statusElement, afterSucc
     try {
         const result = await apiRequest(`/consultas/${appointment.id}/confirmacoes`, {
             method: 'POST', body: JSON.stringify({
-                versao: Number(appointment.versao), substituir: replacing
+                versao: Number(appointment.versao), substituir: replacing,
+                confirmacao_id_esperada: replacing ? Number(appointment.confirmacao_id) : null
             })
         });
         if (result.whatsapp_url) popup.location.replace(result.whatsapp_url);
@@ -1567,11 +1568,14 @@ async function setupCalendarPage() {
         if (confirmationBadge) card.append(confirmationBadge);
         if (!isProfessional && ['agendada', 'confirmada'].includes(item.status)) {
             const actions = document.createElement('div'); actions.className = 'vitalis-calendar-detail-actions';
-            const requestButton = document.createElement('button');
-            requestButton.type = 'button'; requestButton.className = 'btn btn-sm btn-outline-success';
-            requestButton.innerHTML = `<i class="bi bi-whatsapp"></i> ${item.confirmacao_estado
-                ? 'Gerar novo link' : 'Solicitar confirmação'}`;
-            requestButton.addEventListener('click', () => requestWhatsAppConfirmation(item, status, loadCalendar));
+            if (!['confirmada', 'recusada'].includes(item.confirmacao_estado)) {
+                const requestButton = document.createElement('button');
+                requestButton.type = 'button'; requestButton.className = 'btn btn-sm btn-outline-success';
+                requestButton.innerHTML = `<i class="bi bi-whatsapp"></i> ${item.confirmacao_estado
+                    ? 'Gerar novo link' : 'Solicitar confirmação'}`;
+                requestButton.addEventListener('click', () => requestWhatsAppConfirmation(item, status, loadCalendar));
+                actions.append(requestButton);
+            }
             const confirmed = document.createElement('button');
             confirmed.type = 'button'; confirmed.className = 'btn btn-sm btn-outline-primary';
             confirmed.textContent = 'Registrar confirmação';
@@ -1580,7 +1584,7 @@ async function setupCalendarPage() {
             declined.type = 'button'; declined.className = 'btn btn-sm btn-outline-secondary';
             declined.textContent = 'Registrar impossibilidade';
             declined.addEventListener('click', () => registerManualConfirmation(item, 'recusada', status, loadCalendar));
-            actions.append(requestButton, confirmed, declined); card.append(actions);
+            actions.append(confirmed, declined); card.append(actions);
         }
         if (!isProfessional) {
             const historyButton = document.createElement('button');
@@ -1984,10 +1988,12 @@ async function setupAppointmentsPage() {
             row.append(status);
             const actions = document.createElement('td'); actions.dataset.label = 'Ações'; actions.className = 'vitalis-appointment-actions';
             if (['agendada', 'confirmada'].includes(item.status)) {
-                actions.append(actionButton(item.confirmacao_estado ? 'Gerar novo link' : 'Solicitar confirmação',
-                    'bi-whatsapp', 'btn-outline-success', () => (
-                    requestWhatsAppConfirmation(item, listStatus, loadAgenda)
-                )));
+                if (!['confirmada', 'recusada'].includes(item.confirmacao_estado)) {
+                    actions.append(actionButton(item.confirmacao_estado ? 'Gerar novo link' : 'Solicitar confirmação',
+                        'bi-whatsapp', 'btn-outline-success', () => (
+                        requestWhatsAppConfirmation(item, listStatus, loadAgenda)
+                    )));
+                }
                 actions.append(actionButton('Confirmou', 'bi-person-check', 'btn-outline-success', () => (
                     registerManualConfirmation(item, 'confirmada', listStatus, loadAgenda)
                 )));

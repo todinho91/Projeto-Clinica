@@ -260,6 +260,44 @@ test('edição por identificador de outra clínica retorna 404', async (t) => {
     assert.equal(res.statusCode, 404);
 });
 
+test('alteração de telefone, preferência ou inativação revoga links pendentes na mesma transação', async (t) => {
+    for (const change of [
+        { telefone: '(43) 98888-7777', preferencia_contato: 'whatsapp', status: 'ativo' },
+        { telefone: '(43) 99999-1234', preferencia_contato: 'nenhum', status: 'ativo' },
+        { telefone: '(43) 99999-1234', preferencia_contato: 'whatsapp', status: 'inativo' }
+    ]) {
+        const executions = [];
+        const db = connection(async (sql, params) => {
+            executions.push({ sql, params });
+            if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
+            if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
+            if (/FROM pacientes WHERE clinica_id/.test(sql)) return [[{
+                id: 77, usuario_id: null, nome: 'Maria Silva', email: 'maria@example.test',
+                telefone: '43999991234', preferencia_contato: 'whatsapp',
+                data_nascimento: '1990-05-20', status: 'ativo'
+            }]];
+            if (/SELECT id, nome, email/.test(sql)) return [[]];
+            if (/UPDATE confirmacoes_consulta cc/.test(sql)) return [{ affectedRows: 2 }];
+            return [{ affectedRows: 1, insertId: 1 }];
+        });
+        const commit = t.mock.method(db, 'commit');
+        t.mock.method(pool, 'getConnection', async () => db);
+        const res = response();
+        await controller.updatePatient(request({
+            params: { id: '77' },
+            body: { ...request().body, ...change }
+        }), res);
+        assert.equal(res.statusCode, 200);
+        assert.equal(commit.mock.callCount(), 1);
+        assert.equal(executions.some((entry) => /INSERT INTO confirmacoes_consulta_eventos/.test(entry.sql)), true);
+        const revoked = executions.find((entry) => /UPDATE confirmacoes_consulta cc/.test(entry.sql));
+        assert.deepEqual(revoked.params.slice(-2), [11, 77]);
+        const auditEntry = executions.find((entry) => /INSERT INTO auditoria/.test(entry.sql));
+        assert.match(auditEntry.params.at(-1), /"confirmacoes_revogadas":2/);
+        t.mock.restoreAll();
+    }
+});
+
 test('falha parcial provoca rollback e não confirma a transação', async (t) => {
     const db = connection(async (sql) => {
         if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];

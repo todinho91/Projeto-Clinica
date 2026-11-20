@@ -54,6 +54,13 @@ Solicitações repetidas para a mesma versão são idempotentes e não revogam o
 Gerar outro link e corrigir uma resposta administrativa exigem ações explícitas, preservadas
 no histórico e na auditoria.
 
+A reemissão compara o identificador que a tela observou, de modo que duas abas não substituam
+o mesmo link sucessivamente. Depois de uma resposta definitiva, não há reemissão: qualquer
+alteração deve usar a correção administrativa auditável. A agenda e o calendário priorizam a
+resposta definitiva da versão atual, mesmo que existam eventos posteriores de expiração ou
+revogação. Alterar o telefone, retirar a preferência WhatsApp ou inativar o paciente revoga
+links pendentes na mesma transação; consulta e resposta públicas revalidam essas condições.
+
 ## Pré-voo da migration 010
 
 Não aplique a migration em banco existente sem autorização. Em uma cópia descartável:

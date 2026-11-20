@@ -362,11 +362,15 @@ exports.listCalendar = async (req, res) => {
                  FROM confirmacoes_consulta cc
                  WHERE cc.clinica_id = c.clinica_id AND cc.consulta_id = c.id
                    AND cc.consulta_versao = c.versao
-                 ORDER BY cc.id DESC LIMIT 1) AS confirmacao_estado,
+                 ORDER BY (cc.estado IN ('confirmada', 'recusada')) DESC, cc.id DESC LIMIT 1) AS confirmacao_estado,
                 (SELECT cc.canal FROM confirmacoes_consulta cc
                  WHERE cc.clinica_id = c.clinica_id AND cc.consulta_id = c.id
                    AND cc.consulta_versao = c.versao
-                 ORDER BY cc.id DESC LIMIT 1) AS confirmacao_canal,
+                 ORDER BY (cc.estado IN ('confirmada', 'recusada')) DESC, cc.id DESC LIMIT 1) AS confirmacao_canal,
+                (SELECT cc.id FROM confirmacoes_consulta cc
+                 WHERE cc.clinica_id = c.clinica_id AND cc.consulta_id = c.id
+                   AND cc.consulta_versao = c.versao
+                 ORDER BY cc.id DESC LIMIT 1) AS confirmacao_id,
                 pa.id AS paciente_id, pa.nome AS paciente_nome,
                 p.id AS profissional_id, p.nome_exibicao AS profissional_nome,
                 e.id AS especialidade_id, e.nome AS especialidade_nome
@@ -551,11 +555,15 @@ exports.listForManagement = async (req, res) => {
                  FROM confirmacoes_consulta cc
                  WHERE cc.clinica_id = c.clinica_id AND cc.consulta_id = c.id
                    AND cc.consulta_versao = c.versao
-                 ORDER BY cc.id DESC LIMIT 1) AS confirmacao_estado,
+                 ORDER BY (cc.estado IN ('confirmada', 'recusada')) DESC, cc.id DESC LIMIT 1) AS confirmacao_estado,
                 (SELECT cc.canal FROM confirmacoes_consulta cc
                  WHERE cc.clinica_id = c.clinica_id AND cc.consulta_id = c.id
                    AND cc.consulta_versao = c.versao
-                 ORDER BY cc.id DESC LIMIT 1) AS confirmacao_canal,
+                 ORDER BY (cc.estado IN ('confirmada', 'recusada')) DESC, cc.id DESC LIMIT 1) AS confirmacao_canal,
+                (SELECT cc.id FROM confirmacoes_consulta cc
+                 WHERE cc.clinica_id = c.clinica_id AND cc.consulta_id = c.id
+                   AND cc.consulta_versao = c.versao
+                 ORDER BY cc.id DESC LIMIT 1) AS confirmacao_id,
                 pa.id AS paciente_id, pa.nome AS paciente_nome,
                 p.id AS profissional_id, p.nome_exibicao AS profissional_nome,
                 e.id AS especialidade_id, e.nome AS especialidade_nome

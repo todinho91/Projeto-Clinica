@@ -101,9 +101,12 @@ test('tenant autenticado não solicita confirmação de consulta de outra clíni
 test('resposta pública é atômica e o mesmo token não pode responder duas vezes', async (t) => {
     let state = 'preparada';
     const connection = transaction(t, async (sql, params) => {
-        if (/SELECT clinica_id, consulta_id FROM confirmacoes_consulta/.test(sql)) {
-            return [[{ clinica_id: 11, consulta_id: 51 }]];
+        if (/SELECT cc\.clinica_id, cc\.consulta_id/.test(sql)) {
+            return [[{ clinica_id: 11, consulta_id: 51, paciente_id: 31 }]];
         }
+        if (/FROM pacientes WHERE/.test(sql)) return [[{
+            id: 31, telefone: '43999998888', preferencia_contato: 'whatsapp', status: 'ativo'
+        }]];
         if (/SELECT id FROM consultas/.test(sql)) return [[{ id: 51 }]];
         if (/WHERE cc\.token_hash = \? LIMIT 1 FOR UPDATE/.test(sql)) return [[{
             id: 91, clinica_id: 11, consulta_id: 51, consulta_versao: 1,
@@ -135,9 +138,12 @@ test('link expirado ou referente a versão anterior não altera resposta', async
         { expira_em: new Date(Date.now() + 3600000), consulta_versao: 1, versao: 2 }
     ]) {
         const connection = transaction(t, async (sql) => {
-            if (/SELECT clinica_id, consulta_id FROM confirmacoes_consulta/.test(sql)) {
-                return [[{ clinica_id: 11, consulta_id: 51 }]];
+            if (/SELECT cc\.clinica_id, cc\.consulta_id/.test(sql)) {
+                return [[{ clinica_id: 11, consulta_id: 51, paciente_id: 31 }]];
             }
+            if (/FROM pacientes WHERE/.test(sql)) return [[{
+                id: 31, telefone: '43999998888', preferencia_contato: 'whatsapp', status: 'ativo'
+            }]];
             if (/SELECT id FROM consultas/.test(sql)) return [[{ id: 51 }]];
             if (/WHERE cc\.token_hash = \? LIMIT 1 FOR UPDATE/.test(sql)) return [[{
                 id: 91, clinica_id: 11, consulta_id: 51, estado: 'preparada',
@@ -160,9 +166,12 @@ test('link expirado ou referente a versão anterior não altera resposta', async
 test('novo link não cria resposta pública contraditória para a mesma versão', async (t) => {
     const writes = [];
     const connection = transaction(t, async (sql) => {
-        if (/SELECT clinica_id, consulta_id FROM confirmacoes_consulta/.test(sql)) {
-            return [[{ clinica_id: 11, consulta_id: 51 }]];
+        if (/SELECT cc\.clinica_id, cc\.consulta_id/.test(sql)) {
+            return [[{ clinica_id: 11, consulta_id: 51, paciente_id: 31 }]];
         }
+        if (/FROM pacientes WHERE/.test(sql)) return [[{
+            id: 31, telefone: '43999998888', preferencia_contato: 'whatsapp', status: 'ativo'
+        }]];
         if (/SELECT id FROM consultas/.test(sql)) return [[{ id: 51 }]];
         if (/WHERE cc\.token_hash = \? LIMIT 1 FOR UPDATE/.test(sql)) return [[{
             id: 92, clinica_id: 11, consulta_id: 51, consulta_versao: 1,
@@ -237,6 +246,7 @@ test('clique repetido mantém a solicitação pendente sem revogar ou gerar outr
             clinica_nome: 'Clínica Aurora', timezone: 'America/Sao_Paulo',
             telefone: '(43) 99999-8888', preferencia_contato: 'whatsapp', paciente_status: 'ativo'
         }]];
+        if (/estado IN \('confirmada', 'recusada'\)/.test(sql)) return [[]];
         if (/FROM confirmacoes_consulta\s+WHERE clinica_id/.test(sql)) {
             return [[{ id: 91, canal: 'whatsapp', estado: 'preparada' }]];
         }
@@ -253,6 +263,67 @@ test('clique repetido mantém a solicitação pendente sem revogar ou gerar outr
     assert.equal(res.body.whatsapp_url, null);
     assert.equal(writes.length, 0);
     assert.equal(connection.commit.mock.callCount(), 1);
+});
+
+test('reemissão explícita concorrente substitui somente o identificador observado pelas duas abas', async (t) => {
+    let currentId = 91;
+    let inserts = 0;
+    const connection = transaction(t, async (sql) => {
+        if (/SELECT cu\.papel/.test(sql)) return [[{ papel: 'secretaria' }]];
+        if (/clinic\.nome AS clinica_nome/.test(sql)) return [[{
+            id: 51, versao: 3, status: 'agendada', inicio_em: '2032-05-10 17:00:00.000',
+            clinica_nome: 'Clínica Aurora', timezone: 'America/Sao_Paulo',
+            telefone: '43999998888', preferencia_contato: 'whatsapp', paciente_status: 'ativo'
+        }]];
+        if (/estado IN \('confirmada', 'recusada'\)/.test(sql)) return [[]];
+        if (/CASE WHEN estado = 'preparada'/.test(sql)) {
+            return [[{ id: currentId, canal: 'whatsapp', estado: 'preparada' }]];
+        }
+        if (/INSERT INTO confirmacoes_consulta \(/.test(sql)) {
+            inserts += 1; currentId = 92; return [{ insertId: currentId }];
+        }
+        if (/confirmacoes_consulta_eventos|UPDATE confirmacoes_consulta|INSERT INTO auditoria/.test(sql)) {
+            return [{ affectedRows: 1, insertId: 1 }];
+        }
+        throw new Error(`SQL inesperado: ${sql}`);
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const request = {
+        userId: 7, tenant: { clinicId: 11, role: 'secretaria' }, params: { id: '51' },
+        body: { versao: 3, substituir: true, confirmacao_id_esperada: 91 }
+    };
+    const first = response(); const second = response();
+    await controller.requestConfirmation(request, first);
+    await controller.requestConfirmation({ ...request, body: { ...request.body } }, second);
+    assert.equal(first.statusCode, 201);
+    assert.equal(second.statusCode, 200);
+    assert.equal(second.body.idempotente, true);
+    assert.equal(second.body.whatsapp_url, null);
+    assert.equal(inserts, 1);
+});
+
+test('resposta definitiva bloqueia reemissão e direciona para correção administrativa', async (t) => {
+    const connection = transaction(t, async (sql) => {
+        if (/SELECT cu\.papel/.test(sql)) return [[{ papel: 'administrador' }]];
+        if (/clinic\.nome AS clinica_nome/.test(sql)) return [[{
+            id: 51, versao: 3, status: 'agendada', inicio_em: '2032-05-10 17:00:00.000',
+            clinica_nome: 'Clínica Aurora', timezone: 'America/Sao_Paulo',
+            telefone: '43999998888', preferencia_contato: 'whatsapp', paciente_status: 'ativo'
+        }]];
+        if (/estado IN \('confirmada', 'recusada'\)/.test(sql)) {
+            return [[{ id: 90, canal: 'manual', estado: 'confirmada' }]];
+        }
+        throw new Error('nenhuma reemissão deveria ocorrer');
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await controller.requestConfirmation({
+        userId: 7, tenant: { clinicId: 11, role: 'administrador' }, params: { id: '51' },
+        body: { versao: 3, substituir: true, confirmacao_id_esperada: 91 }
+    }, res);
+    assert.equal(res.statusCode, 409);
+    assert.match(res.body.error, /resposta definitiva/);
+    assert.equal(connection.rollback.mock.callCount(), 1);
 });
 
 test('registro manual idêntico é idempotente e correção divergente exige ação explícita auditável', async (t) => {
@@ -304,7 +375,8 @@ test('consulta pública só revela clínica e horário enquanto o link estiver a
     const active = {
         estado: 'preparada', expira_em: new Date(Date.now() + 3600000), consulta_versao: 2,
         versao: 2, status: 'agendada', inicio_em: '2032-05-10 17:00:00.000',
-        clinica_nome: 'Clínica Aurora', timezone: 'America/Sao_Paulo'
+        clinica_nome: 'Clínica Aurora', timezone: 'America/Sao_Paulo',
+        telefone: '43999998888', preferencia_contato: 'whatsapp', paciente_status: 'ativo'
     };
     t.mock.method(pool, 'execute', async () => [[active]]);
     const token = randomBytes(32).toString('base64url');
@@ -318,6 +390,51 @@ test('consulta pública só revela clínica e horário enquanto o link estiver a
     await controller.inspectPublic({ body: { token } }, revoked);
     assert.equal(revoked.statusCode, 404);
     assert.deepEqual(revoked.body, { error: 'Este link não está disponível.' });
+});
+
+test('operações públicas recusam paciente inativo, sem preferência ou com telefone alterado inválido', async (t) => {
+    const token = randomBytes(32).toString('base64url');
+    const invalidPatients = [
+        { telefone: '43999998888', preferencia_contato: 'whatsapp', paciente_status: 'inativo' },
+        { telefone: '43999998888', preferencia_contato: 'nenhum', paciente_status: 'ativo' },
+        { telefone: '00000000000', preferencia_contato: 'whatsapp', paciente_status: 'ativo' }
+    ];
+    for (const invalid of invalidPatients) {
+        t.mock.method(pool, 'execute', async () => [[{
+            estado: 'preparada', expira_em: new Date(Date.now() + 3600000), consulta_versao: 2,
+            versao: 2, status: 'agendada', inicio_em: '2032-05-10 17:00:00.000',
+            clinica_nome: 'Clínica Aurora', timezone: 'America/Sao_Paulo', ...invalid
+        }]]);
+        const inspected = response();
+        await controller.inspectPublic({ body: { token } }, inspected);
+        assert.equal(inspected.statusCode, 404);
+        t.mock.restoreAll();
+
+        const connection = transaction(t, async (sql) => {
+            if (/SELECT cc\.clinica_id, cc\.consulta_id/.test(sql)) {
+                return [[{ clinica_id: 11, consulta_id: 51, paciente_id: 31 }]];
+            }
+            if (/FROM pacientes WHERE/.test(sql)) return [[{
+                id: 31, telefone: invalid.telefone,
+                preferencia_contato: invalid.preferencia_contato,
+                status: invalid.paciente_status
+            }]];
+            if (/SELECT id FROM consultas/.test(sql)) return [[{ id: 51 }]];
+            if (/WHERE cc\.token_hash = \? LIMIT 1 FOR UPDATE/.test(sql)) return [[{
+                id: 91, clinica_id: 11, consulta_id: 51, consulta_versao: 2,
+                estado: 'preparada', expira_em: new Date(Date.now() + 3600000), versao: 2,
+                status: 'agendada', inicio_em: '2032-05-10 17:00:00.000'
+            }]];
+            throw new Error('nenhuma escrita deveria ocorrer');
+        });
+        t.mock.method(pool, 'getConnection', async () => connection);
+        const responded = response();
+        await controller.respondPublic({ body: { token, resposta: 'confirmada' } }, responded);
+        assert.equal(responded.statusCode, 409);
+        assert.equal(connection.execute.mock.calls.some((call) =>
+            /UPDATE confirmacoes_consulta/.test(call.arguments[0])), false);
+        t.mock.restoreAll();
+    }
 });
 
 test('rotas públicas recebem token no corpo e aplicam proteção contra cache, referência e indexação', () => {
@@ -363,7 +480,8 @@ test('agenda e calendário ignoram confirmações de versões anteriores após r
         fs.readFile(path.join(__dirname, '..', 'controllers', 'consultaController.js'), 'utf8'),
         fs.readFile(path.join(__dirname, '..', 'controllers', 'confirmacaoConsultaController.js'), 'utf8')
     ]);
-    assert.equal((consultations.match(/cc\.consulta_versao = c\.versao/g) || []).length, 4);
+    assert.equal((consultations.match(/cc\.consulta_versao = c\.versao/g) || []).length, 6);
+    assert.equal((consultations.match(/estado IN \('confirmada', 'recusada'\)\) DESC/g) || []).length, 4);
     assert.match(consultations, /revokePrepared[\s\S]*consulta_reagendada/);
     assert.match(confirmations, /exports\.history[\s\S]*confirmacoes: rows/);
 });

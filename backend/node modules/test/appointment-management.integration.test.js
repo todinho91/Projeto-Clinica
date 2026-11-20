@@ -142,26 +142,23 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
         assert.equal(repeatedPreparation.statusCode, 200);
         assert.equal(repeatedPreparation.body.idempotente, true);
         assert.equal(repeatedPreparation.body.whatsapp_url, null);
-        const message = new URL(prepared.body.whatsapp_url).searchParams.get('text');
-        const publicLink = message.match(/https?:\/\/[^\s]+confirmacao-consulta\.html#token=[A-Za-z0-9_-]+/)[0];
-        const publicToken = new URLSearchParams(new URL(publicLink).hash.slice(1)).get('token');
-        const publicReply = response();
-        await confirmationController.respondPublic({
-            body: { token: publicToken, resposta: 'confirmada' }
-        }, publicReply);
-        assert.equal(publicReply.statusCode, 200);
-        const duplicateReply = response();
-        await confirmationController.respondPublic({
-            body: { token: publicToken, resposta: 'recusada' }
-        }, duplicateReply);
-        assert.equal(duplicateReply.statusCode, 409);
-
-        const replacement = response();
-        await confirmationController.requestConfirmation({
+        const replacementA = response(); const replacementB = response();
+        const replacementRequest = {
             userId: secretaryAurora, tenant: request.tenant,
-            params: { id: String(appointmentId) }, body: { versao: 1, substituir: true }
-        }, replacement);
-        assert.equal(replacement.statusCode, 201);
+            params: { id: String(appointmentId) },
+            body: {
+                versao: 1, substituir: true,
+                confirmacao_id_esperada: prepared.body.confirmacao_id
+            }
+        };
+        await Promise.all([
+            confirmationController.requestConfirmation(replacementRequest, replacementA),
+            confirmationController.requestConfirmation({
+                ...replacementRequest, body: { ...replacementRequest.body }
+            }, replacementB)
+        ]);
+        assert.deepEqual([replacementA.statusCode, replacementB.statusCode].sort(), [200, 201]);
+        const replacement = replacementA.statusCode === 201 ? replacementA : replacementB;
         const replacementMessage = new URL(replacement.body.whatsapp_url).searchParams.get('text');
         const replacementLink = replacementMessage.match(
             /https?:\/\/[^\s]+confirmacao-consulta\.html#token=[A-Za-z0-9_-]+/
