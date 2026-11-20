@@ -28,6 +28,14 @@ function boundedInteger(value, fallback, max) {
     return Number.isSafeInteger(parsed) && parsed <= max ? parsed : null;
 }
 
+function calendarRangeDays(startDate, endDate) {
+    if (!DATE.test(startDate || '') || !DATE.test(endDate || '') || endDate < startDate) return null;
+    const start = new Date(`${startDate}T00:00:00Z`);
+    const end = new Date(`${endDate}T00:00:00Z`);
+    const days = Math.floor((end - start) / 86400000) + 1;
+    return Number.isInteger(days) && days >= 1 && days <= 42 ? days : null;
+}
+
 function appointmentPeriod(body = {}, timeZone, now = new Date()) {
     let start;
     let end;
@@ -240,6 +248,156 @@ exports.context = async (req, res) => {
     } catch (error) {
         logFailure('context', error);
         return res.status(500).json({ error: 'Erro ao carregar opções de agendamento.' });
+    }
+};
+
+exports.calendarContext = async (req, res) => {
+    const { clinicId, role } = req.tenant;
+    try {
+        const clinic = await activeClinic(pool, clinicId);
+        if (!clinic) return res.status(409).json({ error: 'Clínica ativa não disponível.' });
+        const [actors] = await pool.execute(`
+            SELECT cu.papel, p.id AS profissional_id, p.nome_exibicao AS profissional_nome
+            FROM clinica_usuarios cu
+            JOIN usuarios u ON u.id = cu.usuario_id AND u.status = 'ativo'
+            LEFT JOIN profissionais p ON p.clinica_id = cu.clinica_id AND p.usuario_id = cu.usuario_id
+              AND p.status = 'ativo'
+            WHERE cu.clinica_id = ? AND cu.usuario_id = ? AND cu.papel = ?
+              AND cu.status = 'ativo' LIMIT 1
+        `, [clinicId, req.userId, role]);
+        const actor = actors[0];
+        if (!actor || (role === 'profissional' && !actor.profissional_id)) {
+            return res.status(403).json({ error: 'Vínculo profissional ativo não autorizado.' });
+        }
+        const [rows] = await pool.execute(`
+            SELECT DISTINCT p.id AS profissional_id, p.nome_exibicao AS profissional_nome,
+                e.id AS especialidade_id, e.nome AS especialidade_nome
+            FROM profissionais p
+            JOIN clinicas clinic ON clinic.id = p.clinica_id AND clinic.status = 'ativa'
+            JOIN clinica_usuarios viewer ON viewer.clinica_id = p.clinica_id
+              AND viewer.usuario_id = ? AND viewer.papel = ? AND viewer.status = 'ativo'
+            JOIN usuarios viewer_user ON viewer_user.id = viewer.usuario_id AND viewer_user.status = 'ativo'
+            JOIN clinica_usuarios cu ON cu.clinica_id = p.clinica_id AND cu.usuario_id = p.usuario_id
+              AND cu.papel = 'profissional' AND cu.status = 'ativo'
+            JOIN usuarios u ON u.id = p.usuario_id AND u.status = 'ativo'
+            LEFT JOIN profissional_especialidades pe ON pe.clinica_id = p.clinica_id
+              AND pe.profissional_id = p.id
+            LEFT JOIN especialidades e ON e.clinica_id = pe.clinica_id AND e.id = pe.especialidade_id
+              AND e.status = 'ativa'
+            WHERE p.clinica_id = ? AND p.status = 'ativo'
+              AND (? <> 'profissional' OR p.id = ?)
+            ORDER BY p.nome_exibicao, p.id, e.nome, e.id
+        `, [req.userId, role, clinicId, role, actor.profissional_id || 0]);
+        const professionals = new Map();
+        const specialties = new Map();
+        rows.forEach((row) => {
+            const professionalId = Number(row.profissional_id);
+            const specialtyId = row.especialidade_id ? Number(row.especialidade_id) : null;
+            if (!professionals.has(professionalId)) {
+                professionals.set(professionalId, {
+                    id: professionalId, nome_exibicao: row.profissional_nome
+                });
+            }
+            if (specialtyId && !specialties.has(specialtyId)) {
+                specialties.set(specialtyId, { id: specialtyId, nome: row.especialidade_nome });
+            }
+        });
+        return res.status(200).json({
+            timezone: clinic.timezone,
+            today: utcToLocal(new Date(), clinic.timezone).slice(0, 10),
+            role,
+            professional_id: role === 'profissional' ? Number(actor.profissional_id) : null,
+            profissionais: [...professionals.values()],
+            especialidades: [...specialties.values()]
+        });
+    } catch (error) {
+        logFailure('calendar_context', error);
+        return res.status(500).json({ error: 'Erro ao carregar filtros do calendário.' });
+    }
+};
+
+exports.listCalendar = async (req, res) => {
+    const { clinicId, role } = req.tenant;
+    const startDate = req.query?.data_inicio;
+    const endDate = req.query?.data_fim;
+    const status = req.query?.status || 'todos';
+    const requestedProfessional = req.query?.profissional_id
+        ? positiveId(req.query.profissional_id) : null;
+    const specialtyId = req.query?.especialidade_id ? positiveId(req.query.especialidade_id) : null;
+    if (!calendarRangeDays(startDate, endDate)
+        || (status !== 'todos' && !STATUSES.has(status))
+        || (req.query?.profissional_id && !requestedProfessional)
+        || (req.query?.especialidade_id && !specialtyId)) {
+        return res.status(400).json({ error: 'Período ou filtros do calendário inválidos.' });
+    }
+    try {
+        const clinic = await activeClinic(pool, clinicId);
+        if (!clinic) return res.status(409).json({ error: 'Clínica ativa não disponível.' });
+        const [actors] = await pool.execute(`
+            SELECT cu.papel, p.id AS profissional_id
+            FROM clinica_usuarios cu
+            JOIN usuarios u ON u.id = cu.usuario_id AND u.status = 'ativo'
+            LEFT JOIN profissionais p ON p.clinica_id = cu.clinica_id AND p.usuario_id = cu.usuario_id
+              AND p.status = 'ativo'
+            WHERE cu.clinica_id = ? AND cu.usuario_id = ? AND cu.papel = ?
+              AND cu.status = 'ativo' LIMIT 1
+        `, [clinicId, req.userId, role]);
+        const actor = actors[0];
+        if (!actor || (role === 'profissional' && !actor.profissional_id)) {
+            return res.status(403).json({ error: 'Vínculo ativo não autorizado.' });
+        }
+        const ownProfessionalId = role === 'profissional' ? Number(actor.profissional_id) : null;
+        if (ownProfessionalId && requestedProfessional && requestedProfessional !== ownProfessionalId) {
+            return res.status(403).json({ error: 'O profissional só pode consultar a própria agenda.' });
+        }
+        const professionalId = ownProfessionalId || requestedProfessional;
+        const start = zonedLocalToUtc(`${startDate}T00:00`, clinic.timezone);
+        const last = zonedLocalToUtc(`${endDate}T23:59`, clinic.timezone);
+        if (!start || !last) return res.status(400).json({ error: 'Período inválido para o fuso da clínica.' });
+        const [rows] = await pool.execute(`
+            SELECT c.id, c.inicio_em, c.fim_em, c.status, c.versao,
+                pa.id AS paciente_id, pa.nome AS paciente_nome,
+                p.id AS profissional_id, p.nome_exibicao AS profissional_nome,
+                e.id AS especialidade_id, e.nome AS especialidade_nome
+            FROM consultas c
+            JOIN clinicas clinic ON clinic.id = c.clinica_id AND clinic.status = 'ativa'
+            JOIN clinica_usuarios viewer ON viewer.clinica_id = c.clinica_id
+              AND viewer.usuario_id = ? AND viewer.papel = ? AND viewer.status = 'ativo'
+            JOIN usuarios viewer_user ON viewer_user.id = viewer.usuario_id AND viewer_user.status = 'ativo'
+            JOIN pacientes pa ON pa.clinica_id = c.clinica_id AND pa.id = c.paciente_id
+            JOIN profissionais p ON p.clinica_id = c.clinica_id AND p.id = c.profissional_id
+            LEFT JOIN especialidades e ON e.clinica_id = c.clinica_id AND e.id = c.especialidade_id
+            WHERE c.clinica_id = ? AND c.inicio_em < ? AND c.fim_em > ?
+              AND (? = 'todos' OR c.status = ?)
+              AND (? IS NULL OR c.profissional_id = ?)
+              AND (? IS NULL OR c.especialidade_id = ?)
+              AND (? <> 'profissional' OR p.usuario_id = ?)
+            ORDER BY c.inicio_em, c.id LIMIT 1001
+        `, [
+            req.userId, role, clinicId, mysqlUtc(new Date(last.getTime() + 60000)), mysqlUtc(start),
+            status, status, professionalId, professionalId, specialtyId, specialtyId,
+            role, req.userId
+        ]);
+        if (rows.length > 1000) {
+            return res.status(422).json({
+                error: 'Há muitas consultas no período. Selecione um profissional, especialidade ou período menor.'
+            });
+        }
+        return res.status(200).json({
+            timezone: clinic.timezone,
+            consultas: rows.map((item) => ({
+                ...item,
+                id: Number(item.id), paciente_id: Number(item.paciente_id),
+                profissional_id: Number(item.profissional_id),
+                especialidade_id: item.especialidade_id ? Number(item.especialidade_id) : null,
+                versao: Number(item.versao),
+                inicio_local: utcToLocal(item.inicio_em, clinic.timezone),
+                fim_local: utcToLocal(item.fim_em, clinic.timezone)
+            }))
+        });
+    } catch (error) {
+        logFailure('calendar_list', error);
+        return res.status(500).json({ error: 'Erro ao carregar calendário.' });
     }
 };
 
@@ -605,3 +763,4 @@ exports.transitionAllowedAt = transitionAllowedAt;
 exports.localPeriod = localPeriod;
 exports.periodFitsWeekly = periodFitsWeekly;
 exports.validateReservation = validateReservation;
+exports.calendarRangeDays = calendarRangeDays;

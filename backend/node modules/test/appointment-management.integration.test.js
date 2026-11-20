@@ -262,6 +262,35 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
         ]);
         assert.deepEqual([cancelConcurrent.statusCode, rescheduleConcurrent.statusCode].sort(), [200, 409]);
 
+        const auroraCalendar = response();
+        await controller.listCalendar({
+            userId: secretaryAurora, tenant: request.tenant,
+            query: { data_inicio: '2032-05-10', data_fim: '2032-05-16', status: 'todos' }
+        }, auroraCalendar);
+        assert.equal(auroraCalendar.statusCode, 200);
+        assert.equal(auroraCalendar.body.consultas.length, 1);
+        assert.equal(auroraCalendar.body.consultas[0].paciente_nome, 'Paciente Aurora');
+
+        const horizonteCalendar = response();
+        await controller.listCalendar({
+            userId: secretaryHorizonte,
+            tenant: { clinicId: horizonteId, role: 'secretaria' },
+            query: { data_inicio: '2032-05-10', data_fim: '2032-05-16', status: 'todos' }
+        }, horizonteCalendar);
+        assert.equal(horizonteCalendar.statusCode, 200);
+        assert.deepEqual(horizonteCalendar.body.consultas, []);
+
+        const doctorCrossFilter = response();
+        await controller.listCalendar({
+            userId: professionalAuroraUser,
+            tenant: { clinicId: auroraId, role: 'profissional' },
+            query: {
+                data_inicio: '2032-05-10', data_fim: '2032-05-16', status: 'todos',
+                profissional_id: String(horizonteProfessionalId)
+            }
+        }, doctorCrossFilter);
+        assert.equal(doctorCrossFilter.statusCode, 403);
+
         await setup.query(`ALTER TABLE consultas_historico
             ADD CONSTRAINT chk_consulta_rollback_teste
             CHECK (NOT (acao = 'agendada' AND inicio_novo = '2032-05-10 20:00:00.000000'))`);

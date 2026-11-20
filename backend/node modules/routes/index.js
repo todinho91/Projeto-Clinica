@@ -155,6 +155,16 @@ router.get(
     consultaController.listForManagement
 );
 router.get(
+    '/consultas/calendario/contexto',
+    authorize('administrador', 'secretaria', 'profissional'),
+    consultaController.calendarContext
+);
+router.get(
+    '/consultas/calendario',
+    authorize('administrador', 'secretaria', 'profissional'),
+    consultaController.listCalendar
+);
+router.get(
     '/consultas/minha-agenda',
     authorize('administrador', 'secretaria', 'profissional', 'paciente'),
     consultaController.getMinhaAgenda
