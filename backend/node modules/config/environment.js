@@ -51,6 +51,10 @@ function publicOrigin(value) {
     if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin !== value) {
         throw new Error('APP_PUBLIC_ORIGIN deve ser uma origem HTTP(S), sem caminho.');
     }
+    const localHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
+    if (parsed.protocol !== 'https:' && !localHosts.has(parsed.hostname)) {
+        throw new Error('APP_PUBLIC_ORIGIN deve usar HTTPS fora do ambiente local.');
+    }
     return value;
 }
 

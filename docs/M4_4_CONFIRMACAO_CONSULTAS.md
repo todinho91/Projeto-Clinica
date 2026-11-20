@@ -42,8 +42,17 @@ presencialmente. Esse registro usa canal `manual`, identifica o operador e não 
 - `POST /api/consultas/:id/confirmacoes`: prepara link e URL do WhatsApp;
 - `POST /api/consultas/:id/confirmacoes/manual`: registra resposta manual;
 - `GET /api/consultas/:id/confirmacoes`: histórico administrativo sem token;
-- `GET /api/confirmacoes-consulta/:token`: dados mínimos da confirmação pública;
-- `POST /api/confirmacoes-consulta/:token/responder`: resposta pública atômica.
+- `POST /api/confirmacoes-consulta/consultar`: recebe o token no corpo e retorna somente clínica e horário;
+- `POST /api/confirmacoes-consulta/responder`: recebe token e resposta no corpo, de forma atômica.
+
+O token fica no fragmento (`#token=`) do link público, é removido do endereço pelo navegador
+assim que a página inicia e nunca é enviado em caminhos de requisição. As respostas usam
+`no-store`, `no-referrer` e `noindex`. Fora de `localhost`, `127.0.0.1` e `::1`,
+`APP_PUBLIC_ORIGIN` aceita somente HTTPS.
+
+Solicitações repetidas para a mesma versão são idempotentes e não revogam o link pendente.
+Gerar outro link e corrigir uma resposta administrativa exigem ações explícitas, preservadas
+no histórico e na auditoria.
 
 ## Pré-voo da migration 010
 

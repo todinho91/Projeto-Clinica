@@ -134,19 +134,52 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
         }, prepared);
         assert.equal(prepared.statusCode, 201);
         assert.equal(prepared.body.estado_entrega, 'nao_enviado');
+        const repeatedPreparation = response();
+        await confirmationController.requestConfirmation({
+            userId: secretaryAurora, tenant: request.tenant,
+            params: { id: String(appointmentId) }, body: { versao: 1 }
+        }, repeatedPreparation);
+        assert.equal(repeatedPreparation.statusCode, 200);
+        assert.equal(repeatedPreparation.body.idempotente, true);
+        assert.equal(repeatedPreparation.body.whatsapp_url, null);
         const message = new URL(prepared.body.whatsapp_url).searchParams.get('text');
-        const publicLink = message.match(/https?:\/\/[^\s]+confirmacao-consulta\.html\?token=[A-Za-z0-9_-]+/)[0];
-        const publicToken = new URL(publicLink).searchParams.get('token');
+        const publicLink = message.match(/https?:\/\/[^\s]+confirmacao-consulta\.html#token=[A-Za-z0-9_-]+/)[0];
+        const publicToken = new URLSearchParams(new URL(publicLink).hash.slice(1)).get('token');
         const publicReply = response();
         await confirmationController.respondPublic({
-            params: { token: publicToken }, body: { resposta: 'confirmada' }
+            body: { token: publicToken, resposta: 'confirmada' }
         }, publicReply);
         assert.equal(publicReply.statusCode, 200);
         const duplicateReply = response();
         await confirmationController.respondPublic({
-            params: { token: publicToken }, body: { resposta: 'recusada' }
+            body: { token: publicToken, resposta: 'recusada' }
         }, duplicateReply);
         assert.equal(duplicateReply.statusCode, 409);
+
+        const replacement = response();
+        await confirmationController.requestConfirmation({
+            userId: secretaryAurora, tenant: request.tenant,
+            params: { id: String(appointmentId) }, body: { versao: 1, substituir: true }
+        }, replacement);
+        assert.equal(replacement.statusCode, 201);
+        const replacementMessage = new URL(replacement.body.whatsapp_url).searchParams.get('text');
+        const replacementLink = replacementMessage.match(
+            /https?:\/\/[^\s]+confirmacao-consulta\.html#token=[A-Za-z0-9_-]+/
+        )[0];
+        const replacementToken = new URLSearchParams(new URL(replacementLink).hash.slice(1)).get('token');
+        const publicConcurrent = response(); const manualConcurrent = response();
+        await Promise.all([
+            confirmationController.respondPublic({
+                body: { token: replacementToken, resposta: 'confirmada' }
+            }, publicConcurrent),
+            confirmationController.manualResponse({
+                userId: secretaryAurora, tenant: request.tenant,
+                params: { id: String(appointmentId) }, body: { versao: 1, resposta: 'recusada' }
+            }, manualConcurrent)
+        ]);
+        const concurrentStatuses = [publicConcurrent.statusCode, manualConcurrent.statusCode];
+        assert.equal(concurrentStatuses.includes(409), true);
+        assert.equal(concurrentStatuses.some((status) => status === 200 || status === 201), true);
 
         const crossTenantConfirmation = response();
         await confirmationController.requestConfirmation({

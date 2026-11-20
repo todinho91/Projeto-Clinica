@@ -361,9 +361,11 @@ exports.listCalendar = async (req, res) => {
                     THEN 'expirada' ELSE cc.estado END
                  FROM confirmacoes_consulta cc
                  WHERE cc.clinica_id = c.clinica_id AND cc.consulta_id = c.id
+                   AND cc.consulta_versao = c.versao
                  ORDER BY cc.id DESC LIMIT 1) AS confirmacao_estado,
                 (SELECT cc.canal FROM confirmacoes_consulta cc
                  WHERE cc.clinica_id = c.clinica_id AND cc.consulta_id = c.id
+                   AND cc.consulta_versao = c.versao
                  ORDER BY cc.id DESC LIMIT 1) AS confirmacao_canal,
                 pa.id AS paciente_id, pa.nome AS paciente_nome,
                 p.id AS profissional_id, p.nome_exibicao AS profissional_nome,
@@ -548,9 +550,11 @@ exports.listForManagement = async (req, res) => {
                     THEN 'expirada' ELSE cc.estado END
                  FROM confirmacoes_consulta cc
                  WHERE cc.clinica_id = c.clinica_id AND cc.consulta_id = c.id
+                   AND cc.consulta_versao = c.versao
                  ORDER BY cc.id DESC LIMIT 1) AS confirmacao_estado,
                 (SELECT cc.canal FROM confirmacoes_consulta cc
                  WHERE cc.clinica_id = c.clinica_id AND cc.consulta_id = c.id
+                   AND cc.consulta_versao = c.versao
                  ORDER BY cc.id DESC LIMIT 1) AS confirmacao_canal,
                 pa.id AS paciente_id, pa.nome AS paciente_nome,
                 p.id AS profissional_id, p.nome_exibicao AS profissional_nome,

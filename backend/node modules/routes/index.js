@@ -25,14 +25,26 @@ router.post('/auth/register', authController.register);
 router.post('/auth/login', authController.login);
 router.get('/convites/:token', invitationRateLimit, equipeController.inspectInvitation);
 router.post('/convites/:token/aceitar', invitationRateLimit, optionalAuth, equipeController.acceptInvitation);
-router.get(
-    '/confirmacoes-consulta/:token',
+function protectPublicConfirmation(req, res, next) {
+    res.set({
+        'Cache-Control': 'no-store, private, max-age=0',
+        Pragma: 'no-cache',
+        'Referrer-Policy': 'no-referrer',
+        'X-Robots-Tag': 'noindex, nofollow, noarchive'
+    });
+    next();
+}
+
+router.post(
+    '/confirmacoes-consulta/consultar',
     invitationRateLimit,
+    protectPublicConfirmation,
     confirmacaoConsultaController.inspectPublic
 );
 router.post(
-    '/confirmacoes-consulta/:token/responder',
+    '/confirmacoes-consulta/responder',
     invitationRateLimit,
+    protectPublicConfirmation,
     confirmacaoConsultaController.respondPublic
 );
 
