@@ -51,6 +51,10 @@ function publicOrigin(value) {
     if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin !== value) {
         throw new Error('APP_PUBLIC_ORIGIN deve ser uma origem HTTP(S), sem caminho.');
     }
+    const localHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
+    if (parsed.protocol !== 'https:' && !localHosts.has(parsed.hostname)) {
+        throw new Error('APP_PUBLIC_ORIGIN deve usar HTTPS fora do ambiente local.');
+    }
     return value;
 }
 
@@ -69,6 +73,10 @@ const ttlHours = Number(process.env.INVITATION_TTL_HOURS ?? '48');
 if (!Number.isInteger(ttlHours) || ttlHours < 1 || ttlHours > 168) {
     throw new Error('INVITATION_TTL_HOURS deve ser um inteiro entre 1 e 168.');
 }
+const confirmationTtlHours = Number(process.env.CONFIRMATION_TTL_HOURS ?? '24');
+if (!Number.isInteger(confirmationTtlHours) || confirmationTtlHours < 1 || confirmationTtlHours > 168) {
+    throw new Error('CONFIRMATION_TTL_HOURS deve ser um inteiro entre 1 e 168.');
+}
 
 module.exports = {
     jwtSecret,
@@ -81,6 +89,10 @@ module.exports = {
         mailApiToken: webhookMail ? required('MAIL_API_TOKEN') : null,
         mailFrom: webhookMail ? required('MAIL_FROM') : null,
         ttlHours
+    },
+    confirmation: {
+        publicOrigin: publicOrigin(process.env.APP_PUBLIC_ORIGIN ?? 'http://127.0.0.1:5500'),
+        ttlHours: confirmationTtlHours
     },
     database: {
         host: required('DB_HOST'),

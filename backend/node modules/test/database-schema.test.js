@@ -28,7 +28,9 @@ test('migrations criam todas as tabelas previstas para DB-01', async () => {
         'auditoria_plataforma',
         'disponibilidades_profissional',
         'bloqueios_profissional',
-        'consultas_historico'
+        'consultas_historico',
+        'confirmacoes_consulta',
+        'confirmacoes_consulta_eventos'
     ]) {
         assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`));
     }
@@ -134,6 +136,19 @@ test('gestão de pacientes adiciona índices tenant-aware sem destruir dados', a
     assert.match(sql, /KEY idx_pacientes_status_nome \(clinica_id, status, nome\)/);
     assert.match(sql, /KEY idx_pacientes_nascimento_nome \(clinica_id, data_nascimento, nome\)/);
     assert.doesNotMatch(sql, /DROP|TRUNCATE|DELETE|UPDATE|INSERT/i);
+});
+
+test('confirmações usam hash, expiração, trilha e referências multi-tenant', async () => {
+    const sql = await fs.readFile(
+        path.join(migrationsDir, '010_appointment_confirmations.sql'), 'utf8'
+    );
+    assert.match(sql, /token_hash CHAR\(64\) NULL/);
+    assert.match(sql, /expira_em DATETIME\(6\) NULL/);
+    assert.match(sql, /UNIQUE KEY uk_confirmacoes_token_hash/);
+    assert.match(sql, /FOREIGN KEY \(clinica_id, consulta_id\)[\s\S]*REFERENCES consultas \(clinica_id, id\)/);
+    assert.match(sql, /FOREIGN KEY \(clinica_id, confirmacao_id\)[\s\S]*REFERENCES confirmacoes_consulta \(clinica_id, id\)/);
+    assert.match(sql, /preferencia_contato ENUM\('nenhum', 'whatsapp', 'telefone', 'email'\)/);
+    assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM|UPDATE pacientes|INSERT INTO pacientes/i);
 });
 
 test('pré-voo da migration 008 inclui e-mails vazios e usa a collation real', async () => {

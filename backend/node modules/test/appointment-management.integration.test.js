@@ -24,7 +24,8 @@ function response() {
 async function resetSchema(connection, database) {
     await confirmAppointmentTestEnvironment(connection, database);
     const tables = [
-        'auditoria_plataforma', 'convites_clinica', 'bloqueios_profissional',
+        'auditoria_plataforma', 'convites_clinica', 'confirmacoes_consulta_eventos',
+        'confirmacoes_consulta', 'bloqueios_profissional',
         'disponibilidades_profissional', 'auditoria', 'documentos_clinicos',
         'consultas_historico', 'consultas', 'pacientes', 'profissional_especialidades',
         'profissionais', 'especialidades', 'clinica_usuarios', 'operadores_plataforma',
@@ -93,8 +94,8 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
         [auroraId, auroraProfessionalId, auroraSpecialty,
             horizonteId, horizonteProfessionalId, horizonteSpecialty]);
         const [auroraPatient] = await setup.execute(`INSERT INTO pacientes
-            (clinica_id, usuario_id, nome, email, status) VALUES
-            (?, ?, 'Paciente Aurora', 'agenda.paciente.aurora@example.test', 'ativo')`,
+            (clinica_id, usuario_id, nome, email, telefone, preferencia_contato, status) VALUES
+            (?, ?, 'Paciente Aurora', 'agenda.paciente.aurora@example.test', '43999998888', 'whatsapp', 'ativo')`,
         [auroraId, patientAuroraUser]);
         const [horizontePatient] = await setup.execute(`INSERT INTO pacientes
             (clinica_id, usuario_id, nome, email, status) VALUES
@@ -124,6 +125,65 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
         ]);
         assert.deepEqual([first.statusCode, second.statusCode].sort(), [201, 409]);
         const appointmentId = first.statusCode === 201 ? first.body.id : second.body.id;
+
+        const confirmationController = require('../controllers/confirmacaoConsultaController');
+        const prepared = response();
+        await confirmationController.requestConfirmation({
+            userId: secretaryAurora, tenant: request.tenant,
+            params: { id: String(appointmentId) }, body: { versao: 1 }
+        }, prepared);
+        assert.equal(prepared.statusCode, 201);
+        assert.equal(prepared.body.estado_entrega, 'nao_enviado');
+        const repeatedPreparation = response();
+        await confirmationController.requestConfirmation({
+            userId: secretaryAurora, tenant: request.tenant,
+            params: { id: String(appointmentId) }, body: { versao: 1 }
+        }, repeatedPreparation);
+        assert.equal(repeatedPreparation.statusCode, 200);
+        assert.equal(repeatedPreparation.body.idempotente, true);
+        assert.equal(repeatedPreparation.body.whatsapp_url, null);
+        const replacementA = response(); const replacementB = response();
+        const replacementRequest = {
+            userId: secretaryAurora, tenant: request.tenant,
+            params: { id: String(appointmentId) },
+            body: {
+                versao: 1, substituir: true,
+                confirmacao_id_esperada: prepared.body.confirmacao_id
+            }
+        };
+        await Promise.all([
+            confirmationController.requestConfirmation(replacementRequest, replacementA),
+            confirmationController.requestConfirmation({
+                ...replacementRequest, body: { ...replacementRequest.body }
+            }, replacementB)
+        ]);
+        assert.deepEqual([replacementA.statusCode, replacementB.statusCode].sort(), [200, 201]);
+        const replacement = replacementA.statusCode === 201 ? replacementA : replacementB;
+        const replacementMessage = new URL(replacement.body.whatsapp_url).searchParams.get('text');
+        const replacementLink = replacementMessage.match(
+            /https?:\/\/[^\s]+confirmacao-consulta\.html#token=[A-Za-z0-9_-]+/
+        )[0];
+        const replacementToken = new URLSearchParams(new URL(replacementLink).hash.slice(1)).get('token');
+        const publicConcurrent = response(); const manualConcurrent = response();
+        await Promise.all([
+            confirmationController.respondPublic({
+                body: { token: replacementToken, resposta: 'confirmada' }
+            }, publicConcurrent),
+            confirmationController.manualResponse({
+                userId: secretaryAurora, tenant: request.tenant,
+                params: { id: String(appointmentId) }, body: { versao: 1, resposta: 'recusada' }
+            }, manualConcurrent)
+        ]);
+        const concurrentStatuses = [publicConcurrent.statusCode, manualConcurrent.statusCode];
+        assert.equal(concurrentStatuses.includes(409), true);
+        assert.equal(concurrentStatuses.some((status) => status === 200 || status === 201), true);
+
+        const crossTenantConfirmation = response();
+        await confirmationController.requestConfirmation({
+            userId: secretaryHorizonte, tenant: { clinicId: horizonteId, role: 'secretaria' },
+            params: { id: String(appointmentId) }, body: { versao: 1 }
+        }, crossTenantConfirmation);
+        assert.equal(crossTenantConfirmation.statusCode, 404);
 
         const partialOverlap = response();
         await controller.agendarConsulta({
@@ -244,6 +304,38 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
             ...request, body: { ...request.body, inicio_local: '2032-05-10T15:00' }
         }, secondAppointment);
         assert.equal(secondAppointment.statusCode, 201);
+        await setup.execute(`UPDATE pacientes SET confirmacao_vitalis_ativa = 1
+            WHERE clinica_id = ? AND id = ?`, [auroraId, auroraPatientId]);
+        const portalRequest = response();
+        await confirmationController.requestConfirmation({
+            userId: secretaryAurora, tenant: request.tenant,
+            params: { id: String(secondAppointment.body.id) },
+            body: { versao: 1, canal_esperado: 'portal_vitalis' }
+        }, portalRequest);
+        assert.equal(portalRequest.statusCode, 201);
+        assert.equal(portalRequest.body.canal_selecionado, 'portal_vitalis');
+        assert.equal(portalRequest.body.whatsapp_url, null);
+        const portalConfirmed = response(); const portalDeclined = response();
+        await Promise.all([
+            confirmationController.authenticatedPatientResponse({
+                userId: patientAuroraUser, tenant: { clinicId: auroraId, role: 'paciente' },
+                params: { id: String(secondAppointment.body.id) },
+                body: { versao: 1, resposta: 'confirmada' }
+            }, portalConfirmed),
+            confirmationController.authenticatedPatientResponse({
+                userId: patientAuroraUser, tenant: { clinicId: auroraId, role: 'paciente' },
+                params: { id: String(secondAppointment.body.id) },
+                body: { versao: 1, resposta: 'recusada' }
+            }, portalDeclined)
+        ]);
+        assert.deepEqual([portalConfirmed.statusCode, portalDeclined.statusCode].sort(), [201, 409]);
+        const crossPatientResponse = response();
+        await confirmationController.authenticatedPatientResponse({
+            userId: patientHorizonteUser, tenant: { clinicId: horizonteId, role: 'paciente' },
+            params: { id: String(secondAppointment.body.id) },
+            body: { versao: 1, resposta: 'confirmada' }
+        }, crossPatientResponse);
+        assert.equal(crossPatientResponse.statusCode, 404);
         const cancelConcurrent = response(); const rescheduleConcurrent = response();
         await Promise.all([
             controller.cancelarConsulta({

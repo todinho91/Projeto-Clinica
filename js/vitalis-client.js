@@ -56,6 +56,14 @@
         }[role] ?? null;
     }
 
+    function clinicEntryDecision(clinics) {
+        if (!Array.isArray(clinics)) return { mode: 'select' };
+        const active = clinics.filter((clinic) => Number.isSafeInteger(Number(clinic?.id)) && Number(clinic.id) > 0);
+        return active.length === 1
+            ? { mode: 'direct', clinicId: Number(active[0].id) }
+            : { mode: 'select' };
+    }
+
     function roleCanAccessPage(role, page) {
         const allowed = {
             'dashboard-secretaria.html': ['administrador', 'secretaria'],
@@ -195,6 +203,7 @@
     return {
         KEYS,
         appointmentPayload,
+        clinicEntryDecision,
         createSession,
         createLatestRequestGate,
         createOperationLock,

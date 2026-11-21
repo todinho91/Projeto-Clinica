@@ -157,7 +157,7 @@ test('consulta do médico deriva seu perfil ativo e mantém defesa por usuário 
     assert.equal(calendarParams.at(-1), 70);
 });
 
-test('interface premium preserva menu, três visões, detalhes, mobile e extensão futura sem envio', async () => {
+test('interface premium preserva menu, três visões, detalhes, mobile e confirmação autorizada', async () => {
     const root = path.resolve(__dirname, '..', '..', '..');
     const [page, main, css, client] = await Promise.all([
         fs.readFile(path.join(root, 'calendario.html'), 'utf8'),
@@ -190,7 +190,8 @@ test('interface premium preserva menu, três visões, detalhes, mobile e extens�
     assert.match(setup, /showSelection\(items/);
     assert.match(setup, /document\.createElement\('button'\)/);
     assert.doesNotMatch(setup, /clinica_id/);
-    assert.doesNotMatch(setup, /whatsapp|wa\.me|enviar.*confirma/i);
+    assert.match(setup, /requestAppointmentConfirmation\(item, status, loadCalendar\)/);
+    assert.doesNotMatch(setup, /wa\.me|estado_entrega\s*=\s*['"]entrega_confirmada/i);
     assert.match(client, /'calendario\.html': \['administrador', 'secretaria', 'profissional'\]/);
     assert.match(css, /\.vitalis-calendar-week, \.vitalis-calendar-month[^}]*repeat\(7/);
     assert.match(css, /\.vitalis-calendar-month \.vitalis-calendar-day[^}]*min-height: 112px/);

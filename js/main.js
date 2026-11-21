@@ -7,6 +7,142 @@ function showMessage(element, message, type = 'danger') {
     element.textContent = message;
 }
 
+function confirmationStateBadge(state, channel) {
+    if (!state) return null;
+    const labels = {
+        preparada: 'Confirmação pendente', confirmada: 'Presença confirmada',
+        recusada: 'Não poderá comparecer', expirada: 'Confirmação expirada',
+        revogada: 'Confirmação revogada'
+    };
+    const badge = document.createElement('span');
+    badge.className = `vitalis-confirmation-state vitalis-confirmation-state-${state}`;
+    const channelLabels = {
+        manual: 'registro manual', portal_vitalis: 'Painel Vitalis',
+        whatsapp: 'WhatsApp', aplicativo: 'Aplicativo Vitalis', push: 'push'
+    };
+    badge.textContent = `${labels[state] || state}${channelLabels[channel] ? ` · ${channelLabels[channel]}` : ''}`;
+    return badge;
+}
+
+function overflowActionMenu(label, items) {
+    const details = document.createElement('details');
+    details.className = 'vitalis-overflow-menu';
+    const summary = document.createElement('summary');
+    summary.className = 'btn btn-sm btn-outline-secondary';
+    summary.setAttribute('aria-label', label);
+    summary.title = label;
+    summary.innerHTML = '<i class="bi bi-three-dots-vertical" aria-hidden="true"></i>';
+    const menu = document.createElement('div'); menu.className = 'vitalis-overflow-menu-list';
+    items.filter(Boolean).forEach(({ text, icon, action, disabled = false, title = '' }) => {
+        const button = document.createElement('button'); button.type = 'button';
+        button.className = 'vitalis-overflow-menu-item'; button.disabled = disabled; button.title = title;
+        button.innerHTML = `<i class="bi ${icon}" aria-hidden="true"></i><span>${text}</span>`;
+        button.addEventListener('click', async () => {
+            details.open = false;
+            await action();
+        });
+        menu.append(button);
+    });
+    details.append(summary, menu);
+    return details;
+}
+
+const pendingConfirmationRequests = new Set();
+
+async function requestAppointmentConfirmation(appointment, statusElement, afterSuccess = async () => {}) {
+    const replacing = Boolean(appointment.confirmacao_estado);
+    const expectedChannel = appointment.confirmacao_canal_recomendado;
+    if (!['portal_vitalis', 'whatsapp'].includes(expectedChannel)) {
+        showMessage(
+            statusElement,
+            'O paciente não possui um canal de confirmação autorizado. Revise as preferências de contato.',
+            'info'
+        );
+        return;
+    }
+    const usesWhatsApp = expectedChannel === 'whatsapp';
+    const prompt = replacing
+        ? `Substituir a solicitação pelo ${usesWhatsApp ? 'WhatsApp' : 'painel Vitalis'}? O histórico será preservado.`
+        : usesWhatsApp
+        ? 'Preparar uma solicitação de confirmação pelo WhatsApp?'
+        : 'Disponibilizar a solicitação no painel Vitalis do paciente?';
+    if (!window.confirm(prompt) || pendingConfirmationRequests.has(appointment.id)) return;
+    pendingConfirmationRequests.add(appointment.id);
+    const popup = usesWhatsApp
+        ? window.open('about:blank', 'vitalis_whatsapp_confirmation') : null;
+    if (usesWhatsApp && !popup) {
+        showMessage(statusElement, 'Permita pop-ups para abrir o WhatsApp com a mensagem preparada.');
+        pendingConfirmationRequests.delete(appointment.id);
+        return;
+    }
+    if (popup) popup.opener = null;
+    try {
+        const result = await apiRequest(`/consultas/${appointment.id}/confirmacoes`, {
+            method: 'POST', body: JSON.stringify({
+                versao: Number(appointment.versao), substituir: replacing,
+                confirmacao_id_esperada: replacing ? Number(appointment.confirmacao_id) : null,
+                canal_esperado: expectedChannel
+            })
+        });
+        if (result.whatsapp_url && popup) popup.location.replace(result.whatsapp_url);
+        else popup?.close();
+        showMessage(statusElement, result.message, 'success');
+        await afterSuccess();
+    } catch (error) {
+        popup?.close(); showMessage(statusElement, error.message);
+    } finally { pendingConfirmationRequests.delete(appointment.id); }
+}
+
+async function registerManualConfirmation(appointment, answer, statusElement, afterSuccess = async () => {}) {
+    const correction = ['confirmada', 'recusada'].includes(appointment.confirmacao_estado)
+        && appointment.confirmacao_estado !== answer;
+    const message = correction
+        ? 'Corrigir explicitamente a resposta registrada? A alteração ficará identificada no histórico e na auditoria.'
+        : answer === 'confirmada'
+        ? 'Registrar que o paciente confirmou presença diretamente com a clínica?'
+        : 'Registrar que o paciente informou que não poderá comparecer?';
+    if (!window.confirm(message)) return;
+    try {
+        const result = await apiRequest(`/consultas/${appointment.id}/confirmacoes/manual`, {
+            method: 'POST', body: JSON.stringify({
+                resposta: answer, versao: Number(appointment.versao), corrigir: correction
+            })
+        });
+        showMessage(statusElement, result.message, 'success');
+        await afterSuccess();
+    } catch (error) { showMessage(statusElement, error.message); }
+}
+
+async function showConfirmationHistory(appointment, statusElement) {
+    try {
+        const data = await apiRequest(`/consultas/${appointment.id}/confirmacoes`);
+        const dialog = document.createElement('dialog'); dialog.className = 'vitalis-confirmation-history';
+        const title = document.createElement('h2'); title.textContent = 'Histórico de confirmações';
+        const list = document.createElement('div'); list.className = 'vitalis-confirmation-history-list';
+        if (!data.confirmacoes.length) {
+            const empty = document.createElement('p'); empty.textContent = 'Nenhuma solicitação registrada.'; list.append(empty);
+        } else data.confirmacoes.forEach((item) => {
+            const row = document.createElement('article');
+            const state = confirmationStateBadge(item.estado, item.canal);
+            const date = document.createElement('small');
+            const channel = {
+                manual: 'Registro manual', portal_vitalis: 'Painel Vitalis',
+                aplicativo: 'Aplicativo Vitalis', push: 'Notificação push', whatsapp: 'WhatsApp'
+            }[item.canal] || item.canal;
+            date.textContent = `${formatDate(item.criado_em)} · ${channel}`;
+            const delivery = document.createElement('span');
+            delivery.textContent = item.estado_entrega === 'nao_enviado'
+                ? 'Envio/entrega não comprovados' : `Entrega: ${item.estado_entrega}`;
+            row.append(state, date, delivery); list.append(row);
+        });
+        const close = document.createElement('button'); close.type = 'button';
+        close.className = 'btn btn-outline-secondary'; close.textContent = 'Fechar';
+        close.addEventListener('click', () => dialog.close());
+        dialog.addEventListener('close', () => dialog.remove());
+        dialog.append(title, list, close); document.body.append(dialog); dialog.showModal();
+    } catch (error) { showMessage(statusElement, error.message); }
+}
+
 async function responseBody(response) {
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) return {};
@@ -85,6 +221,9 @@ function applyClinicIdentity(clinic) {
     if (clinic.papel !== 'administrador') {
         document.querySelectorAll('[data-admin-only]').forEach((element) => element.remove());
     }
+    document.querySelectorAll('[data-clinic-switch]').forEach((element) => {
+        element.hidden = clinic.papel === 'secretaria';
+    });
 }
 
 function formatDate(value) {
@@ -117,7 +256,54 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (page === 'configuracoes-clinica.html') setupClinicSettingsPage();
     else if (page === 'provisionamento-clinicas.html') setupClinicProvisioningPage();
     else if (page === 'disponibilidade.html') setupAvailabilityPage();
+    else if (page === 'confirmacao-consulta.html') setupAppointmentConfirmationPage();
 });
+
+async function setupAppointmentConfirmationPage() {
+    const loading = document.getElementById('confirmation-loading');
+    const details = document.getElementById('confirmation-details');
+    const status = document.getElementById('confirmation-status');
+    const token = new URLSearchParams(window.location.hash.slice(1)).get('token') || '';
+    if (window.location.hash) window.history.replaceState(null, '', window.location.pathname);
+    const controls = [
+        document.getElementById('confirmation-accept'),
+        document.getElementById('confirmation-decline')
+    ];
+    const setBusy = (busy) => controls.forEach((button) => { button.disabled = busy; });
+    const renderUnavailable = (message) => {
+        loading.hidden = true; details.hidden = true;
+        showMessage(status, message || 'Este link não está mais disponível.', 'secondary');
+    };
+    if (token.length < 32) { renderUnavailable('Link de confirmação inválido.'); return; }
+    try {
+        const data = await apiRequest('/confirmacoes-consulta/consultar', {
+            method: 'POST', cache: 'no-store', referrerPolicy: 'no-referrer',
+            body: JSON.stringify({ token })
+        }, null);
+        document.getElementById('confirmation-clinic').textContent = data.clinica_nome;
+        const local = data.inicio_local;
+        document.getElementById('confirmation-date').textContent = `${local.slice(8, 10)}/${local.slice(5, 7)}/${local.slice(0, 4)} às ${local.slice(11, 16)}`;
+        loading.hidden = true; details.hidden = false;
+    } catch (error) {
+        renderUnavailable('Este link não está disponível. Entre em contato com a clínica.');
+        return;
+    }
+    async function respond(answer) {
+        if (!window.confirm(answer === 'confirmada'
+            ? 'Confirmar que pretende comparecer?' : 'Informar que não poderá comparecer?')) return;
+        setBusy(true);
+        try {
+            const data = await apiRequest('/confirmacoes-consulta/responder', {
+                method: 'POST', cache: 'no-store', referrerPolicy: 'no-referrer',
+                body: JSON.stringify({ token, resposta: answer })
+            }, null);
+            details.hidden = true;
+            showMessage(status, data.message, answer === 'confirmada' ? 'success' : 'secondary');
+        } catch (error) { showMessage(status, error.message); setBusy(false); }
+    }
+    controls[0].addEventListener('click', () => respond('confirmada'));
+    controls[1].addEventListener('click', () => respond('recusada'));
+}
 
 async function setupClinicSettingsPage() {
     const clinic = requireClinicSession('configuracoes-clinica.html');
@@ -832,6 +1018,17 @@ function setupLoginPage() {
                 window.location.assign(returnTo);
                 return;
             }
+            const entry = VitalisCore.clinicEntryDecision(data.clinicas);
+            if (entry.mode === 'direct') {
+                const selected = await apiRequest('/auth/select-clinic', {
+                    method: 'POST', body: JSON.stringify({ clinica_id: entry.clinicId })
+                }, 'identity');
+                session.saveClinic(selected);
+                const destination = VitalisCore.dashboardForRole(selected.clinica.papel);
+                if (!destination) throw new Error('Papel sem painel disponível.');
+                window.location.assign(destination);
+                return;
+            }
             window.location.assign('select-clinic.html');
         } catch (error) {
             errorElement.textContent = error.message;
@@ -896,6 +1093,9 @@ async function setupPacienteDashboard() {
     const clinic = requireClinicSession('dashboard-paciente.html');
     if (!clinic) return;
     applyClinicIdentity(clinic);
+    document.querySelectorAll('[data-user-name]').forEach((element) => {
+        element.textContent = session.user?.nome || 'paciente';
+    });
     const table = document.getElementById('tabela-consultas-paciente');
     const specialtySelect = document.getElementById('especialidade-select');
     const professionalSelect = document.getElementById('profissional-select');
@@ -904,9 +1104,25 @@ async function setupPacienteDashboard() {
     const slotSelect = document.getElementById('horario-consulta');
     const status = document.getElementById('agendamento-status');
     const form = document.getElementById('agendamento-form');
+    const vitalisChannelToggle = document.getElementById('confirmacao-vitalis-ativa');
+    const vitalisChannelStatus = document.getElementById('confirmacao-vitalis-status');
     const slotsGate = VitalisCore.createLatestRequestGate();
     const mutationLock = VitalisCore.createOperationLock();
     let specialties = [];
+
+    async function loadChannelPreference() {
+        vitalisChannelToggle.disabled = true;
+        try {
+            const preference = await apiRequest('/confirmacoes/minhas-preferencias');
+            vitalisChannelToggle.checked = Boolean(preference.confirmacao_vitalis_ativa);
+            document.getElementById('patient-channel-state').textContent = vitalisChannelToggle.checked
+                ? 'Ativo' : 'Inativo';
+            vitalisChannelToggle.disabled = false;
+        } catch (error) {
+            document.getElementById('patient-channel-state').textContent = 'Indisponível';
+            showMessage(vitalisChannelStatus, error.message);
+        }
+    }
 
     function selectedSpecialty() {
         return specialties.find((item) => item.id === Number(specialtySelect.value));
@@ -958,6 +1174,27 @@ async function setupPacienteDashboard() {
     async function loadAgenda() {
         try {
             const appointments = await apiRequest('/consultas/minha-agenda');
+            const upcoming = appointments.filter((appointment) => (
+                ['agendada', 'confirmada'].includes(appointment.status) && appointment.futura !== false
+            ));
+            const pending = upcoming.filter((appointment) => appointment.confirmacao_estado === 'preparada');
+            const next = [...upcoming].sort((first, second) => (
+                String(first.inicio_local || first.inicio_em).localeCompare(String(second.inicio_local || second.inicio_em))
+            ))[0];
+            document.getElementById('patient-total-upcoming').textContent = String(upcoming.length);
+            document.getElementById('patient-pending-confirmations').textContent = String(pending.length);
+            const nextContainer = document.getElementById('patient-next-appointment');
+            const nextDetails = document.getElementById('patient-next-details');
+            if (next) {
+                const nextPeriod = next.inicio_local
+                    ? `${next.inicio_local.slice(8, 10)}/${next.inicio_local.slice(5, 7)}/${next.inicio_local.slice(0, 4)} às ${next.inicio_local.slice(11, 16)}`
+                    : formatDate(next.inicio_em);
+                nextContainer.querySelector('strong').textContent = next.nome_profissional;
+                nextDetails.textContent = `${nextPeriod}${next.especialidade_nome ? ` · ${next.especialidade_nome}` : ''}`;
+            } else {
+                nextContainer.querySelector('strong').textContent = 'Nenhuma consulta futura';
+                nextDetails.textContent = 'Quando houver um novo agendamento, ele aparecerá em destaque aqui.';
+            }
             table.replaceChildren();
             if (appointments.length === 0) {
                 const row = document.createElement('tr');
@@ -970,12 +1207,56 @@ async function setupPacienteDashboard() {
             }
             appointments.forEach((appointment) => {
                 const row = document.createElement('tr');
-                row.append(
-                    tableCell(appointment.nome_profissional),
-                    tableCell(`${formatDate(appointment.inicio_em)} — ${formatDate(appointment.fim_em)}`),
-                    tableCell(appointment.status)
+                if (appointment.confirmacao_estado === 'preparada') row.classList.add('vitalis-patient-row-pending');
+                const period = appointment.inicio_local && appointment.fim_local
+                    ? `${appointment.inicio_local.slice(8, 10)}/${appointment.inicio_local.slice(5, 7)}/${appointment.inicio_local.slice(0, 4)} · ${appointment.inicio_local.slice(11, 16)}–${appointment.fim_local.slice(11, 16)}`
+                    : `${formatDate(appointment.inicio_em)} — ${formatDate(appointment.fim_em)}`;
+                const patientStatusLabels = {
+                    agendada: 'Agendada', confirmada: 'Confirmada', realizada: 'Realizada',
+                    cancelada: 'Cancelada', nao_compareceu: 'Não compareceu'
+                };
+                const situation = document.createElement('td'); situation.dataset.label = 'Situação';
+                const clinicalState = document.createElement('span');
+                clinicalState.className = `vitalis-status vitalis-status-${appointment.status.replaceAll('_', '-')}`;
+                clinicalState.textContent = patientStatusLabels[appointment.status] || appointment.status;
+                situation.append(clinicalState);
+                const confirmationBadge = confirmationStateBadge(
+                    appointment.confirmacao_estado, appointment.confirmacao_canal
                 );
-                const actions = document.createElement('td');
+                if (confirmationBadge) situation.append(confirmationBadge);
+                const professionalCell = tableCell(appointment.nome_profissional);
+                professionalCell.dataset.label = 'Profissional';
+                const periodCell = tableCell(period);
+                periodCell.dataset.label = 'Período';
+                row.append(professionalCell, periodCell, situation);
+                const actions = document.createElement('td'); actions.className = 'vitalis-patient-appointment-actions';
+                actions.dataset.label = 'Ações';
+                if (['agendada', 'confirmada'].includes(appointment.status)
+                    && appointment.futura
+                    && !['confirmada', 'recusada'].includes(appointment.confirmacao_estado)) {
+                    [
+                        ['Confirmar presença', 'confirmada', 'btn-success'],
+                        ['Não poderei comparecer', 'recusada', 'btn-outline-secondary']
+                    ].forEach(([label, answer, cssClass]) => {
+                        const button = document.createElement('button'); button.type = 'button';
+                        button.className = `btn btn-sm ${cssClass}`; button.textContent = label;
+                        button.addEventListener('click', async () => {
+                            if (!mutationLock.tryBegin()) return;
+                            actions.querySelectorAll('button').forEach((control) => { control.disabled = true; });
+                            try {
+                                const result = await apiRequest(`/consultas/${appointment.id}/confirmacoes/minha-resposta`, {
+                                    method: 'POST', body: JSON.stringify({
+                                        resposta: answer, versao: Number(appointment.versao)
+                                    })
+                                });
+                                showMessage(status, result.message, 'success');
+                                await loadAgenda();
+                            } catch (error) { showMessage(status, error.message); }
+                            finally { mutationLock.end(); }
+                        });
+                        actions.append(button);
+                    });
+                }
                 if (['agendada', 'confirmada'].includes(appointment.status)) {
                     const button = document.createElement('button');
                     button.type = 'button';
@@ -1027,6 +1308,23 @@ async function setupPacienteDashboard() {
     [professionalSelect, dateInput, durationSelect].forEach((control) => {
         control.addEventListener('change', loadSlots);
     });
+    vitalisChannelToggle.addEventListener('change', async () => {
+        const requested = vitalisChannelToggle.checked;
+        vitalisChannelToggle.disabled = true;
+        try {
+            const result = await apiRequest('/confirmacoes/minhas-preferencias', {
+                method: 'PUT', body: JSON.stringify({ ativo: requested })
+            });
+            vitalisChannelToggle.checked = Boolean(result.confirmacao_vitalis_ativa);
+            document.getElementById('patient-channel-state').textContent = vitalisChannelToggle.checked
+                ? 'Ativo' : 'Inativo';
+            showMessage(vitalisChannelStatus, result.message, 'success');
+            await loadAgenda();
+        } catch (error) {
+            vitalisChannelToggle.checked = !requested;
+            showMessage(vitalisChannelStatus, error.message);
+        } finally { vitalisChannelToggle.disabled = false; }
+    });
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (!mutationLock.tryBegin()) return;
@@ -1055,7 +1353,9 @@ async function setupPacienteDashboard() {
         }
     });
 
-    await loadAgenda();
+    await Promise.all([loadChannelPreference(), loadAgenda()]);
+    const agendaRefresh = window.setInterval(loadAgenda, 30000);
+    window.addEventListener('beforeunload', () => window.clearInterval(agendaRefresh), { once: true });
 }
 
 async function setupProfissionalDashboard() {
@@ -1426,6 +1726,48 @@ async function setupCalendarPage() {
         const specialty = document.createElement('small');
         specialty.textContent = item.especialidade_nome || 'Especialidade não informada';
         card.append(period, patient, professional, specialty);
+        const confirmationBadge = confirmationStateBadge(item.confirmacao_estado, item.confirmacao_canal);
+        if (confirmationBadge) card.append(confirmationBadge);
+        if (!isProfessional && ['agendada', 'confirmada'].includes(item.status)) {
+            const actions = document.createElement('div'); actions.className = 'vitalis-calendar-detail-actions';
+            if (!['confirmada', 'recusada'].includes(item.confirmacao_estado)) {
+                const requestButton = document.createElement('button');
+                requestButton.type = 'button'; requestButton.className = 'btn btn-sm btn-outline-success';
+                requestButton.innerHTML = '<i class="bi bi-chat-square-check"></i> Solicitar confirmação';
+                requestButton.addEventListener('click', () => requestAppointmentConfirmation(item, status, loadCalendar));
+                actions.append(requestButton);
+            }
+            actions.append(overflowActionMenu('Mais ações da consulta', [
+                { text: 'Reagendar', icon: 'bi-calendar-event', action: () => {
+                    window.location.assign(`agenda.html?reagendar=${item.id}&data=${item.inicio_local.slice(0, 10)}`);
+                } },
+                { text: 'Cancelar consulta', icon: 'bi-x-circle', action: async () => {
+                    if (!window.confirm('Cancelar esta consulta? O histórico será preservado.')) return;
+                    try {
+                        await apiRequest(`/consultas/${item.id}/status`, {
+                            method: 'PUT', body: JSON.stringify({ status: 'cancelada', versao: item.versao })
+                        });
+                        await loadCalendar();
+                    } catch (error) { showMessage(status, error.message); }
+                } },
+                { text: 'Registrar presença', icon: 'bi-person-check', action: () => (
+                    registerManualConfirmation(item, 'confirmada', status, loadCalendar)
+                ) },
+                { text: 'Registrar impossibilidade', icon: 'bi-person-dash', action: () => (
+                    registerManualConfirmation(item, 'recusada', status, loadCalendar)
+                ) },
+                { text: 'Histórico de confirmações', icon: 'bi-clock-history', action: () => (
+                    showConfirmationHistory(item, status)
+                ) }
+            ]));
+            card.append(actions);
+        } else if (!isProfessional) {
+            card.append(overflowActionMenu('Mais ações da consulta', [
+                { text: 'Histórico de confirmações', icon: 'bi-clock-history', action: () => (
+                    showConfirmationHistory(item, status)
+                ) }
+            ]));
+        }
         return card;
     }
 
@@ -1645,6 +1987,10 @@ async function setupAppointmentsPage() {
     let page = 1;
     let total = 0;
     const limit = 20;
+    const agendaQuery = new URLSearchParams(window.location.search);
+    let pendingRescheduleId = Number(agendaQuery.get('reagendar')) || null;
+    const requestedDate = /^\d{4}-\d{2}-\d{2}$/.test(agendaQuery.get('data') || '')
+        ? agendaQuery.get('data') : null;
 
     let today = new Date().toISOString().slice(0, 10);
     dateInput.min = today;
@@ -1814,27 +2160,44 @@ async function setupAppointmentsPage() {
                 ['Atendimento', `${item.profissional_nome}${item.especialidade_nome ? ` — ${item.especialidade_nome}` : ''}`]
             ];
             values.forEach(([label, value]) => { const cell = tableCell(value); cell.dataset.label = label; row.append(cell); });
-            const status = document.createElement('td'); status.dataset.label = 'Situação'; status.append(badge(item.status)); row.append(status);
+            const status = document.createElement('td'); status.dataset.label = 'Situação';
+            status.append(badge(item.status));
+            const confirmationBadge = confirmationStateBadge(item.confirmacao_estado, item.confirmacao_canal);
+            if (confirmationBadge) status.append(confirmationBadge);
+            row.append(status);
             const actions = document.createElement('td'); actions.dataset.label = 'Ações'; actions.className = 'vitalis-appointment-actions';
             if (['agendada', 'confirmada'].includes(item.status)) {
-                actions.append(actionButton('Reagendar', 'bi-calendar-event', 'btn-outline-primary', () => beginReschedule(item)));
-                actions.append(actionButton('Cancelar', 'bi-x-circle', 'btn-outline-danger', () => mutate(
+                if (!['confirmada', 'recusada'].includes(item.confirmacao_estado)) {
+                    actions.append(actionButton('Solicitar confirmação',
+                        'bi-chat-square-check', 'btn-success', () => (
+                        requestAppointmentConfirmation(item, listStatus, loadAgenda)
+                    )));
+                }
+            }
+            const active = ['agendada', 'confirmada'].includes(item.status);
+            actions.append(overflowActionMenu('Mais ações da consulta', [
+                active && { text: 'Reagendar', icon: 'bi-calendar-event', action: () => beginReschedule(item) },
+                active && { text: 'Cancelar consulta', icon: 'bi-x-circle', action: () => mutate(
                     `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'cancelada', versao: item.versao }) },
                     'Cancelar esta consulta? O histórico será preservado.'
-                )));
-            }
-            if (item.status === 'agendada') actions.append(actionButton('Confirmar', 'bi-check-circle', 'btn-outline-success', () => mutate(
-                `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'confirmada', versao: item.versao }) }
-            )));
-            if (['agendada', 'confirmada'].includes(item.status)) {
-                const absent = actionButton('Faltou', 'bi-person-x', 'btn-outline-warning', () => mutate(
-                    `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'nao_compareceu', versao: item.versao }) }
-                ));
-                absent.disabled = !item.pode_marcar_falta;
-                absent.dataset.temporalDisabled = String(!item.pode_marcar_falta);
-                if (absent.disabled) absent.title = 'Disponível somente após o término da consulta.';
-                actions.append(absent);
-            }
+                ) },
+                active && { text: 'Registrar presença', icon: 'bi-person-check', action: () => (
+                    registerManualConfirmation(item, 'confirmada', listStatus, loadAgenda)
+                ) },
+                active && { text: 'Registrar impossibilidade', icon: 'bi-person-dash', action: () => (
+                    registerManualConfirmation(item, 'recusada', listStatus, loadAgenda)
+                ) },
+                item.status === 'agendada' && { text: 'Confirmar consulta', icon: 'bi-check-circle', action: () => mutate(
+                    `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'confirmada', versao: item.versao }) }
+                ) },
+                active && { text: 'Registrar falta', icon: 'bi-person-x', disabled: !item.pode_marcar_falta,
+                    title: item.pode_marcar_falta ? '' : 'Disponível somente após o término da consulta.', action: () => mutate(
+                        `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'nao_compareceu', versao: item.versao }) }
+                    ) },
+                { text: 'Histórico de confirmações', icon: 'bi-clock-history', action: () => (
+                    showConfirmationHistory(item, listStatus)
+                ) }
+            ]));
             if (!actions.children.length) actions.textContent = 'Histórico preservado';
             row.append(actions); list.append(row);
         });
@@ -1853,6 +2216,14 @@ async function setupAppointmentsPage() {
             const data = await apiRequest(`/consultas/gestao?${params}`);
             if (!listGate.isCurrent(ticket, key)) return;
             total = data.paginacao.total; render(data.consultas);
+            if (pendingRescheduleId) {
+                const requested = data.consultas.find((item) => Number(item.id) === pendingRescheduleId);
+                if (requested) {
+                    pendingRescheduleId = null;
+                    window.history.replaceState({}, '', 'agenda.html');
+                    beginReschedule(requested);
+                }
+            }
             pageLabel.textContent = `Página ${page} de ${Math.max(1, Math.ceil(total / limit))}`;
             previous.disabled = page <= 1; next.disabled = page * limit >= total;
             showMessage(listStatus, `${total} consulta(s) encontrada(s).`, 'muted');
@@ -1872,8 +2243,8 @@ async function setupAppointmentsPage() {
         today = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
         dateInput.min = today;
         dateInput.value = today;
-        document.getElementById('agenda-data-inicio').value = today;
-        document.getElementById('agenda-data-fim').value = today;
+        document.getElementById('agenda-data-inicio').value = requestedDate || today;
+        document.getElementById('agenda-data-fim').value = requestedDate || today;
         specialties.forEach((item) => specialtySelect.append(new Option(item.nome, String(item.id))));
     } catch (error) { showMessage(formStatus, error.message); form.hidden = true; return; }
 
@@ -1975,6 +2346,7 @@ async function setupPatientsPage() {
             nome: document.getElementById('paciente-nome').value,
             email: document.getElementById('paciente-email').value,
             telefone: document.getElementById('paciente-telefone').value,
+            preferencia_contato: document.getElementById('paciente-preferencia-contato').value,
             data_nascimento: document.getElementById('paciente-nascimento').value,
             status: document.getElementById('paciente-status').value,
             ...(approvedDuplicateReview ? {
@@ -2067,6 +2439,7 @@ async function setupPatientsPage() {
             document.getElementById('paciente-nome').value = patient.nome;
             document.getElementById('paciente-email').value = patient.email ?? '';
             document.getElementById('paciente-telefone').value = patient.telefone ?? '';
+            document.getElementById('paciente-preferencia-contato').value = patient.preferencia_contato ?? 'nenhum';
             document.getElementById('paciente-nascimento').value = patient.data_nascimento
                 ? String(patient.data_nascimento).slice(0, 10) : '';
             document.getElementById('paciente-status').value = patient.status;
