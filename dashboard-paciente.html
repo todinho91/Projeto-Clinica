@@ -26,6 +26,19 @@
     <main class="container mt-5">
         <h1 class="mb-4">Bem-vindo, Paciente!</h1>
 
+        <section class="content-section vitalis-patient-channel" aria-labelledby="patient-channel-title">
+            <h2 id="patient-channel-title">Confirmações pelo Vitalis</h2>
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch"
+                    id="confirmacao-vitalis-ativa" disabled>
+                <label class="form-check-label" for="confirmacao-vitalis-ativa">
+                    Quero receber solicitações de confirmação no meu painel Vitalis
+                </label>
+            </div>
+            <p class="form-text mb-0">Esta adesão vale somente para o painel web. Ela não comprova aplicativo instalado, notificação push nem entrega.</p>
+            <div id="confirmacao-vitalis-status" class="mt-2" role="status" aria-live="polite"></div>
+        </section>
+
         <section class="content-section">
             <h2>Minhas Consultas Agendadas</h2>
             <div class="table-responsive vitalis-patient-agenda">

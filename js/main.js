@@ -16,7 +16,10 @@ function confirmationStateBadge(state, channel) {
     };
     const badge = document.createElement('span');
     badge.className = `vitalis-confirmation-state vitalis-confirmation-state-${state}`;
-    const channelLabels = { manual: 'registro manual', portal_vitalis: 'Vitalis' };
+    const channelLabels = {
+        manual: 'registro manual', portal_vitalis: 'Painel Vitalis',
+        whatsapp: 'WhatsApp', aplicativo: 'Aplicativo Vitalis', push: 'push'
+    };
     badge.textContent = `${labels[state] || state}${channelLabels[channel] ? ` · ${channelLabels[channel]}` : ''}`;
     return badge;
 }
@@ -46,15 +49,20 @@ function overflowActionMenu(label, items) {
 
 const pendingConfirmationRequests = new Set();
 
-async function requestWhatsAppConfirmation(appointment, statusElement, afterSuccess = async () => {}) {
+async function requestAppointmentConfirmation(appointment, statusElement, afterSuccess = async () => {}) {
     const replacing = Boolean(appointment.confirmacao_estado);
+    const expectedChannel = appointment.confirmacao_canal_recomendado || 'whatsapp';
+    const usesWhatsApp = expectedChannel === 'whatsapp';
     const prompt = replacing
-        ? 'Gerar um novo link? Esta ação explícita invalidará eventual link pendente e preservará o histórico.'
-        : 'Preparar uma solicitação de confirmação pelo WhatsApp?';
+        ? `Substituir a solicitação pelo ${usesWhatsApp ? 'WhatsApp' : 'painel Vitalis'}? O histórico será preservado.`
+        : usesWhatsApp
+        ? 'Preparar uma solicitação de confirmação pelo WhatsApp?'
+        : 'Disponibilizar a solicitação no painel Vitalis do paciente?';
     if (!window.confirm(prompt) || pendingConfirmationRequests.has(appointment.id)) return;
     pendingConfirmationRequests.add(appointment.id);
-    const popup = window.open('about:blank', 'vitalis_whatsapp_confirmation');
-    if (!popup) {
+    const popup = usesWhatsApp
+        ? window.open('about:blank', 'vitalis_whatsapp_confirmation') : null;
+    if (usesWhatsApp && !popup) {
         showMessage(statusElement, 'Permita pop-ups para abrir o WhatsApp com a mensagem preparada.');
         pendingConfirmationRequests.delete(appointment.id);
         return;
@@ -64,15 +72,16 @@ async function requestWhatsAppConfirmation(appointment, statusElement, afterSucc
         const result = await apiRequest(`/consultas/${appointment.id}/confirmacoes`, {
             method: 'POST', body: JSON.stringify({
                 versao: Number(appointment.versao), substituir: replacing,
-                confirmacao_id_esperada: replacing ? Number(appointment.confirmacao_id) : null
+                confirmacao_id_esperada: replacing ? Number(appointment.confirmacao_id) : null,
+                canal_esperado: expectedChannel
             })
         });
-        if (result.whatsapp_url) popup.location.replace(result.whatsapp_url);
-        else popup.close();
+        if (result.whatsapp_url && popup) popup.location.replace(result.whatsapp_url);
+        else popup?.close();
         showMessage(statusElement, result.message, 'success');
         await afterSuccess();
     } catch (error) {
-        popup.close(); showMessage(statusElement, error.message);
+        popup?.close(); showMessage(statusElement, error.message);
     } finally { pendingConfirmationRequests.delete(appointment.id); }
 }
 
@@ -1070,9 +1079,22 @@ async function setupPacienteDashboard() {
     const slotSelect = document.getElementById('horario-consulta');
     const status = document.getElementById('agendamento-status');
     const form = document.getElementById('agendamento-form');
+    const vitalisChannelToggle = document.getElementById('confirmacao-vitalis-ativa');
+    const vitalisChannelStatus = document.getElementById('confirmacao-vitalis-status');
     const slotsGate = VitalisCore.createLatestRequestGate();
     const mutationLock = VitalisCore.createOperationLock();
     let specialties = [];
+
+    async function loadChannelPreference() {
+        vitalisChannelToggle.disabled = true;
+        try {
+            const preference = await apiRequest('/confirmacoes/minhas-preferencias');
+            vitalisChannelToggle.checked = Boolean(preference.confirmacao_vitalis_ativa);
+            vitalisChannelToggle.disabled = false;
+        } catch (error) {
+            showMessage(vitalisChannelStatus, error.message);
+        }
+    }
 
     function selectedSpecialty() {
         return specialties.find((item) => item.id === Number(specialtySelect.value));
@@ -1229,6 +1251,21 @@ async function setupPacienteDashboard() {
     [professionalSelect, dateInput, durationSelect].forEach((control) => {
         control.addEventListener('change', loadSlots);
     });
+    vitalisChannelToggle.addEventListener('change', async () => {
+        const requested = vitalisChannelToggle.checked;
+        vitalisChannelToggle.disabled = true;
+        try {
+            const result = await apiRequest('/confirmacoes/minhas-preferencias', {
+                method: 'PUT', body: JSON.stringify({ ativo: requested })
+            });
+            vitalisChannelToggle.checked = Boolean(result.confirmacao_vitalis_ativa);
+            showMessage(vitalisChannelStatus, result.message, 'success');
+            await loadAgenda();
+        } catch (error) {
+            vitalisChannelToggle.checked = !requested;
+            showMessage(vitalisChannelStatus, error.message);
+        } finally { vitalisChannelToggle.disabled = false; }
+    });
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (!mutationLock.tryBegin()) return;
@@ -1257,7 +1294,7 @@ async function setupPacienteDashboard() {
         }
     });
 
-    await loadAgenda();
+    await Promise.all([loadChannelPreference(), loadAgenda()]);
     const agendaRefresh = window.setInterval(loadAgenda, 30000);
     window.addEventListener('beforeunload', () => window.clearInterval(agendaRefresh), { once: true });
 }
@@ -1638,7 +1675,7 @@ async function setupCalendarPage() {
                 const requestButton = document.createElement('button');
                 requestButton.type = 'button'; requestButton.className = 'btn btn-sm btn-outline-success';
                 requestButton.innerHTML = '<i class="bi bi-chat-square-check"></i> Solicitar confirmação';
-                requestButton.addEventListener('click', () => requestWhatsAppConfirmation(item, status, loadCalendar));
+                requestButton.addEventListener('click', () => requestAppointmentConfirmation(item, status, loadCalendar));
                 actions.append(requestButton);
             }
             actions.append(overflowActionMenu('Mais ações da consulta', [
@@ -2074,7 +2111,7 @@ async function setupAppointmentsPage() {
                 if (!['confirmada', 'recusada'].includes(item.confirmacao_estado)) {
                     actions.append(actionButton('Solicitar confirmação',
                         'bi-chat-square-check', 'btn-success', () => (
-                        requestWhatsAppConfirmation(item, listStatus, loadAgenda)
+                        requestAppointmentConfirmation(item, listStatus, loadAgenda)
                     )));
                 }
             }

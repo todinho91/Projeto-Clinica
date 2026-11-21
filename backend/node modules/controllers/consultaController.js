@@ -371,6 +371,16 @@ exports.listCalendar = async (req, res) => {
                  WHERE cc.clinica_id = c.clinica_id AND cc.consulta_id = c.id
                    AND cc.consulta_versao = c.versao
                  ORDER BY cc.id DESC LIMIT 1) AS confirmacao_id,
+                CASE
+                  WHEN pa.confirmacao_vitalis_ativa = 1 AND pa.usuario_id IS NOT NULL
+                    AND EXISTS (SELECT 1 FROM clinica_usuarios pacu
+                      JOIN usuarios pau ON pau.id = pacu.usuario_id AND pau.status = 'ativo'
+                      WHERE pacu.clinica_id = pa.clinica_id AND pacu.usuario_id = pa.usuario_id
+                        AND pacu.papel = 'paciente' AND pacu.status = 'ativo')
+                    THEN 'portal_vitalis'
+                  WHEN pa.preferencia_contato = 'whatsapp' THEN 'whatsapp'
+                  ELSE NULL
+                END AS confirmacao_canal_recomendado,
                 pa.id AS paciente_id, pa.nome AS paciente_nome,
                 p.id AS profissional_id, p.nome_exibicao AS profissional_nome,
                 e.id AS especialidade_id, e.nome AS especialidade_nome
@@ -564,6 +574,16 @@ exports.listForManagement = async (req, res) => {
                  WHERE cc.clinica_id = c.clinica_id AND cc.consulta_id = c.id
                    AND cc.consulta_versao = c.versao
                  ORDER BY cc.id DESC LIMIT 1) AS confirmacao_id,
+                CASE
+                  WHEN pa.confirmacao_vitalis_ativa = 1 AND pa.usuario_id IS NOT NULL
+                    AND EXISTS (SELECT 1 FROM clinica_usuarios pacu
+                      JOIN usuarios pau ON pau.id = pacu.usuario_id AND pau.status = 'ativo'
+                      WHERE pacu.clinica_id = pa.clinica_id AND pacu.usuario_id = pa.usuario_id
+                        AND pacu.papel = 'paciente' AND pacu.status = 'ativo')
+                    THEN 'portal_vitalis'
+                  WHEN pa.preferencia_contato = 'whatsapp' THEN 'whatsapp'
+                  ELSE NULL
+                END AS confirmacao_canal_recomendado,
                 pa.id AS paciente_id, pa.nome AS paciente_nome,
                 p.id AS profissional_id, p.nome_exibicao AS profissional_nome,
                 e.id AS especialidade_id, e.nome AS especialidade_nome

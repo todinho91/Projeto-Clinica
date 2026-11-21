@@ -304,6 +304,17 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
             ...request, body: { ...request.body, inicio_local: '2032-05-10T15:00' }
         }, secondAppointment);
         assert.equal(secondAppointment.statusCode, 201);
+        await setup.execute(`UPDATE pacientes SET confirmacao_vitalis_ativa = 1
+            WHERE clinica_id = ? AND id = ?`, [auroraId, auroraPatientId]);
+        const portalRequest = response();
+        await confirmationController.requestConfirmation({
+            userId: secretaryAurora, tenant: request.tenant,
+            params: { id: String(secondAppointment.body.id) },
+            body: { versao: 1, canal_esperado: 'portal_vitalis' }
+        }, portalRequest);
+        assert.equal(portalRequest.statusCode, 201);
+        assert.equal(portalRequest.body.canal_selecionado, 'portal_vitalis');
+        assert.equal(portalRequest.body.whatsapp_url, null);
         const portalConfirmed = response(); const portalDeclined = response();
         await Promise.all([
             confirmationController.authenticatedPatientResponse({

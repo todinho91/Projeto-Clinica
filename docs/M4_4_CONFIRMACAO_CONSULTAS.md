@@ -43,12 +43,18 @@ comprova aplicativo instalado, dispositivo autorizado nem entrega de notificaç�
 fica efetivamente disponível quando o próprio paciente entra em uma sessão autenticada; a
 resposta continua sem alterar o estado clínico da consulta.
 
+A mesma migration adiciona `pacientes.confirmacao_vitalis_ativa`, inicialmente desativada.
+Somente o paciente autenticado pode aderir ou retirar a adesão pelo próprio painel. A retirada
+revoga solicitações pendentes do portal na mesma transação e mantém histórico e auditoria.
+
 ## APIs
 
 - `POST /api/consultas/:id/confirmacoes`: prepara link e URL do WhatsApp;
 - `POST /api/consultas/:id/confirmacoes/manual`: registra resposta manual;
 - `POST /api/consultas/:id/confirmacoes/minha-resposta`: registra a resposta do paciente
   autenticado somente para a própria consulta;
+- `GET/PUT /api/confirmacoes/minhas-preferencias`: consulta ou altera a adesão explícita do
+  paciente ao canal interno;
 - `GET /api/consultas/:id/confirmacoes`: histórico administrativo sem token;
 - `POST /api/confirmacoes-consulta/consultar`: recebe o token no corpo e retorna somente clínica e horário;
 - `POST /api/confirmacoes-consulta/responder`: recebe token e resposta no corpo, de forma atômica.
@@ -74,11 +80,15 @@ cancelamento, histórico e correção administrativa ficam no menu contextual. D
 resposta definitiva, a solicitação deixa de ser oferecida e permanece apenas o indicador da
 resposta, com eventuais correções restritas ao menu auditável.
 
-Hoje não existe cadastro confiável de instalação do aplicativo, dispositivo ou caixa de
-notificações. Por isso, o backend não trata `usuario_id` como disponibilidade de canal e não
-afirma envio pelo Vitalis. Para solicitações externas, usa WhatsApp somente quando há telefone
-válido e preferência explícita. A M11 poderá fornecer a evidência de dispositivo/assinatura
-necessária para priorizar aplicativo e push sem alterar a semântica das respostas.
+O canal interno é priorizado somente quando há adesão explícita, identidade ativa e vínculo
+de paciente ativo na clínica. A solicitação fica pendente no painel sem token público e sem
+abrir o WhatsApp. Se o portal estiver indisponível, o backend usa WhatsApp somente com telefone
+válido e preferência explícita. A escolha sugerida pela tela é revalidada dentro da transação.
+
+Ainda não existe cadastro confiável de instalação do aplicativo ou dispositivo. Por isso, o
+backend não trata `usuario_id` como prova de aplicativo/push e mantém `push_disponivel = false`.
+A M11 poderá fornecer a evidência de dispositivo/assinatura necessária sem alterar a semântica
+das respostas nem simular envio ou entrega.
 
 ## Pré-voo das migrations 010 e 011
 
@@ -94,7 +104,8 @@ SELECT COUNT(*) AS consultas_preservadas FROM consultas;
 Após backup testado, aplique as migrations pelo executor oficial e confirme que as contagens
 anteriores não mudaram. A migration 010 não contém `DROP TABLE`, `TRUNCATE`, `DELETE`, seed
 ou atualização dos pacientes existentes; a preferência começa como `nenhum`. A migration 011
-altera apenas os enums e a restrição de token da confirmação, sem inserir ou atualizar dados.
+adiciona a adesão interna com padrão desativado e altera os enums e a restrição de token da
+confirmação, sem inserir ou atualizar dados clínicos existentes.
 
 ## Integração MySQL 8 descartável
 

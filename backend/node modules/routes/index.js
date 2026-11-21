@@ -228,6 +228,16 @@ router.post(
     confirmacaoConsultaController.authenticatedPatientResponse
 );
 router.get(
+    '/confirmacoes/minhas-preferencias',
+    authorize('paciente'),
+    confirmacaoConsultaController.getPatientChannelPreference
+);
+router.put(
+    '/confirmacoes/minhas-preferencias',
+    authorize('paciente'),
+    confirmacaoConsultaController.updatePatientChannelPreference
+);
+router.get(
     '/consultas/:id/confirmacoes',
     authorize('administrador', 'secretaria'),
     confirmacaoConsultaController.history

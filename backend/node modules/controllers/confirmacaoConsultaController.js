@@ -107,10 +107,12 @@ exports.requestConfirmation = async (req, res) => {
     const appointmentId = positiveId(req.params.id);
     const expectedVersion = positiveId(req.body?.versao);
     const replacing = req.body?.substituir === true;
+    const expectedChannel = req.body?.canal_esperado ?? null;
     const expectedConfirmationId = req.body?.confirmacao_id_esperada === undefined
         || req.body?.confirmacao_id_esperada === null
         ? null : positiveId(req.body.confirmacao_id_esperada);
-    if (!appointmentId || !expectedVersion || (replacing && !expectedConfirmationId)) {
+    if (!appointmentId || !expectedVersion || (replacing && !expectedConfirmationId)
+        || (expectedChannel !== null && !['portal_vitalis', 'whatsapp'].includes(expectedChannel))) {
         return res.status(400).json({ error: 'Consulta e versão válidas são obrigatórias.' });
     }
     let connection;
@@ -123,7 +125,10 @@ exports.requestConfirmation = async (req, res) => {
         const [rows] = await connection.execute(`
             SELECT c.id, c.versao, c.status, c.inicio_em, clinic.nome AS clinica_nome,
                    clinic.timezone, pa.telefone, pa.preferencia_contato, pa.status AS paciente_status,
-                   pa.usuario_id AS paciente_usuario_id
+                   pa.usuario_id AS paciente_usuario_id,
+                   pa.confirmacao_vitalis_ativa,
+                   pacu.status AS paciente_vinculo_status,
+                   pau.status AS paciente_usuario_status
             FROM consultas c
             JOIN clinicas clinic ON clinic.id = c.clinica_id AND clinic.status = 'ativa'
             JOIN pacientes pa ON pa.clinica_id = c.clinica_id AND pa.id = c.paciente_id
@@ -137,7 +142,6 @@ exports.requestConfirmation = async (req, res) => {
             LEFT JOIN usuarios pau ON pau.id = pa.usuario_id
             WHERE c.clinica_id = ? AND c.id = ?
               AND (p.usuario_id IS NULL OR (pcu.status = 'ativo' AND pu.status = 'ativo'))
-              AND (pa.usuario_id IS NULL OR (pacu.status = 'ativo' AND pau.status = 'ativo'))
             LIMIT 1 FOR UPDATE
         `, [req.tenant.clinicId, appointmentId]);
         const appointment = rows[0];
@@ -154,10 +158,24 @@ exports.requestConfirmation = async (req, res) => {
             await connection.rollback();
             return res.status(409).json({ error: 'A consulta ou o paciente não permite nova confirmação.' });
         }
-        if (appointment.preferencia_contato !== 'whatsapp' || !whatsappNumber(appointment.telefone)) {
+        const vitalisAvailable = Boolean(appointment.confirmacao_vitalis_ativa)
+            && Boolean(appointment.paciente_usuario_id)
+            && appointment.paciente_vinculo_status === 'ativo'
+            && appointment.paciente_usuario_status === 'ativo';
+        const whatsappAvailable = appointment.preferencia_contato === 'whatsapp'
+            && Boolean(whatsappNumber(appointment.telefone));
+        const selectedChannel = vitalisAvailable ? 'portal_vitalis'
+            : whatsappAvailable ? 'whatsapp' : null;
+        if (!selectedChannel) {
             await connection.rollback();
             return res.status(422).json({
-                error: 'O paciente precisa ter telefone válido e preferência explícita por WhatsApp.'
+                error: 'O paciente não possui um canal de confirmação autorizado e disponível.'
+            });
+        }
+        if (expectedChannel && expectedChannel !== selectedChannel) {
+            await connection.rollback();
+            return res.status(409).json({
+                error: 'A disponibilidade do canal mudou. Atualize a agenda e tente novamente.'
             });
         }
         const terminal = await latestTerminalConfirmation(
@@ -176,7 +194,8 @@ exports.requestConfirmation = async (req, res) => {
             await connection.commit();
             return res.status(200).json({
                 confirmacao_id: existing ? Number(existing.id) : null,
-                estado: existing?.estado ?? null, idempotente: true, whatsapp_url: null,
+                estado: existing?.estado ?? null, canal_selecionado: existing?.canal ?? null,
+                estado_entrega: 'nao_enviado', idempotente: true, whatsapp_url: null,
                 message: 'A solicitação já foi atualizada por outra operação. Nenhum link adicional foi criado.'
             });
         }
@@ -185,7 +204,7 @@ exports.requestConfirmation = async (req, res) => {
             if (existing.estado === 'preparada') {
                 return res.status(200).json({
                     confirmacao_id: Number(existing.id), estado: 'preparada', idempotente: true,
-                    whatsapp_url: null,
+                    canal_selecionado: existing.canal, estado_entrega: 'nao_enviado', whatsapp_url: null,
                     message: 'Já existe uma solicitação pendente. Nenhum novo link foi criado ou revogado.'
                 });
             }
@@ -205,18 +224,19 @@ exports.requestConfirmation = async (req, res) => {
             }
         }
         await revokePrepared(connection, req.tenant.clinicId, appointmentId, 'nova_solicitacao', req.userId);
-        const token = createConfirmationToken();
-        const tokenHash = hashConfirmationToken(token);
         const expiration = new Date(Math.min(
             Date.now() + confirmation.ttlHours * 3600000,
             utcDate(appointment.inicio_em).getTime()
         ));
+        const token = selectedChannel === 'whatsapp' ? createConfirmationToken() : null;
+        const tokenHash = token ? hashConfirmationToken(token) : null;
         const [insert] = await connection.execute(`
             INSERT INTO confirmacoes_consulta (
                 clinica_id, consulta_id, consulta_versao, canal, estado, estado_entrega,
                 token_hash, expira_em, solicitado_por_usuario_id
-            ) VALUES (?, ?, ?, 'whatsapp', 'preparada', 'nao_enviado', ?, ?, ?)
-        `, [req.tenant.clinicId, appointmentId, expectedVersion, tokenHash, mysqlUtc(expiration), req.userId]);
+            ) VALUES (?, ?, ?, ?, 'preparada', 'nao_enviado', ?, ?, ?)
+        `, [req.tenant.clinicId, appointmentId, expectedVersion, selectedChannel,
+            tokenHash, mysqlUtc(expiration), req.userId]);
         const confirmationId = Number(insert.insertId);
         await connection.execute(`
             INSERT INTO confirmacoes_consulta_eventos
@@ -224,23 +244,26 @@ exports.requestConfirmation = async (req, res) => {
             VALUES (?, ?, 'criada', 'operador', ?)
         `, [req.tenant.clinicId, confirmationId, req.userId]);
         await audit(connection, req.tenant.clinicId, req.userId, 'confirmacao_preparada', appointmentId, {
-            confirmacao_id: confirmationId, canal: 'whatsapp', estado_entrega: 'nao_enviado',
+            confirmacao_id: confirmationId, canal: selectedChannel, estado_entrega: 'nao_enviado',
             substituiu_confirmacao_id: existing ? Number(existing.id) : null
         });
         await connection.commit();
-        const link = publicUrl(token);
+        const link = token ? publicUrl(token) : null;
         return res.status(201).json({
             confirmacao_id: confirmationId,
             estado: 'preparada',
             estado_entrega: 'nao_enviado',
-            canal_selecionado: 'whatsapp',
-            vitalis_disponivel: false,
+            canal_selecionado: selectedChannel,
+            vitalis_disponivel: vitalisAvailable,
+            push_disponivel: false,
             expira_em: expiration.toISOString(),
-            whatsapp_url: whatsappUrl(
+            whatsapp_url: selectedChannel === 'whatsapp' ? whatsappUrl(
                 appointment.telefone, appointment.clinica_nome,
                 utcToLocal(appointment.inicio_em, appointment.timezone), link
-            ),
-            message: 'Solicitação preparada. Abrir o WhatsApp não comprova envio nem entrega.'
+            ) : null,
+            message: selectedChannel === 'portal_vitalis'
+                ? 'Solicitação disponível no painel Vitalis do paciente. Nenhuma entrega push foi simulada.'
+                : 'Solicitação preparada. Abrir o WhatsApp não comprova envio nem entrega.'
         });
     } catch (error) {
         if (connection) await connection.rollback().catch(() => {});
@@ -322,21 +345,36 @@ exports.authenticatedPatientResponse = async (req, res) => {
                 error: 'Já existe outra resposta registrada. Entre em contato com a clínica para corrigi-la.'
             });
         }
-        await revokePrepared(connection, req.tenant.clinicId, appointmentId,
-            'resposta_portal_vitalis');
-        const [insert] = await connection.execute(`
-            INSERT INTO confirmacoes_consulta (
-                clinica_id, consulta_id, consulta_versao, canal, estado,
-                solicitado_por_usuario_id, respondido_por_usuario_id, respondido_em
-            ) VALUES (?, ?, ?, 'portal_vitalis', ?, ?, ?, UTC_TIMESTAMP(6))
-        `, [req.tenant.clinicId, appointmentId, expectedVersion, answer, req.userId, req.userId]);
+        let confirmationId;
+        if (existing?.canal === 'portal_vitalis' && existing.estado === 'preparada') {
+            const [updated] = await connection.execute(`UPDATE confirmacoes_consulta
+                SET estado = ?, respondido_por_usuario_id = ?, respondido_em = UTC_TIMESTAMP(6)
+                WHERE clinica_id = ? AND id = ? AND estado = 'preparada'
+                  AND expira_em > UTC_TIMESTAMP(6)`,
+            [answer, req.userId, req.tenant.clinicId, existing.id]);
+            if (updated.affectedRows !== 1) {
+                await connection.rollback();
+                return res.status(409).json({ error: 'A solicitação foi alterada. Atualize sua agenda.' });
+            }
+            confirmationId = Number(existing.id);
+        } else {
+            await revokePrepared(connection, req.tenant.clinicId, appointmentId,
+                'resposta_portal_vitalis');
+            const [insert] = await connection.execute(`
+                INSERT INTO confirmacoes_consulta (
+                    clinica_id, consulta_id, consulta_versao, canal, estado,
+                    solicitado_por_usuario_id, respondido_por_usuario_id, respondido_em
+                ) VALUES (?, ?, ?, 'portal_vitalis', ?, ?, ?, UTC_TIMESTAMP(6))
+            `, [req.tenant.clinicId, appointmentId, expectedVersion, answer, req.userId, req.userId]);
+            confirmationId = Number(insert.insertId);
+        }
         await connection.execute(`INSERT INTO confirmacoes_consulta_eventos
             (clinica_id, confirmacao_id, evento, origem, usuario_id)
             VALUES (?, ?, ?, 'paciente_autenticado', ?)`,
-        [req.tenant.clinicId, insert.insertId, answer, req.userId]);
+        [req.tenant.clinicId, confirmationId, answer, req.userId]);
         await audit(connection, req.tenant.clinicId, req.userId,
             `confirmacao_${answer}_portal_vitalis`, appointmentId,
-            { confirmacao_id: Number(insert.insertId), canal: 'portal_vitalis' });
+            { confirmacao_id: confirmationId, canal: 'portal_vitalis' });
         await connection.commit();
         return res.status(201).json({
             estado: answer,
@@ -348,6 +386,99 @@ exports.authenticatedPatientResponse = async (req, res) => {
         if (connection) await connection.rollback().catch(() => {});
         logFailure('authenticated_patient_response', error);
         return res.status(500).json({ error: 'Erro ao registrar sua resposta.' });
+    } finally { connection?.release(); }
+};
+
+exports.getPatientChannelPreference = async (req, res) => {
+    try {
+        const [rows] = await pool.execute(`
+            SELECT pa.confirmacao_vitalis_ativa
+            FROM pacientes pa
+            JOIN clinica_usuarios cu ON cu.clinica_id = pa.clinica_id
+              AND cu.usuario_id = pa.usuario_id AND cu.papel = 'paciente' AND cu.status = 'ativo'
+            JOIN usuarios u ON u.id = pa.usuario_id AND u.status = 'ativo'
+            JOIN clinicas clinic ON clinic.id = pa.clinica_id AND clinic.status = 'ativa'
+            WHERE pa.clinica_id = ? AND pa.usuario_id = ? AND pa.status = 'ativo'
+              AND cu.papel = ? LIMIT 1
+        `, [req.tenant.clinicId, req.userId, req.tenant.role]);
+        if (!rows[0]) return res.status(403).json({ error: 'Perfil de paciente ativo não autorizado.' });
+        return res.status(200).json({
+            confirmacao_vitalis_ativa: Boolean(rows[0].confirmacao_vitalis_ativa),
+            push_disponivel: false
+        });
+    } catch (error) {
+        logFailure('patient_channel_preference', error);
+        return res.status(500).json({ error: 'Erro ao consultar preferência de confirmação.' });
+    }
+};
+
+exports.updatePatientChannelPreference = async (req, res) => {
+    if (typeof req.body?.ativo !== 'boolean') {
+        return res.status(400).json({ error: 'A adesão ao canal Vitalis deve ser informada.' });
+    }
+    let connection;
+    try {
+        connection = await pool.getConnection(); await connection.beginTransaction();
+        const [rows] = await connection.execute(`
+            SELECT pa.id, pa.confirmacao_vitalis_ativa
+            FROM pacientes pa
+            JOIN clinica_usuarios cu ON cu.clinica_id = pa.clinica_id
+              AND cu.usuario_id = pa.usuario_id AND cu.papel = 'paciente' AND cu.status = 'ativo'
+            JOIN usuarios u ON u.id = pa.usuario_id AND u.status = 'ativo'
+            JOIN clinicas clinic ON clinic.id = pa.clinica_id AND clinic.status = 'ativa'
+            WHERE pa.clinica_id = ? AND pa.usuario_id = ? AND pa.status = 'ativo'
+              AND cu.papel = ? LIMIT 1 FOR UPDATE
+        `, [req.tenant.clinicId, req.userId, req.tenant.role]);
+        const patient = rows[0];
+        if (!patient) {
+            await connection.rollback();
+            return res.status(403).json({ error: 'Perfil de paciente ativo não autorizado.' });
+        }
+        const enabled = req.body.ativo ? 1 : 0;
+        if (Number(patient.confirmacao_vitalis_ativa) === enabled) {
+            await connection.commit();
+            return res.status(200).json({
+                confirmacao_vitalis_ativa: Boolean(enabled), idempotente: true,
+                message: 'Sua preferência de confirmação já estava atualizada.'
+            });
+        }
+        if (!enabled) {
+            await connection.execute(`INSERT INTO confirmacoes_consulta_eventos
+                (clinica_id, confirmacao_id, evento, origem, usuario_id, metadados)
+                SELECT cc.clinica_id, cc.id, 'revogada', 'paciente_autenticado', ?,
+                    JSON_OBJECT('motivo', 'adesao_portal_retirada')
+                FROM confirmacoes_consulta cc
+                JOIN consultas c ON c.clinica_id = cc.clinica_id AND c.id = cc.consulta_id
+                WHERE cc.clinica_id = ? AND c.paciente_id = ?
+                  AND cc.canal = 'portal_vitalis' AND cc.estado = 'preparada'`,
+            [req.userId, req.tenant.clinicId, patient.id]);
+            await connection.execute(`UPDATE confirmacoes_consulta cc
+                JOIN consultas c ON c.clinica_id = cc.clinica_id AND c.id = cc.consulta_id
+                SET cc.estado = 'revogada', cc.revogado_em = UTC_TIMESTAMP(6),
+                    cc.motivo_revogacao = 'adesao_portal_retirada'
+                WHERE cc.clinica_id = ? AND c.paciente_id = ?
+                  AND cc.canal = 'portal_vitalis' AND cc.estado = 'preparada'`,
+            [req.tenant.clinicId, patient.id]);
+        }
+        await connection.execute(`UPDATE pacientes SET confirmacao_vitalis_ativa = ?
+            WHERE clinica_id = ? AND id = ?`, [enabled, req.tenant.clinicId, patient.id]);
+        await connection.execute(`INSERT INTO auditoria
+            (clinica_id, usuario_id, acao, entidade_tipo, entidade_id, metadados)
+            VALUES (?, ?, 'preferencia_confirmacao_vitalis_alterada', 'paciente', ?, ?)`, [
+            req.tenant.clinicId, req.userId, patient.id,
+            JSON.stringify({ confirmacao_vitalis_ativa: Boolean(enabled), push_disponivel: false })
+        ]);
+        await connection.commit();
+        return res.status(200).json({
+            confirmacao_vitalis_ativa: Boolean(enabled),
+            message: enabled
+                ? 'Confirmações pelo painel Vitalis foram ativadas.'
+                : 'Confirmações pelo painel Vitalis foram desativadas.'
+        });
+    } catch (error) {
+        if (connection) await connection.rollback().catch(() => {});
+        logFailure('update_patient_channel_preference', error);
+        return res.status(500).json({ error: 'Erro ao atualizar preferência de confirmação.' });
     } finally { connection?.release(); }
 };
 

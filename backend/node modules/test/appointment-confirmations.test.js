@@ -37,7 +37,9 @@ test('token de confirmação usa entropia e hash SHA-256 sem persistir valor pur
         if (/clinic\.nome AS clinica_nome/.test(sql)) return [[{
             id: 51, versao: 3, status: 'agendada', inicio_em: '2032-05-10 17:00:00.000',
             clinica_nome: 'Clínica Aurora', timezone: 'America/Sao_Paulo',
-            telefone: '43999998888', preferencia_contato: 'whatsapp', paciente_status: 'ativo'
+            telefone: '43999998888', preferencia_contato: 'whatsapp', paciente_status: 'ativo',
+            paciente_usuario_id: 19, confirmacao_vitalis_ativa: 1,
+            paciente_vinculo_status: 'inativo', paciente_usuario_status: 'ativo'
         }]];
         if (/FROM confirmacoes_consulta\s+WHERE clinica_id/.test(sql)) return [[]];
         if (/INSERT INTO confirmacoes_consulta \(/.test(sql)) {
@@ -55,7 +57,8 @@ test('token de confirmação usa entropia e hash SHA-256 sem persistir valor pur
         params: { id: '51' }, body: { versao: 3 }
     }, res);
     assert.equal(res.statusCode, 201);
-    assert.match(confirmationParams[3], /^[a-f0-9]{64}$/);
+    assert.equal(confirmationParams[3], 'whatsapp');
+    assert.match(confirmationParams[4], /^[a-f0-9]{64}$/);
     assert.match(res.body.whatsapp_url, /^https:\/\/wa\.me\/5543999998888\?text=/);
     assert.match(decodeURIComponent(res.body.whatsapp_url), /confirmacao-consulta\.html#token=/);
     assert.equal(res.body.estado_entrega, 'nao_enviado');
@@ -63,6 +66,64 @@ test('token de confirmação usa entropia e hash SHA-256 sem persistir valor pur
     assert.equal(res.body.vitalis_disponivel, false);
     assert.match(res.body.message, /não comprova envio nem entrega/);
     assert.equal(connection.commit.mock.callCount(), 1);
+});
+
+test('adesão explícita e vínculo ativo priorizam solicitação no painel Vitalis', async (t) => {
+    let confirmationParams;
+    const connection = transaction(t, async (sql, params) => {
+        if (/SELECT cu\.papel/.test(sql)) return [[{ papel: 'secretaria' }]];
+        if (/clinic\.nome AS clinica_nome/.test(sql)) return [[{
+            id: 51, versao: 3, status: 'agendada', inicio_em: '2032-05-10 17:00:00.000',
+            clinica_nome: 'Clínica Aurora', timezone: 'America/Sao_Paulo',
+            telefone: '43999998888', preferencia_contato: 'whatsapp', paciente_status: 'ativo',
+            paciente_usuario_id: 19, confirmacao_vitalis_ativa: 1,
+            paciente_vinculo_status: 'ativo', paciente_usuario_status: 'ativo'
+        }]];
+        if (/FROM confirmacoes_consulta\s+WHERE clinica_id/.test(sql)) return [[]];
+        if (/INSERT INTO confirmacoes_consulta \(/.test(sql)) {
+            confirmationParams = params; return [{ insertId: 92 }];
+        }
+        if (/confirmacoes_consulta_eventos|UPDATE confirmacoes_consulta|INSERT INTO auditoria/.test(sql)) {
+            return [{ affectedRows: 1, insertId: 1 }];
+        }
+        throw new Error(`SQL inesperado: ${sql}`);
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await controller.requestConfirmation({
+        userId: 7, tenant: { clinicId: 11, role: 'secretaria' },
+        params: { id: '51' }, body: { versao: 3, canal_esperado: 'portal_vitalis' }
+    }, res);
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.canal_selecionado, 'portal_vitalis');
+    assert.equal(res.body.vitalis_disponivel, true);
+    assert.equal(res.body.push_disponivel, false);
+    assert.equal(res.body.whatsapp_url, null);
+    assert.equal(confirmationParams[3], 'portal_vitalis');
+    assert.equal(confirmationParams[4], null);
+    assert.match(res.body.message, /painel Vitalis/);
+});
+
+test('canal indicado pela tela é revalidado antes de criar solicitação', async (t) => {
+    const connection = transaction(t, async (sql) => {
+        if (/SELECT cu\.papel/.test(sql)) return [[{ papel: 'secretaria' }]];
+        if (/clinic\.nome AS clinica_nome/.test(sql)) return [[{
+            id: 51, versao: 1, status: 'agendada', inicio_em: '2032-05-10 17:00:00.000',
+            clinica_nome: 'Clínica', timezone: 'America/Sao_Paulo', telefone: '43999998888',
+            preferencia_contato: 'whatsapp', paciente_status: 'ativo',
+            paciente_usuario_id: null, confirmacao_vitalis_ativa: 0
+        }]];
+        throw new Error('nenhuma escrita deveria ocorrer');
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await controller.requestConfirmation({
+        userId: 7, tenant: { clinicId: 11, role: 'secretaria' },
+        params: { id: '51' }, body: { versao: 1, canal_esperado: 'portal_vitalis' }
+    }, res);
+    assert.equal(res.statusCode, 409);
+    assert.match(res.body.error, /disponibilidade do canal mudou/);
+    assert.equal(connection.rollback.mock.callCount(), 1);
 });
 
 test('telefone sem preferência explícita por WhatsApp é recusado sem criar token', async (t) => {
@@ -223,6 +284,22 @@ test('somente administrador e secretaria acessam operações administrativas de 
     let patientNext = false;
     patientRoute.route.stack[0].handle({ tenant: { role: 'paciente' } }, response(), () => { patientNext = true; });
     assert.equal(patientNext, true);
+    for (const method of ['get', 'put']) {
+        const preferenceRoute = router.stack.find((layer) => (
+            layer.route?.path === '/confirmacoes/minhas-preferencias' && layer.route.methods[method]
+        ));
+        assert.ok(preferenceRoute);
+        const denied = response(); let managerNext = false;
+        preferenceRoute.route.stack[0].handle(
+            { tenant: { role: 'administrador' } }, denied, () => { managerNext = true; }
+        );
+        assert.equal(denied.statusCode, 403); assert.equal(managerNext, false);
+        let allowed = false;
+        preferenceRoute.route.stack[0].handle(
+            { tenant: { role: 'paciente' } }, response(), () => { allowed = true; }
+        );
+        assert.equal(allowed, true);
+    }
 });
 
 test('resposta manual não altera status clínico e mantém trilha auditável', async (t) => {
@@ -507,7 +584,9 @@ test('solicitação revalida preferência, paciente, profissional e vínculos at
     assert.match(source, /pa\.preferencia_contato/);
     assert.match(source, /p\.status = 'ativo'/);
     assert.match(source, /pcu\.status = 'ativo' AND pu\.status = 'ativo'/);
-    assert.match(source, /pacu\.status = 'ativo' AND pau\.status = 'ativo'/);
+    assert.match(source, /paciente_vinculo_status === 'ativo'/);
+    assert.match(source, /paciente_usuario_status === 'ativo'/);
+    assert.match(source, /vitalisAvailable \? 'portal_vitalis'[\s\S]*whatsappAvailable \? 'whatsapp'/);
 });
 
 test('migration e interface preservam separação entre confirmação, atendimento e entrega', async () => {
@@ -562,6 +641,66 @@ test('paciente autenticado responde somente à própria consulta em transação 
     assert.equal(connection.rollback.mock.callCount(), 0);
 });
 
+test('paciente responde a solicitação pendente do portal sem criar confirmação duplicada', async (t) => {
+    let inserted = false;
+    const connection = transaction(t, async (sql) => {
+        if (/FROM pacientes pa\s+JOIN clinica_usuarios/.test(sql)) return [[{ id: 31 }]];
+        if (/FROM consultas c\s+JOIN profissionais/.test(sql)) return [[{
+            id: 51, versao: 3, status: 'agendada', inicio_em: '2032-05-10 17:00:00.000'
+        }]];
+        if (/estado IN \('confirmada', 'recusada'\)/.test(sql)) return [[]];
+        if (/CASE WHEN estado = 'preparada'/.test(sql)) {
+            return [[{ id: 92, canal: 'portal_vitalis', estado: 'preparada' }]];
+        }
+        if (/UPDATE confirmacoes_consulta\s+SET estado = \?, respondido_por_usuario_id/.test(sql)) {
+            return [{ affectedRows: 1 }];
+        }
+        if (/INSERT INTO confirmacoes_consulta \(/.test(sql)) { inserted = true; return [{ insertId: 103 }]; }
+        if (/confirmacoes_consulta_eventos|INSERT INTO auditoria/.test(sql)) return [{ affectedRows: 1 }];
+        throw new Error(`SQL inesperado: ${sql}`);
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await controller.authenticatedPatientResponse({
+        userId: 19, tenant: { clinicId: 11, role: 'paciente' },
+        params: { id: '51' }, body: { versao: 3, resposta: 'confirmada' }
+    }, res);
+    assert.equal(res.statusCode, 201);
+    assert.equal(inserted, false);
+    assert.equal(connection.commit.mock.callCount(), 1);
+});
+
+test('paciente adere e retira o canal Vitalis com idempotência, revogação e auditoria', async (t) => {
+    let enabled = 1;
+    const writes = [];
+    const connection = transaction(t, async (sql, params) => {
+        if (/SELECT pa\.id, pa\.confirmacao_vitalis_ativa/.test(sql)) {
+            return [[{ id: 31, confirmacao_vitalis_ativa: enabled }]];
+        }
+        writes.push({ sql, params });
+        if (/UPDATE pacientes SET confirmacao_vitalis_ativa/.test(sql)) enabled = params[0];
+        return [{ affectedRows: 1, insertId: 1 }];
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const removed = response();
+    await controller.updatePatientChannelPreference({
+        userId: 19, tenant: { clinicId: 11, role: 'paciente' }, body: { ativo: false }
+    }, removed);
+    assert.equal(removed.statusCode, 200);
+    assert.equal(removed.body.confirmacao_vitalis_ativa, false);
+    assert.equal(writes.some((entry) => /cc\.canal = 'portal_vitalis'/.test(entry.sql)), true);
+    assert.equal(writes.some((entry) => /preferencia_confirmacao_vitalis_alterada/.test(entry.sql)), true);
+
+    writes.length = 0;
+    const repeated = response();
+    await controller.updatePatientChannelPreference({
+        userId: 19, tenant: { clinicId: 11, role: 'paciente' }, body: { ativo: false }
+    }, repeated);
+    assert.equal(repeated.statusCode, 200);
+    assert.equal(repeated.body.idempotente, true);
+    assert.equal(writes.length, 0);
+});
+
 test('paciente não responde consulta de terceiro nem contradiz outro canal', async (t) => {
     const connection = transaction(t, async (sql) => {
         if (/FROM pacientes pa\s+JOIN clinica_usuarios/.test(sql)) return [[{ id: 31 }]];
@@ -612,11 +751,17 @@ test('migration aditiva distingue portal web de aplicativo e mantém a migration
     assert.match(base, /canal ENUM\('whatsapp', 'aplicativo', 'push', 'manual'\)/);
     assert.match(additive, /'portal_vitalis'/);
     assert.match(additive, /'paciente_autenticado'/);
+    assert.match(additive, /confirmacao_vitalis_ativa/);
+    assert.match(additive, /canal = 'portal_vitalis'[\s\S]*estado <> 'preparada' OR expira_em IS NOT NULL/);
     assert.match(main, /confirmacoes\/minha-resposta/);
+    assert.match(main, /confirmacoes\/minhas-preferencias/);
+    assert.match(main, /canal_esperado: expectedChannel/);
+    assert.match(main, /usesWhatsApp[\s\S]*window\.open/);
     assert.match(main, /Confirmar presença/);
     assert.match(main, /Não poderei comparecer/);
     assert.match(main, /setInterval\(loadAgenda, 30000\)/);
     assert.match(page, /vitalis-patient-agenda/);
+    assert.match(page, /id="confirmacao-vitalis-ativa"/);
 });
 
 test('página pública e ações são responsivas em 390 e 360 pixels', async () => {

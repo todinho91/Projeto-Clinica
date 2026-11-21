@@ -190,7 +190,7 @@ test('interface premium preserva menu, três visões, detalhes, mobile e confirm
     assert.match(setup, /showSelection\(items/);
     assert.match(setup, /document\.createElement\('button'\)/);
     assert.doesNotMatch(setup, /clinica_id/);
-    assert.match(setup, /requestWhatsAppConfirmation\(item, status, loadCalendar\)/);
+    assert.match(setup, /requestAppointmentConfirmation\(item, status, loadCalendar\)/);
     assert.doesNotMatch(setup, /wa\.me|estado_entrega\s*=\s*['"]entrega_confirmada/i);
     assert.match(client, /'calendario\.html': \['administrador', 'secretaria', 'profissional'\]/);
     assert.match(css, /\.vitalis-calendar-week, \.vitalis-calendar-month[^}]*repeat\(7/);
