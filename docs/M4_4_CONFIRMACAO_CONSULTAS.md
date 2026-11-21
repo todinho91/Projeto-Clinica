@@ -1,4 +1,4 @@
-# M4-04 — Confirmação de consultas pelo WhatsApp
+# M4-04 — Confirmação inteligente de consultas
 
 ## Modelo de segurança
 
@@ -37,10 +37,18 @@ Respostas possíveis:
 Administrador e secretaria também podem registrar uma resposta recebida por telefone ou
 presencialmente. Esse registro usa canal `manual`, identifica o operador e não cria token.
 
+A migration aditiva `011_authenticated_patient_confirmations.sql` não modifica a migration
+010. Ela distingue `portal_vitalis` de `aplicativo` e `push`, pois uma conta vinculada não
+comprova aplicativo instalado, dispositivo autorizado nem entrega de notificação. O portal
+fica efetivamente disponível quando o próprio paciente entra em uma sessão autenticada; a
+resposta continua sem alterar o estado clínico da consulta.
+
 ## APIs
 
 - `POST /api/consultas/:id/confirmacoes`: prepara link e URL do WhatsApp;
 - `POST /api/consultas/:id/confirmacoes/manual`: registra resposta manual;
+- `POST /api/consultas/:id/confirmacoes/minha-resposta`: registra a resposta do paciente
+  autenticado somente para a própria consulta;
 - `GET /api/consultas/:id/confirmacoes`: histórico administrativo sem token;
 - `POST /api/confirmacoes-consulta/consultar`: recebe o token no corpo e retorna somente clínica e horário;
 - `POST /api/confirmacoes-consulta/responder`: recebe token e resposta no corpo, de forma atômica.
@@ -61,7 +69,18 @@ resposta definitiva da versão atual, mesmo que existam eventos posteriores de e
 revogação. Alterar o telefone, retirar a preferência WhatsApp ou inativar o paciente revoga
 links pendentes na mesma transação; consulta e resposta públicas revalidam essas condições.
 
-## Pré-voo da migration 010
+Na agenda e no calendário, a única ação destacada é **Solicitar confirmação**. Reagendamento,
+cancelamento, histórico e correção administrativa ficam no menu contextual. Depois de uma
+resposta definitiva, a solicitação deixa de ser oferecida e permanece apenas o indicador da
+resposta, com eventuais correções restritas ao menu auditável.
+
+Hoje não existe cadastro confiável de instalação do aplicativo, dispositivo ou caixa de
+notificações. Por isso, o backend não trata `usuario_id` como disponibilidade de canal e não
+afirma envio pelo Vitalis. Para solicitações externas, usa WhatsApp somente quando há telefone
+válido e preferência explícita. A M11 poderá fornecer a evidência de dispositivo/assinatura
+necessária para priorizar aplicativo e push sem alterar a semântica das respostas.
+
+## Pré-voo das migrations 010 e 011
 
 Não aplique a migration em banco existente sem autorização. Em uma cópia descartável:
 
@@ -74,7 +93,8 @@ SELECT COUNT(*) AS consultas_preservadas FROM consultas;
 
 Após backup testado, aplique as migrations pelo executor oficial e confirme que as contagens
 anteriores não mudaram. A migration 010 não contém `DROP TABLE`, `TRUNCATE`, `DELETE`, seed
-ou atualização dos pacientes existentes; a preferência começa como `nenhum`.
+ou atualização dos pacientes existentes; a preferência começa como `nenhum`. A migration 011
+altera apenas os enums e a restrição de token da confirmação, sem inserir ou atualizar dados.
 
 ## Integração MySQL 8 descartável
 
@@ -105,6 +125,8 @@ banco descartável. Não use `vitalis_m3_validacao`, `vitalis_dev` ou bancos de 
 5. Responda e confira a atualização automática da agenda e do calendário.
 6. Reagende ou cancele e confirme que o link anterior deixa de aceitar respostas.
 7. Repita em Aurora e Horizonte usando somente dados fictícios e confirme o isolamento.
+8. Entre como paciente, responda pela própria consulta em `dashboard-paciente.html` e confira
+   que a agenda e o calendário atualizam; tente repetir e responder consulta de outro paciente.
 
 Validar também 1366×768, 1280×720, 390×844 e 360×800. Nenhum provedor, API paga, push ou
 envio automático faz parte desta entrega.

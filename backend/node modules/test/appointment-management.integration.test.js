@@ -304,6 +304,27 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
             ...request, body: { ...request.body, inicio_local: '2032-05-10T15:00' }
         }, secondAppointment);
         assert.equal(secondAppointment.statusCode, 201);
+        const portalConfirmed = response(); const portalDeclined = response();
+        await Promise.all([
+            confirmationController.authenticatedPatientResponse({
+                userId: patientAuroraUser, tenant: { clinicId: auroraId, role: 'paciente' },
+                params: { id: String(secondAppointment.body.id) },
+                body: { versao: 1, resposta: 'confirmada' }
+            }, portalConfirmed),
+            confirmationController.authenticatedPatientResponse({
+                userId: patientAuroraUser, tenant: { clinicId: auroraId, role: 'paciente' },
+                params: { id: String(secondAppointment.body.id) },
+                body: { versao: 1, resposta: 'recusada' }
+            }, portalDeclined)
+        ]);
+        assert.deepEqual([portalConfirmed.statusCode, portalDeclined.statusCode].sort(), [201, 409]);
+        const crossPatientResponse = response();
+        await confirmationController.authenticatedPatientResponse({
+            userId: patientHorizonteUser, tenant: { clinicId: horizonteId, role: 'paciente' },
+            params: { id: String(secondAppointment.body.id) },
+            body: { versao: 1, resposta: 'confirmada' }
+        }, crossPatientResponse);
+        assert.equal(crossPatientResponse.statusCode, 404);
         const cancelConcurrent = response(); const rescheduleConcurrent = response();
         await Promise.all([
             controller.cancelarConsulta({

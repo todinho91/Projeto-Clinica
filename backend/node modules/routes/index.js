@@ -222,6 +222,11 @@ router.post(
     authorize('administrador', 'secretaria'),
     confirmacaoConsultaController.manualResponse
 );
+router.post(
+    '/consultas/:id/confirmacoes/minha-resposta',
+    authorize('paciente'),
+    confirmacaoConsultaController.authenticatedPatientResponse
+);
 router.get(
     '/consultas/:id/confirmacoes',
     authorize('administrador', 'secretaria'),

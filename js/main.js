@@ -16,8 +16,32 @@ function confirmationStateBadge(state, channel) {
     };
     const badge = document.createElement('span');
     badge.className = `vitalis-confirmation-state vitalis-confirmation-state-${state}`;
-    badge.textContent = `${labels[state] || state}${channel === 'manual' ? ' · registro manual' : ''}`;
+    const channelLabels = { manual: 'registro manual', portal_vitalis: 'Vitalis' };
+    badge.textContent = `${labels[state] || state}${channelLabels[channel] ? ` · ${channelLabels[channel]}` : ''}`;
     return badge;
+}
+
+function overflowActionMenu(label, items) {
+    const details = document.createElement('details');
+    details.className = 'vitalis-overflow-menu';
+    const summary = document.createElement('summary');
+    summary.className = 'btn btn-sm btn-outline-secondary';
+    summary.setAttribute('aria-label', label);
+    summary.title = label;
+    summary.innerHTML = '<i class="bi bi-three-dots-vertical" aria-hidden="true"></i>';
+    const menu = document.createElement('div'); menu.className = 'vitalis-overflow-menu-list';
+    items.filter(Boolean).forEach(({ text, icon, action, disabled = false, title = '' }) => {
+        const button = document.createElement('button'); button.type = 'button';
+        button.className = 'vitalis-overflow-menu-item'; button.disabled = disabled; button.title = title;
+        button.innerHTML = `<i class="bi ${icon}" aria-hidden="true"></i><span>${text}</span>`;
+        button.addEventListener('click', async () => {
+            details.open = false;
+            await action();
+        });
+        menu.append(button);
+    });
+    details.append(summary, menu);
+    return details;
 }
 
 const pendingConfirmationRequests = new Set();
@@ -84,7 +108,11 @@ async function showConfirmationHistory(appointment, statusElement) {
             const row = document.createElement('article');
             const state = confirmationStateBadge(item.estado, item.canal);
             const date = document.createElement('small');
-            date.textContent = `${formatDate(item.criado_em)} · ${item.canal === 'manual' ? 'Registro manual' : 'WhatsApp'}`;
+            const channel = {
+                manual: 'Registro manual', portal_vitalis: 'Painel Vitalis',
+                aplicativo: 'Aplicativo Vitalis', push: 'Notificação push', whatsapp: 'WhatsApp'
+            }[item.canal] || item.canal;
+            date.textContent = `${formatDate(item.criado_em)} · ${channel}`;
             const delivery = document.createElement('span');
             delivery.textContent = item.estado_entrega === 'nao_enviado'
                 ? 'Envio/entrega não comprovados' : `Entrega: ${item.estado_entrega}`;
@@ -1108,12 +1136,48 @@ async function setupPacienteDashboard() {
             }
             appointments.forEach((appointment) => {
                 const row = document.createElement('tr');
+                const period = appointment.inicio_local && appointment.fim_local
+                    ? `${appointment.inicio_local.slice(8, 10)}/${appointment.inicio_local.slice(5, 7)}/${appointment.inicio_local.slice(0, 4)} · ${appointment.inicio_local.slice(11, 16)}–${appointment.fim_local.slice(11, 16)}`
+                    : `${formatDate(appointment.inicio_em)} — ${formatDate(appointment.fim_em)}`;
+                const situation = document.createElement('td'); situation.dataset.label = 'Situação';
+                situation.append(document.createTextNode(appointment.status));
+                const confirmationBadge = confirmationStateBadge(
+                    appointment.confirmacao_estado, appointment.confirmacao_canal
+                );
+                if (confirmationBadge) situation.append(confirmationBadge);
                 row.append(
                     tableCell(appointment.nome_profissional),
-                    tableCell(`${formatDate(appointment.inicio_em)} — ${formatDate(appointment.fim_em)}`),
-                    tableCell(appointment.status)
+                    tableCell(period),
+                    situation
                 );
-                const actions = document.createElement('td');
+                const actions = document.createElement('td'); actions.className = 'vitalis-patient-appointment-actions';
+                actions.dataset.label = 'Ações';
+                if (['agendada', 'confirmada'].includes(appointment.status)
+                    && appointment.futura
+                    && !['confirmada', 'recusada'].includes(appointment.confirmacao_estado)) {
+                    [
+                        ['Confirmar presença', 'confirmada', 'btn-success'],
+                        ['Não poderei comparecer', 'recusada', 'btn-outline-secondary']
+                    ].forEach(([label, answer, cssClass]) => {
+                        const button = document.createElement('button'); button.type = 'button';
+                        button.className = `btn btn-sm ${cssClass}`; button.textContent = label;
+                        button.addEventListener('click', async () => {
+                            if (!mutationLock.tryBegin()) return;
+                            actions.querySelectorAll('button').forEach((control) => { control.disabled = true; });
+                            try {
+                                const result = await apiRequest(`/consultas/${appointment.id}/confirmacoes/minha-resposta`, {
+                                    method: 'POST', body: JSON.stringify({
+                                        resposta: answer, versao: Number(appointment.versao)
+                                    })
+                                });
+                                showMessage(status, result.message, 'success');
+                                await loadAgenda();
+                            } catch (error) { showMessage(status, error.message); }
+                            finally { mutationLock.end(); }
+                        });
+                        actions.append(button);
+                    });
+                }
                 if (['agendada', 'confirmada'].includes(appointment.status)) {
                     const button = document.createElement('button');
                     button.type = 'button';
@@ -1194,6 +1258,8 @@ async function setupPacienteDashboard() {
     });
 
     await loadAgenda();
+    const agendaRefresh = window.setInterval(loadAgenda, 30000);
+    window.addEventListener('beforeunload', () => window.clearInterval(agendaRefresh), { once: true });
 }
 
 async function setupProfissionalDashboard() {
@@ -1571,27 +1637,40 @@ async function setupCalendarPage() {
             if (!['confirmada', 'recusada'].includes(item.confirmacao_estado)) {
                 const requestButton = document.createElement('button');
                 requestButton.type = 'button'; requestButton.className = 'btn btn-sm btn-outline-success';
-                requestButton.innerHTML = `<i class="bi bi-whatsapp"></i> ${item.confirmacao_estado
-                    ? 'Gerar novo link' : 'Solicitar confirmação'}`;
+                requestButton.innerHTML = '<i class="bi bi-chat-square-check"></i> Solicitar confirmação';
                 requestButton.addEventListener('click', () => requestWhatsAppConfirmation(item, status, loadCalendar));
                 actions.append(requestButton);
             }
-            const confirmed = document.createElement('button');
-            confirmed.type = 'button'; confirmed.className = 'btn btn-sm btn-outline-primary';
-            confirmed.textContent = 'Registrar confirmação';
-            confirmed.addEventListener('click', () => registerManualConfirmation(item, 'confirmada', status, loadCalendar));
-            const declined = document.createElement('button');
-            declined.type = 'button'; declined.className = 'btn btn-sm btn-outline-secondary';
-            declined.textContent = 'Registrar impossibilidade';
-            declined.addEventListener('click', () => registerManualConfirmation(item, 'recusada', status, loadCalendar));
-            actions.append(confirmed, declined); card.append(actions);
-        }
-        if (!isProfessional) {
-            const historyButton = document.createElement('button');
-            historyButton.type = 'button'; historyButton.className = 'btn btn-sm btn-link';
-            historyButton.textContent = 'Ver histórico de confirmações';
-            historyButton.addEventListener('click', () => showConfirmationHistory(item, status));
-            card.append(historyButton);
+            actions.append(overflowActionMenu('Mais ações da consulta', [
+                { text: 'Reagendar', icon: 'bi-calendar-event', action: () => {
+                    window.location.assign(`agenda.html?reagendar=${item.id}&data=${item.inicio_local.slice(0, 10)}`);
+                } },
+                { text: 'Cancelar consulta', icon: 'bi-x-circle', action: async () => {
+                    if (!window.confirm('Cancelar esta consulta? O histórico será preservado.')) return;
+                    try {
+                        await apiRequest(`/consultas/${item.id}/status`, {
+                            method: 'PUT', body: JSON.stringify({ status: 'cancelada', versao: item.versao })
+                        });
+                        await loadCalendar();
+                    } catch (error) { showMessage(status, error.message); }
+                } },
+                { text: 'Registrar presença', icon: 'bi-person-check', action: () => (
+                    registerManualConfirmation(item, 'confirmada', status, loadCalendar)
+                ) },
+                { text: 'Registrar impossibilidade', icon: 'bi-person-dash', action: () => (
+                    registerManualConfirmation(item, 'recusada', status, loadCalendar)
+                ) },
+                { text: 'Histórico de confirmações', icon: 'bi-clock-history', action: () => (
+                    showConfirmationHistory(item, status)
+                ) }
+            ]));
+            card.append(actions);
+        } else if (!isProfessional) {
+            card.append(overflowActionMenu('Mais ações da consulta', [
+                { text: 'Histórico de confirmações', icon: 'bi-clock-history', action: () => (
+                    showConfirmationHistory(item, status)
+                ) }
+            ]));
         }
         return card;
     }
@@ -1812,6 +1891,10 @@ async function setupAppointmentsPage() {
     let page = 1;
     let total = 0;
     const limit = 20;
+    const agendaQuery = new URLSearchParams(window.location.search);
+    let pendingRescheduleId = Number(agendaQuery.get('reagendar')) || null;
+    const requestedDate = /^\d{4}-\d{2}-\d{2}$/.test(agendaQuery.get('data') || '')
+        ? agendaQuery.get('data') : null;
 
     let today = new Date().toISOString().slice(0, 10);
     dateInput.min = today;
@@ -1989,38 +2072,36 @@ async function setupAppointmentsPage() {
             const actions = document.createElement('td'); actions.dataset.label = 'Ações'; actions.className = 'vitalis-appointment-actions';
             if (['agendada', 'confirmada'].includes(item.status)) {
                 if (!['confirmada', 'recusada'].includes(item.confirmacao_estado)) {
-                    actions.append(actionButton(item.confirmacao_estado ? 'Gerar novo link' : 'Solicitar confirmação',
-                        'bi-whatsapp', 'btn-outline-success', () => (
+                    actions.append(actionButton('Solicitar confirmação',
+                        'bi-chat-square-check', 'btn-success', () => (
                         requestWhatsAppConfirmation(item, listStatus, loadAgenda)
                     )));
                 }
-                actions.append(actionButton('Confirmou', 'bi-person-check', 'btn-outline-success', () => (
-                    registerManualConfirmation(item, 'confirmada', listStatus, loadAgenda)
-                )));
-                actions.append(actionButton('Não poderá', 'bi-person-dash', 'btn-outline-secondary', () => (
-                    registerManualConfirmation(item, 'recusada', listStatus, loadAgenda)
-                )));
-                actions.append(actionButton('Reagendar', 'bi-calendar-event', 'btn-outline-primary', () => beginReschedule(item)));
-                actions.append(actionButton('Cancelar', 'bi-x-circle', 'btn-outline-danger', () => mutate(
+            }
+            const active = ['agendada', 'confirmada'].includes(item.status);
+            actions.append(overflowActionMenu('Mais ações da consulta', [
+                active && { text: 'Reagendar', icon: 'bi-calendar-event', action: () => beginReschedule(item) },
+                active && { text: 'Cancelar consulta', icon: 'bi-x-circle', action: () => mutate(
                     `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'cancelada', versao: item.versao }) },
                     'Cancelar esta consulta? O histórico será preservado.'
-                )));
-            }
-            actions.append(actionButton('Histórico', 'bi-clock-history', 'btn-outline-secondary', () => (
-                showConfirmationHistory(item, listStatus)
-            )));
-            if (item.status === 'agendada') actions.append(actionButton('Confirmar', 'bi-check-circle', 'btn-outline-success', () => mutate(
-                `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'confirmada', versao: item.versao }) }
-            )));
-            if (['agendada', 'confirmada'].includes(item.status)) {
-                const absent = actionButton('Faltou', 'bi-person-x', 'btn-outline-warning', () => mutate(
-                    `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'nao_compareceu', versao: item.versao }) }
-                ));
-                absent.disabled = !item.pode_marcar_falta;
-                absent.dataset.temporalDisabled = String(!item.pode_marcar_falta);
-                if (absent.disabled) absent.title = 'Disponível somente após o término da consulta.';
-                actions.append(absent);
-            }
+                ) },
+                active && { text: 'Registrar presença', icon: 'bi-person-check', action: () => (
+                    registerManualConfirmation(item, 'confirmada', listStatus, loadAgenda)
+                ) },
+                active && { text: 'Registrar impossibilidade', icon: 'bi-person-dash', action: () => (
+                    registerManualConfirmation(item, 'recusada', listStatus, loadAgenda)
+                ) },
+                item.status === 'agendada' && { text: 'Confirmar consulta', icon: 'bi-check-circle', action: () => mutate(
+                    `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'confirmada', versao: item.versao }) }
+                ) },
+                active && { text: 'Registrar falta', icon: 'bi-person-x', disabled: !item.pode_marcar_falta,
+                    title: item.pode_marcar_falta ? '' : 'Disponível somente após o término da consulta.', action: () => mutate(
+                        `/consultas/${item.id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'nao_compareceu', versao: item.versao }) }
+                    ) },
+                { text: 'Histórico de confirmações', icon: 'bi-clock-history', action: () => (
+                    showConfirmationHistory(item, listStatus)
+                ) }
+            ]));
             if (!actions.children.length) actions.textContent = 'Histórico preservado';
             row.append(actions); list.append(row);
         });
@@ -2039,6 +2120,14 @@ async function setupAppointmentsPage() {
             const data = await apiRequest(`/consultas/gestao?${params}`);
             if (!listGate.isCurrent(ticket, key)) return;
             total = data.paginacao.total; render(data.consultas);
+            if (pendingRescheduleId) {
+                const requested = data.consultas.find((item) => Number(item.id) === pendingRescheduleId);
+                if (requested) {
+                    pendingRescheduleId = null;
+                    window.history.replaceState({}, '', 'agenda.html');
+                    beginReschedule(requested);
+                }
+            }
             pageLabel.textContent = `Página ${page} de ${Math.max(1, Math.ceil(total / limit))}`;
             previous.disabled = page <= 1; next.disabled = page * limit >= total;
             showMessage(listStatus, `${total} consulta(s) encontrada(s).`, 'muted');
@@ -2058,8 +2147,8 @@ async function setupAppointmentsPage() {
         today = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
         dateInput.min = today;
         dateInput.value = today;
-        document.getElementById('agenda-data-inicio').value = today;
-        document.getElementById('agenda-data-fim').value = today;
+        document.getElementById('agenda-data-inicio').value = requestedDate || today;
+        document.getElementById('agenda-data-fim').value = requestedDate || today;
         specialties.forEach((item) => specialtySelect.append(new Option(item.nome, String(item.id))));
     } catch (error) { showMessage(formStatus, error.message); form.hidden = true; return; }
 

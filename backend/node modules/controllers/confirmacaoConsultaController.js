@@ -122,7 +122,8 @@ exports.requestConfirmation = async (req, res) => {
         }
         const [rows] = await connection.execute(`
             SELECT c.id, c.versao, c.status, c.inicio_em, clinic.nome AS clinica_nome,
-                   clinic.timezone, pa.telefone, pa.preferencia_contato, pa.status AS paciente_status
+                   clinic.timezone, pa.telefone, pa.preferencia_contato, pa.status AS paciente_status,
+                   pa.usuario_id AS paciente_usuario_id
             FROM consultas c
             JOIN clinicas clinic ON clinic.id = c.clinica_id AND clinic.status = 'ativa'
             JOIN pacientes pa ON pa.clinica_id = c.clinica_id AND pa.id = c.paciente_id
@@ -232,6 +233,8 @@ exports.requestConfirmation = async (req, res) => {
             confirmacao_id: confirmationId,
             estado: 'preparada',
             estado_entrega: 'nao_enviado',
+            canal_selecionado: 'whatsapp',
+            vitalis_disponivel: false,
             expira_em: expiration.toISOString(),
             whatsapp_url: whatsappUrl(
                 appointment.telefone, appointment.clinica_nome,
@@ -243,6 +246,108 @@ exports.requestConfirmation = async (req, res) => {
         if (connection) await connection.rollback().catch(() => {});
         logFailure('request', error);
         return res.status(500).json({ error: 'Erro ao preparar confirmação.' });
+    } finally { connection?.release(); }
+};
+
+exports.authenticatedPatientResponse = async (req, res) => {
+    const appointmentId = positiveId(req.params.id);
+    const expectedVersion = positiveId(req.body?.versao);
+    const answer = req.body?.resposta;
+    if (!appointmentId || !expectedVersion || !RESPONSES.has(answer)) {
+        return res.status(400).json({ error: 'Consulta, versão e resposta válidas são obrigatórias.' });
+    }
+    let connection;
+    try {
+        connection = await pool.getConnection(); await connection.beginTransaction();
+        const [patients] = await connection.execute(`
+            SELECT pa.id
+            FROM pacientes pa
+            JOIN clinica_usuarios cu ON cu.clinica_id = pa.clinica_id
+              AND cu.usuario_id = pa.usuario_id AND cu.papel = 'paciente' AND cu.status = 'ativo'
+            JOIN usuarios u ON u.id = pa.usuario_id AND u.status = 'ativo'
+            JOIN clinicas clinic ON clinic.id = pa.clinica_id AND clinic.status = 'ativa'
+            WHERE pa.clinica_id = ? AND pa.usuario_id = ? AND pa.status = 'ativo'
+              AND cu.papel = ?
+            LIMIT 1 FOR UPDATE
+        `, [req.tenant.clinicId, req.userId, req.tenant.role]);
+        const patient = patients[0];
+        if (!patient) {
+            await connection.rollback();
+            return res.status(403).json({ error: 'Perfil de paciente ativo não autorizado.' });
+        }
+        const [appointments] = await connection.execute(`
+            SELECT c.id, c.versao, c.status, c.inicio_em
+            FROM consultas c
+            JOIN profissionais p ON p.clinica_id = c.clinica_id
+              AND p.id = c.profissional_id AND p.status = 'ativo'
+            WHERE c.clinica_id = ? AND c.id = ? AND c.paciente_id = ?
+            LIMIT 1 FOR UPDATE
+        `, [req.tenant.clinicId, appointmentId, patient.id]);
+        const appointment = appointments[0];
+        if (!appointment) {
+            await connection.rollback();
+            return res.status(404).json({ error: 'Consulta não encontrada.' });
+        }
+        if (Number(appointment.versao) !== expectedVersion) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'A consulta foi alterada. Atualize sua agenda.' });
+        }
+        if (!['agendada', 'confirmada'].includes(appointment.status)
+            || utcDate(appointment.inicio_em) <= new Date()) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'Esta consulta não aceita confirmação.' });
+        }
+        const existing = await currentConfirmation(
+            connection, req.tenant.clinicId, appointmentId, expectedVersion
+        );
+        const terminal = existing && ['confirmada', 'recusada'].includes(existing.estado)
+            ? existing
+            : await latestTerminalConfirmation(
+                connection, req.tenant.clinicId, appointmentId, expectedVersion, existing?.id || 0
+            );
+        if (terminal) {
+            if (terminal.estado === answer) {
+                if (existing?.estado === 'preparada') {
+                    await revokePrepared(connection, req.tenant.clinicId, appointmentId,
+                        'resposta_autenticada_ja_registrada');
+                }
+                await connection.commit();
+                return res.status(200).json({
+                    estado: answer, idempotente: true,
+                    message: 'Sua resposta já estava registrada.'
+                });
+            }
+            await connection.rollback();
+            return res.status(409).json({
+                error: 'Já existe outra resposta registrada. Entre em contato com a clínica para corrigi-la.'
+            });
+        }
+        await revokePrepared(connection, req.tenant.clinicId, appointmentId,
+            'resposta_portal_vitalis');
+        const [insert] = await connection.execute(`
+            INSERT INTO confirmacoes_consulta (
+                clinica_id, consulta_id, consulta_versao, canal, estado,
+                solicitado_por_usuario_id, respondido_por_usuario_id, respondido_em
+            ) VALUES (?, ?, ?, 'portal_vitalis', ?, ?, ?, UTC_TIMESTAMP(6))
+        `, [req.tenant.clinicId, appointmentId, expectedVersion, answer, req.userId, req.userId]);
+        await connection.execute(`INSERT INTO confirmacoes_consulta_eventos
+            (clinica_id, confirmacao_id, evento, origem, usuario_id)
+            VALUES (?, ?, ?, 'paciente_autenticado', ?)`,
+        [req.tenant.clinicId, insert.insertId, answer, req.userId]);
+        await audit(connection, req.tenant.clinicId, req.userId,
+            `confirmacao_${answer}_portal_vitalis`, appointmentId,
+            { confirmacao_id: Number(insert.insertId), canal: 'portal_vitalis' });
+        await connection.commit();
+        return res.status(201).json({
+            estado: answer,
+            message: answer === 'confirmada'
+                ? 'Presença confirmada com segurança no Vitalis.'
+                : 'Resposta registrada. Entre em contato com a clínica se desejar reagendar.'
+        });
+    } catch (error) {
+        if (connection) await connection.rollback().catch(() => {});
+        logFailure('authenticated_patient_response', error);
+        return res.status(500).json({ error: 'Erro ao registrar sua resposta.' });
     } finally { connection?.release(); }
 };
 

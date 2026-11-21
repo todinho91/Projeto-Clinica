@@ -59,6 +59,8 @@ test('token de confirmação usa entropia e hash SHA-256 sem persistir valor pur
     assert.match(res.body.whatsapp_url, /^https:\/\/wa\.me\/5543999998888\?text=/);
     assert.match(decodeURIComponent(res.body.whatsapp_url), /confirmacao-consulta\.html#token=/);
     assert.equal(res.body.estado_entrega, 'nao_enviado');
+    assert.equal(res.body.canal_selecionado, 'whatsapp');
+    assert.equal(res.body.vitalis_disponivel, false);
     assert.match(res.body.message, /não comprova envio nem entrega/);
     assert.equal(connection.commit.mock.callCount(), 1);
 });
@@ -209,6 +211,18 @@ test('somente administrador e secretaria acessam operações administrativas de 
             assert.equal(res.statusCode, 403); assert.equal(next, false);
         }
     }
+    const patientRoute = router.stack.find((layer) => (
+        layer.route?.path === '/consultas/:id/confirmacoes/minha-resposta' && layer.route.methods.post
+    ));
+    assert.ok(patientRoute);
+    for (const role of ['administrador', 'secretaria', 'profissional']) {
+        const res = response(); let next = false;
+        patientRoute.route.stack[0].handle({ tenant: { role } }, res, () => { next = true; });
+        assert.equal(res.statusCode, 403); assert.equal(next, false);
+    }
+    let patientNext = false;
+    patientRoute.route.stack[0].handle({ tenant: { role: 'paciente' } }, response(), () => { patientNext = true; });
+    assert.equal(patientNext, true);
 });
 
 test('resposta manual não altera status clínico e mantém trilha auditável', async (t) => {
@@ -480,8 +494,8 @@ test('agenda e calendário ignoram confirmações de versões anteriores após r
         fs.readFile(path.join(__dirname, '..', 'controllers', 'consultaController.js'), 'utf8'),
         fs.readFile(path.join(__dirname, '..', 'controllers', 'confirmacaoConsultaController.js'), 'utf8')
     ]);
-    assert.equal((consultations.match(/cc\.consulta_versao = c\.versao/g) || []).length, 6);
-    assert.equal((consultations.match(/estado IN \('confirmada', 'recusada'\)\) DESC/g) || []).length, 4);
+    assert.equal((consultations.match(/cc\.consulta_versao = c\.versao/g) || []).length, 8);
+    assert.equal((consultations.match(/estado IN \('confirmada', 'recusada'\)\) DESC/g) || []).length, 6);
     assert.match(consultations, /revokePrepared[\s\S]*consulta_reagendada/);
     assert.match(confirmations, /exports\.history[\s\S]*confirmacoes: rows/);
 });
@@ -515,7 +529,94 @@ test('migration e interface preservam separação entre confirmação, atendimen
     assert.match(controllerSource, /Abrir o WhatsApp não comprova envio nem entrega/);
     assert.match(controllerSource, /#token=/);
     assert.match(main, /Solicitar confirmação/);
-    assert.match(main, /Registrar confirmação/);
+    assert.match(main, /Registrar presença/);
+    assert.match(main, /bi-three-dots-vertical/);
+});
+
+test('paciente autenticado responde somente à própria consulta em transação auditável', async (t) => {
+    let inserted;
+    const connection = transaction(t, async (sql, params) => {
+        if (/FROM pacientes pa\s+JOIN clinica_usuarios/.test(sql)) return [[{ id: 31 }]];
+        if (/FROM consultas c\s+JOIN profissionais/.test(sql)) return [[{
+            id: 51, versao: 3, status: 'agendada', inicio_em: '2032-05-10 17:00:00.000'
+        }]];
+        if (/SELECT id, canal,[\s\S]*FROM confirmacoes_consulta/.test(sql)) return [[]];
+        if (/estado IN \('confirmada', 'recusada'\)/.test(sql)) return [[]];
+        if (/INSERT INTO confirmacoes_consulta \(/.test(sql)) {
+            inserted = params; return [{ insertId: 102 }];
+        }
+        if (/confirmacoes_consulta_eventos|INSERT INTO auditoria|UPDATE confirmacoes_consulta/.test(sql)) {
+            return [{ affectedRows: 1, insertId: 1 }];
+        }
+        throw new Error(`SQL inesperado: ${sql}`);
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await controller.authenticatedPatientResponse({
+        userId: 19, tenant: { clinicId: 11, role: 'paciente' },
+        params: { id: '51' }, body: { versao: 3, resposta: 'confirmada' }
+    }, res);
+    assert.equal(res.statusCode, 201);
+    assert.deepEqual(inserted.slice(0, 4), [11, 51, 3, 'confirmada']);
+    assert.equal(connection.commit.mock.callCount(), 1);
+    assert.equal(connection.rollback.mock.callCount(), 0);
+});
+
+test('paciente não responde consulta de terceiro nem contradiz outro canal', async (t) => {
+    const connection = transaction(t, async (sql) => {
+        if (/FROM pacientes pa\s+JOIN clinica_usuarios/.test(sql)) return [[{ id: 31 }]];
+        if (/FROM consultas c\s+JOIN profissionais/.test(sql)) return [[]];
+        throw new Error('nenhuma escrita deveria ocorrer');
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const forbidden = response();
+    await controller.authenticatedPatientResponse({
+        userId: 19, tenant: { clinicId: 11, role: 'paciente' },
+        params: { id: '99' }, body: { versao: 1, resposta: 'confirmada' }
+    }, forbidden);
+    assert.equal(forbidden.statusCode, 404);
+    assert.equal(connection.rollback.mock.callCount(), 1);
+});
+
+test('resposta autenticada divergente não sobrescreve resposta definitiva de outro canal', async (t) => {
+    const connection = transaction(t, async (sql) => {
+        if (/FROM pacientes pa\s+JOIN clinica_usuarios/.test(sql)) return [[{ id: 31 }]];
+        if (/FROM consultas c\s+JOIN profissionais/.test(sql)) return [[{
+            id: 51, versao: 3, status: 'agendada', inicio_em: '2032-05-10 17:00:00.000'
+        }]];
+        if (/SELECT id, canal,[\s\S]*FROM confirmacoes_consulta/.test(sql)) {
+            return [[{ id: 91, canal: 'whatsapp', estado: 'confirmada' }]];
+        }
+        throw new Error('nenhuma escrita deveria ocorrer');
+    });
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await controller.authenticatedPatientResponse({
+        userId: 19, tenant: { clinicId: 11, role: 'paciente' },
+        params: { id: '51' }, body: { versao: 3, resposta: 'recusada' }
+    }, res);
+    assert.equal(res.statusCode, 409);
+    assert.match(res.body.error, /outra resposta registrada/);
+    assert.equal(connection.commit.mock.callCount(), 0);
+    assert.equal(connection.rollback.mock.callCount(), 1);
+});
+
+test('migration aditiva distingue portal web de aplicativo e mantém a migration 010 intacta', async () => {
+    const root = path.join(__dirname, '..', '..', '..');
+    const [base, additive, main, page] = await Promise.all([
+        fs.readFile(path.join(root, 'backend/database/migrations/010_appointment_confirmations.sql'), 'utf8'),
+        fs.readFile(path.join(root, 'backend/database/migrations/011_authenticated_patient_confirmations.sql'), 'utf8'),
+        fs.readFile(path.join(root, 'js/main.js'), 'utf8'),
+        fs.readFile(path.join(root, 'dashboard-paciente.html'), 'utf8')
+    ]);
+    assert.match(base, /canal ENUM\('whatsapp', 'aplicativo', 'push', 'manual'\)/);
+    assert.match(additive, /'portal_vitalis'/);
+    assert.match(additive, /'paciente_autenticado'/);
+    assert.match(main, /confirmacoes\/minha-resposta/);
+    assert.match(main, /Confirmar presença/);
+    assert.match(main, /Não poderei comparecer/);
+    assert.match(main, /setInterval\(loadAgenda, 30000\)/);
+    assert.match(page, /vitalis-patient-agenda/);
 });
 
 test('página pública e ações são responsivas em 390 e 360 pixels', async () => {
