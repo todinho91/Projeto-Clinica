@@ -28,11 +28,11 @@
                 <a data-management-only href="equipe.html"><i class="bi bi-people"></i> Equipe e acessos</a>
                 <a data-management-only data-admin-only href="configuracoes-clinica.html"><i class="bi bi-gear"></i> Configurações</a>
             </nav>
-            <div class="vitalis-sidebar-footer"><a href="select-clinic.html"><i class="bi bi-arrow-left-right"></i> Trocar clínica</a><button type="button" id="logout-button"><i class="bi bi-box-arrow-right"></i> Sair</button></div>
+            <div class="vitalis-sidebar-footer"><a data-clinic-switch hidden href="select-clinic.html"><i class="bi bi-arrow-left-right"></i> Trocar clínica</a><button type="button" id="logout-button"><i class="bi bi-box-arrow-right"></i> Sair</button></div>
         </div>
     </aside>
     <div class="vitalis-dashboard-content">
-        <header class="vitalis-topbar"><button class="btn vitalis-menu-button d-lg-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#vitalis-sidebar" aria-controls="vitalis-sidebar" aria-label="Abrir menu"><i class="bi bi-list"></i></button><div class="vitalis-topbar-title"><span>Clínica ativa</span><strong data-clinic-name>Clínica</strong></div><a class="btn vitalis-switch-button" href="select-clinic.html"><i class="bi bi-arrow-left-right"></i><span class="d-none d-sm-inline"> Trocar clínica</span></a></header>
+        <header class="vitalis-topbar"><button class="btn vitalis-menu-button d-lg-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#vitalis-sidebar" aria-controls="vitalis-sidebar" aria-label="Abrir menu"><i class="bi bi-list"></i></button><div class="vitalis-topbar-title"><span>Clínica ativa</span><strong data-clinic-name>Clínica</strong></div><a data-clinic-switch hidden class="btn vitalis-switch-button" href="select-clinic.html"><i class="bi bi-arrow-left-right"></i><span class="d-none d-sm-inline"> Trocar clínica</span></a></header>
         <main class="vitalis-main">
             <section class="vitalis-welcome" aria-labelledby="calendar-title">
                 <div><p class="vitalis-eyebrow">M4 — Agenda por perfil</p><h1 id="calendar-title">Calendário de atendimentos</h1><p id="calendar-description">Visualização autorizada da agenda da clínica ativa.</p></div>

@@ -28,6 +28,7 @@ html { scroll-behavior: smooth; }
 .vitalis-nav a.active { box-shadow: inset 3px 0 #35a7ff; }
 .vitalis-sidebar-footer { flex: 0 0 auto; margin-top: 0; padding: 1rem .75rem max(1.25rem, env(safe-area-inset-bottom)); border-top: 1px solid rgb(255 255 255 / 9%); background: #0a1f33; }
 .vitalis-sidebar-footer a:hover, .vitalis-sidebar-footer button:hover { color: #fff; }
+.vitalis-sidebar [hidden], .vitalis-topbar [hidden], .vitalis-actions [hidden] { display: none !important; }
 .vitalis-dashboard-content { min-height: 100vh; }
 .vitalis-topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 1rem; min-height: 72px; padding: .75rem clamp(1rem, 3vw, 2.25rem); background: rgb(255 255 255 / 94%); border-bottom: 1px solid var(--vitalis-border); backdrop-filter: blur(12px); }
 .vitalis-topbar-title span, .vitalis-topbar-title strong { display: block; }
@@ -191,6 +192,34 @@ html { scroll-behavior: smooth; }
 .vitalis-patient-appointment-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
 .vitalis-patient-agenda { overflow: visible; }
 .vitalis-patient-agenda td { vertical-align: middle; }
+.vitalis-appointment-table-wrap { overflow: visible; }
+.vitalis-appointment-table-wrap .vitalis-overflow-menu-list { z-index: 80; }
+.vitalis-patient-profile-button { display: inline-flex; align-items: center; gap: .45rem; margin-left: auto; color: var(--vitalis-navy); border: 1px solid var(--vitalis-border); background: #fff; }
+.vitalis-nav-future { display: flex; align-items: center; gap: .8rem; margin: .25rem 0; padding: .82rem 1rem; color: #7890a4; border: 1px dashed rgb(255 255 255 / 16%); border-radius: 10px; cursor: not-allowed; }
+.vitalis-nav-future > span, .vitalis-nav-future small { display: block; }
+.vitalis-nav-future small { margin-top: .12rem; color: #7890a4; font-size: .62rem; }
+.vitalis-patient-welcome { padding: clamp(1.1rem, 3vw, 1.6rem); color: #fff; border-radius: 18px; background: linear-gradient(130deg, #0f4f88, var(--vitalis-blue)); box-shadow: 0 14px 34px rgb(22 119 255 / 20%); }
+.vitalis-patient-welcome h1, .vitalis-patient-welcome p, .vitalis-patient-welcome .vitalis-eyebrow { color: #fff; }
+.vitalis-patient-welcome .vitalis-eyebrow { opacity: .78; }
+.vitalis-patient-welcome .vitalis-primary-button { color: var(--vitalis-blue); background: #fff; box-shadow: none; }
+.vitalis-patient-metrics { margin-bottom: 1rem; }
+.vitalis-patient-channel-state { font-size: 1.3rem !important; }
+.vitalis-patient-next { margin-bottom: 1rem; border-color: #cfe1f5; background: linear-gradient(135deg, #fff, #f3f9ff); }
+.vitalis-patient-dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, .75fr); gap: 1rem; align-items: start; }
+.vitalis-patient-channel { position: sticky; top: 88px; }
+.vitalis-preference-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .75rem; align-items: center; margin-top: 1rem; padding: .9rem; border: 1px solid #cfe1f5; border-radius: 13px; background: #f7fbff; }
+.vitalis-preference-icon { display: grid; width: 42px; height: 42px; place-items: center; color: var(--vitalis-blue); border-radius: 12px; background: #e5f1ff; }
+.vitalis-preference-card .form-check { min-height: 0; margin: 0; }
+.vitalis-preference-card .form-check-label { color: var(--vitalis-navy); font-size: .85rem; font-weight: 700; }
+.vitalis-patient-row-pending { box-shadow: inset 4px 0 #7150c8; background: #faf8ff; }
+.vitalis-patient-booking { margin-top: 1rem; }
+.vitalis-patient-booking-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .85rem; align-items: end; margin-top: 1rem; }
+.vitalis-patient-slot { grid-column: span 3; }
+.vitalis-patient-booking-action .btn { width: 100%; min-height: 42px; }
+.vitalis-future-discovery { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 1rem; align-items: center; margin-top: 1rem; }
+.vitalis-future-discovery-icon { display: grid; width: 52px; height: 52px; place-items: center; color: #7150c8; border-radius: 15px; background: #f0ebff; font-size: 1.3rem; }
+.vitalis-future-discovery h2 { margin: 0 0 .25rem; color: var(--vitalis-navy); font-size: 1.05rem; }
+.vitalis-future-discovery p:not(.vitalis-eyebrow) { margin: 0; color: var(--vitalis-muted); font-size: .8rem; }
 .vitalis-status-agendada { color: #1554a0; background: #e9f3ff; }
 .vitalis-status-confirmada { color: #0f6f78; background: #e2f7f7; }
 .vitalis-status-realizada { color: #157347; background: #e8f5e9; }
@@ -324,6 +353,10 @@ html, body.vitalis-dashboard-body {
     .vitalis-calendar-week { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .vitalis-calendar-month { grid-template-columns: repeat(7, minmax(0, 1fr)); }
     .vitalis-calendar-week .vitalis-calendar-weekday { display: none; }
+    .vitalis-patient-dashboard-grid { grid-template-columns: minmax(0, 1fr); }
+    .vitalis-patient-channel { position: static; }
+    .vitalis-patient-booking-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .vitalis-patient-slot { grid-column: span 1; }
 }
 @media (max-width: 1399.98px) and (min-width: 992px) {
     .vitalis-appointments-page .vitalis-appointment-grid { grid-template-columns: minmax(0, 1fr); }
@@ -353,6 +386,12 @@ html, body.vitalis-dashboard-body {
     .vitalis-patient-agenda td { padding: .35rem 0; border: 0; overflow-wrap: anywhere; }
     .vitalis-patient-appointment-actions { align-items: stretch; flex-direction: column; margin-top: .35rem; }
     .vitalis-patient-appointment-actions .btn { width: 100%; white-space: normal; }
+    .vitalis-patient-welcome { align-items: stretch; }
+    .vitalis-patient-welcome .btn { width: 100%; }
+    .vitalis-patient-booking-grid { grid-template-columns: minmax(0, 1fr); }
+    .vitalis-patient-slot { grid-column: auto; }
+    .vitalis-future-discovery { grid-template-columns: auto minmax(0, 1fr); }
+    .vitalis-future-discovery > .vitalis-status { grid-column: 1 / -1; justify-self: start; }
     .vitalis-overflow-menu-list { position: fixed; top: auto; right: 1rem; bottom: 1rem; left: 1rem; width: auto; }
     .vitalis-platform-topbar { align-items: stretch; flex-direction: column; padding: .75rem 1rem; }
     .vitalis-platform-topbar .vitalis-brand { padding: 0; }
@@ -472,6 +511,12 @@ html, body.vitalis-dashboard-body {
     .vitalis-professional-page .vitalis-panel { padding: .85rem; border-radius: 14px; }
     .vitalis-calendar-page .vitalis-main { padding: .75rem; }
     .vitalis-calendar-page .vitalis-panel { padding: .85rem; border-radius: 14px; }
+    .vitalis-patient-portal .vitalis-main { padding: .75rem; }
+    .vitalis-patient-portal .vitalis-panel { padding: .85rem; border-radius: 14px; }
+    .vitalis-patient-welcome { padding: 1rem; }
+    .vitalis-preference-card { grid-template-columns: minmax(0, 1fr); }
+    .vitalis-future-discovery { grid-template-columns: minmax(0, 1fr); }
+    .vitalis-future-discovery > .vitalis-status { grid-column: auto; }
 }
 
 .vitalis-confirmation-page {

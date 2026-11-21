@@ -221,6 +221,9 @@ function applyClinicIdentity(clinic) {
     if (clinic.papel !== 'administrador') {
         document.querySelectorAll('[data-admin-only]').forEach((element) => element.remove());
     }
+    document.querySelectorAll('[data-clinic-switch]').forEach((element) => {
+        element.hidden = clinic.papel === 'secretaria';
+    });
 }
 
 function formatDate(value) {
@@ -1015,6 +1018,17 @@ function setupLoginPage() {
                 window.location.assign(returnTo);
                 return;
             }
+            const entry = VitalisCore.clinicEntryDecision(data.clinicas);
+            if (entry.mode === 'direct') {
+                const selected = await apiRequest('/auth/select-clinic', {
+                    method: 'POST', body: JSON.stringify({ clinica_id: entry.clinicId })
+                }, 'identity');
+                session.saveClinic(selected);
+                const destination = VitalisCore.dashboardForRole(selected.clinica.papel);
+                if (!destination) throw new Error('Papel sem painel disponível.');
+                window.location.assign(destination);
+                return;
+            }
             window.location.assign('select-clinic.html');
         } catch (error) {
             errorElement.textContent = error.message;
@@ -1079,6 +1093,9 @@ async function setupPacienteDashboard() {
     const clinic = requireClinicSession('dashboard-paciente.html');
     if (!clinic) return;
     applyClinicIdentity(clinic);
+    document.querySelectorAll('[data-user-name]').forEach((element) => {
+        element.textContent = session.user?.nome || 'paciente';
+    });
     const table = document.getElementById('tabela-consultas-paciente');
     const specialtySelect = document.getElementById('especialidade-select');
     const professionalSelect = document.getElementById('profissional-select');
@@ -1098,8 +1115,11 @@ async function setupPacienteDashboard() {
         try {
             const preference = await apiRequest('/confirmacoes/minhas-preferencias');
             vitalisChannelToggle.checked = Boolean(preference.confirmacao_vitalis_ativa);
+            document.getElementById('patient-channel-state').textContent = vitalisChannelToggle.checked
+                ? 'Ativo' : 'Inativo';
             vitalisChannelToggle.disabled = false;
         } catch (error) {
+            document.getElementById('patient-channel-state').textContent = 'Indisponível';
             showMessage(vitalisChannelStatus, error.message);
         }
     }
@@ -1154,6 +1174,27 @@ async function setupPacienteDashboard() {
     async function loadAgenda() {
         try {
             const appointments = await apiRequest('/consultas/minha-agenda');
+            const upcoming = appointments.filter((appointment) => (
+                ['agendada', 'confirmada'].includes(appointment.status) && appointment.futura !== false
+            ));
+            const pending = upcoming.filter((appointment) => appointment.confirmacao_estado === 'preparada');
+            const next = [...upcoming].sort((first, second) => (
+                String(first.inicio_local || first.inicio_em).localeCompare(String(second.inicio_local || second.inicio_em))
+            ))[0];
+            document.getElementById('patient-total-upcoming').textContent = String(upcoming.length);
+            document.getElementById('patient-pending-confirmations').textContent = String(pending.length);
+            const nextContainer = document.getElementById('patient-next-appointment');
+            const nextDetails = document.getElementById('patient-next-details');
+            if (next) {
+                const nextPeriod = next.inicio_local
+                    ? `${next.inicio_local.slice(8, 10)}/${next.inicio_local.slice(5, 7)}/${next.inicio_local.slice(0, 4)} às ${next.inicio_local.slice(11, 16)}`
+                    : formatDate(next.inicio_em);
+                nextContainer.querySelector('strong').textContent = next.nome_profissional;
+                nextDetails.textContent = `${nextPeriod}${next.especialidade_nome ? ` · ${next.especialidade_nome}` : ''}`;
+            } else {
+                nextContainer.querySelector('strong').textContent = 'Nenhuma consulta futura';
+                nextDetails.textContent = 'Quando houver um novo agendamento, ele aparecerá em destaque aqui.';
+            }
             table.replaceChildren();
             if (appointments.length === 0) {
                 const row = document.createElement('tr');
@@ -1166,20 +1207,28 @@ async function setupPacienteDashboard() {
             }
             appointments.forEach((appointment) => {
                 const row = document.createElement('tr');
+                if (appointment.confirmacao_estado === 'preparada') row.classList.add('vitalis-patient-row-pending');
                 const period = appointment.inicio_local && appointment.fim_local
                     ? `${appointment.inicio_local.slice(8, 10)}/${appointment.inicio_local.slice(5, 7)}/${appointment.inicio_local.slice(0, 4)} · ${appointment.inicio_local.slice(11, 16)}–${appointment.fim_local.slice(11, 16)}`
                     : `${formatDate(appointment.inicio_em)} — ${formatDate(appointment.fim_em)}`;
+                const patientStatusLabels = {
+                    agendada: 'Agendada', confirmada: 'Confirmada', realizada: 'Realizada',
+                    cancelada: 'Cancelada', nao_compareceu: 'Não compareceu'
+                };
                 const situation = document.createElement('td'); situation.dataset.label = 'Situação';
-                situation.append(document.createTextNode(appointment.status));
+                const clinicalState = document.createElement('span');
+                clinicalState.className = `vitalis-status vitalis-status-${appointment.status.replaceAll('_', '-')}`;
+                clinicalState.textContent = patientStatusLabels[appointment.status] || appointment.status;
+                situation.append(clinicalState);
                 const confirmationBadge = confirmationStateBadge(
                     appointment.confirmacao_estado, appointment.confirmacao_canal
                 );
                 if (confirmationBadge) situation.append(confirmationBadge);
-                row.append(
-                    tableCell(appointment.nome_profissional),
-                    tableCell(period),
-                    situation
-                );
+                const professionalCell = tableCell(appointment.nome_profissional);
+                professionalCell.dataset.label = 'Profissional';
+                const periodCell = tableCell(period);
+                periodCell.dataset.label = 'Período';
+                row.append(professionalCell, periodCell, situation);
                 const actions = document.createElement('td'); actions.className = 'vitalis-patient-appointment-actions';
                 actions.dataset.label = 'Ações';
                 if (['agendada', 'confirmada'].includes(appointment.status)
@@ -1267,6 +1316,8 @@ async function setupPacienteDashboard() {
                 method: 'PUT', body: JSON.stringify({ ativo: requested })
             });
             vitalisChannelToggle.checked = Boolean(result.confirmacao_vitalis_ativa);
+            document.getElementById('patient-channel-state').textContent = vitalisChannelToggle.checked
+                ? 'Ativo' : 'Inativo';
             showMessage(vitalisChannelStatus, result.message, 'success');
             await loadAgenda();
         } catch (error) {
