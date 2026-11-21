@@ -51,7 +51,15 @@ const pendingConfirmationRequests = new Set();
 
 async function requestAppointmentConfirmation(appointment, statusElement, afterSuccess = async () => {}) {
     const replacing = Boolean(appointment.confirmacao_estado);
-    const expectedChannel = appointment.confirmacao_canal_recomendado || 'whatsapp';
+    const expectedChannel = appointment.confirmacao_canal_recomendado;
+    if (!['portal_vitalis', 'whatsapp'].includes(expectedChannel)) {
+        showMessage(
+            statusElement,
+            'O paciente não possui um canal de confirmação autorizado. Revise as preferências de contato.',
+            'info'
+        );
+        return;
+    }
     const usesWhatsApp = expectedChannel === 'whatsapp';
     const prompt = replacing
         ? `Substituir a solicitação pelo ${usesWhatsApp ? 'WhatsApp' : 'painel Vitalis'}? O histórico será preservado.`
@@ -67,7 +75,7 @@ async function requestAppointmentConfirmation(appointment, statusElement, afterS
         pendingConfirmationRequests.delete(appointment.id);
         return;
     }
-    popup.opener = null;
+    if (popup) popup.opener = null;
     try {
         const result = await apiRequest(`/consultas/${appointment.id}/confirmacoes`, {
             method: 'POST', body: JSON.stringify({
