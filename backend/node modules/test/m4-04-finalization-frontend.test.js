@@ -71,7 +71,7 @@ test('páginas da secretaria mantêm troca oculta até a autorização do perfil
     }
 });
 
-test('painel do paciente usa dados reais, destaca pendências e não oferece troca de clínica', async () => {
+test('painel do paciente usa dados reais, destaca pendências e não expõe conteúdo de desenvolvimento', async () => {
     const [page, main] = await Promise.all([
         fs.readFile(path.join(root, 'dashboard-paciente.html'), 'utf8'),
         fs.readFile(path.join(root, 'js', 'main.js'), 'utf8')
@@ -81,9 +81,12 @@ test('painel do paciente usa dados reais, destaca pendências e não oferece tro
     assert.match(page, /id="patient-pending-confirmations"/);
     assert.match(page, /id="patient-next-appointment"/);
     assert.match(page, /id="preferencias"/);
-    assert.match(page, /issue #67/);
-    assert.match(page, /Nenhum catálogo ou disponibilidade fictícia/);
+    assert.doesNotMatch(page, /Descobrir cuidados|Próxima evolução|issue #67|catálogo fictício/i);
     assert.doesNotMatch(page, /href="select-clinic\.html"/);
+    assert.match(page, /Você pode ativar ou desativar esta opção quando quiser/);
+    assert.match(page, /bi-calendar-check-fill/);
+    assert.match(page, /bi-chat-dots-fill/);
+    assert.match(page, /bi-check-circle-fill/);
     assert.match(main, /appointment\.confirmacao_estado === 'preparada'/);
     assert.match(main, /patient-total-upcoming/);
     assert.match(main, /patient-pending-confirmations/);
@@ -96,6 +99,7 @@ test('layout cobre desktop, 390 e 360 px e menu da agenda não é recortado', as
     assert.match(css, /@media \(max-width: 991\.98px\)[\s\S]*\.vitalis-patient-dashboard-grid[^}]*grid-template-columns: minmax\(0, 1fr\)/);
     assert.match(css, /@media \(max-width: 767\.98px\)[\s\S]*\.vitalis-patient-booking-grid[^}]*grid-template-columns: minmax\(0, 1fr\)/);
     assert.match(css, /@media \(max-width: 389\.98px\)[\s\S]*\.vitalis-patient-portal \.vitalis-main/);
+    assert.match(css, /\.vitalis-patient-welcome h1 span[^}]*color: #fff !important/);
     assert.match(css, /\.vitalis-appointment-table-wrap[^}]*overflow: visible/);
     assert.match(css, /\.vitalis-appointment-table-wrap \.vitalis-overflow-menu-list[^}]*z-index: 80/);
 });

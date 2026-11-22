@@ -18,18 +18,17 @@
         </div>
         <div class="offcanvas-body d-flex flex-column p-0">
             <a class="vitalis-brand" href="#inicio" aria-label="Vitalis — início do painel">
-                <span class="vitalis-brand-mark"><i class="bi bi-heart-pulse-fill"></i></span>
+                <span class="vitalis-brand-mark"><i class="bi bi-heart-pulse-fill" aria-hidden="true"></i></span>
                 <span><strong>Vitalis</strong><small>Seu cuidado, organizado</small></span>
             </a>
             <div class="vitalis-clinic-card">
                 <span>Atendimento em</span><strong data-clinic-name>Clínica</strong><small>Área segura do paciente</small>
             </div>
             <nav class="vitalis-nav" aria-label="Navegação do paciente">
-                <a class="active" href="#inicio"><i class="bi bi-grid-1x2-fill"></i> Visão geral</a>
-                <a href="#minhas-consultas"><i class="bi bi-calendar-check"></i> Minhas consultas</a>
-                <a href="#novo-agendamento"><i class="bi bi-calendar-plus"></i> Agendar consulta</a>
-                <a href="#preferencias"><i class="bi bi-sliders"></i> Preferências</a>
-                <span class="vitalis-nav-future" aria-disabled="true"><i class="bi bi-search-heart"></i><span>Descobrir cuidados<small>Planejado para a issue #67</small></span></span>
+                <a class="active" href="#inicio"><i class="bi bi-grid-1x2-fill" aria-hidden="true"></i> Visão geral</a>
+                <a href="#minhas-consultas"><i class="bi bi-calendar-check-fill" aria-hidden="true"></i> Minhas consultas</a>
+                <a href="#novo-agendamento"><i class="bi bi-calendar-plus" aria-hidden="true"></i> Agendar consulta</a>
+                <a href="#preferencias"><i class="bi bi-sliders" aria-hidden="true"></i> Preferências</a>
             </nav>
             <div class="vitalis-sidebar-footer"><button type="button" id="logout-button"><i class="bi bi-box-arrow-right"></i> Sair</button></div>
         </div>
@@ -49,14 +48,14 @@
             </section>
 
             <section class="vitalis-metrics vitalis-patient-metrics" aria-label="Resumo das consultas">
-                <article class="vitalis-metric-card vitalis-metric-blue"><span class="vitalis-metric-icon"><i class="bi bi-calendar2-week"></i></span><div><p>Próximas consultas</p><strong id="patient-total-upcoming">—</strong><small>Agendadas ou confirmadas</small></div></article>
-                <article class="vitalis-metric-card vitalis-metric-purple"><span class="vitalis-metric-icon"><i class="bi bi-chat-square-check"></i></span><div><p>Confirmações pendentes</p><strong id="patient-pending-confirmations">—</strong><small>Responda antes do atendimento</small></div></article>
-                <article class="vitalis-metric-card vitalis-metric-green"><span class="vitalis-metric-icon"><i class="bi bi-shield-check"></i></span><div><p>Canal Vitalis</p><strong id="patient-channel-state" class="vitalis-patient-channel-state">—</strong><small>Preferência controlada por você</small></div></article>
+                <article class="vitalis-metric-card vitalis-metric-blue"><span class="vitalis-metric-icon"><i class="bi bi-calendar-check-fill" aria-hidden="true"></i></span><div><p>Próximas consultas</p><strong id="patient-total-upcoming">—</strong><small>Agendadas ou confirmadas</small></div></article>
+                <article class="vitalis-metric-card vitalis-metric-purple"><span class="vitalis-metric-icon"><i class="bi bi-chat-dots-fill" aria-hidden="true"></i></span><div><p>Confirmações pendentes</p><strong id="patient-pending-confirmations">—</strong><small>Responda antes do atendimento</small></div></article>
+                <article class="vitalis-metric-card vitalis-metric-green"><span class="vitalis-metric-icon"><i class="bi bi-shield-check" aria-hidden="true"></i></span><div><p>Confirmação no painel</p><strong id="patient-channel-state" class="vitalis-patient-channel-state">—</strong><small>Você controla esta preferência</small></div></article>
             </section>
 
             <section class="vitalis-panel vitalis-patient-next" aria-labelledby="patient-next-title">
                 <div class="vitalis-next-appointment-content">
-                    <div class="vitalis-next-date"><i class="bi bi-clock"></i><div><p class="vitalis-eyebrow">Próximo atendimento</p><strong id="patient-next-title">Sua agenda</strong></div></div>
+                    <div class="vitalis-next-date"><i class="bi bi-clock-fill" aria-hidden="true"></i><div><p class="vitalis-eyebrow">Próximo atendimento</p><strong id="patient-next-title">Sua agenda</strong></div></div>
                     <div class="vitalis-next-details" id="patient-next-appointment"><strong>Carregando próxima consulta...</strong><span id="patient-next-details">Aguarde enquanto consultamos sua agenda.</span></div>
                     <a class="btn btn-outline-primary" href="#minhas-consultas">Ver consultas</a>
                 </div>
@@ -71,29 +70,24 @@
 
                 <aside id="preferencias" class="vitalis-panel vitalis-patient-channel" aria-labelledby="patient-channel-title">
                     <div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Perfil e configurações</p><h2 id="patient-channel-title">Preferências de confirmação</h2></div></div>
-                    <div class="vitalis-preference-card"><span class="vitalis-preference-icon"><i class="bi bi-window-check"></i></span><div class="form-check form-switch"><input class="form-check-input" type="checkbox" role="switch" id="confirmacao-vitalis-ativa" disabled><label class="form-check-label" for="confirmacao-vitalis-ativa">Receber solicitações no painel Vitalis</label></div></div>
-                    <p class="vitalis-privacy-note"><i class="bi bi-info-circle"></i> Esta adesão vale somente para o painel web. Não representa aplicativo instalado, push enviado ou entrega confirmada.</p>
+                    <div class="vitalis-preference-card"><span class="vitalis-preference-icon"><i class="bi bi-check-circle-fill" aria-hidden="true"></i></span><div class="form-check form-switch"><input class="form-check-input" type="checkbox" role="switch" id="confirmacao-vitalis-ativa" disabled><label class="form-check-label" for="confirmacao-vitalis-ativa">Receber pedidos de confirmação neste painel</label></div></div>
+                    <p class="vitalis-privacy-note"><i class="bi bi-info-circle" aria-hidden="true"></i> Você pode ativar ou desativar esta opção quando quiser. Ela vale somente para este painel e não ativa notificações no celular.</p>
                     <div id="confirmacao-vitalis-status" class="mt-2" role="status" aria-live="polite"></div>
                 </aside>
             </div>
 
             <section id="novo-agendamento" class="vitalis-panel vitalis-patient-booking" aria-labelledby="patient-booking-title">
-                <div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Novo atendimento</p><h2 id="patient-booking-title">Agendar consulta</h2></div><span>Horários da clínica ativa</span></div>
+                <div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Novo atendimento</p><h2 id="patient-booking-title">Agendar consulta</h2></div><span>Horários disponíveis</span></div>
                 <form id="agendamento-form"><div class="vitalis-patient-booking-grid">
                     <div><label for="especialidade-select" class="form-label">Especialidade</label><select id="especialidade-select" class="form-select" required><option value="">Carregando especialidades...</option></select></div>
                     <div><label for="profissional-select" class="form-label">Profissional</label><select id="profissional-select" class="form-select" required disabled><option value="">Selecione a especialidade</option></select></div>
                     <div><label for="data-consulta" class="form-label">Data</label><input type="date" id="data-consulta" class="form-control" required></div>
                     <div><label for="duracao-consulta" class="form-label">Duração</label><select id="duracao-consulta" class="form-select" required><option value="30">30 minutos</option><option value="45" selected>45 minutos</option><option value="60">60 minutos</option></select></div>
-                    <div class="vitalis-patient-slot"><label for="horario-consulta" class="form-label">Horário disponível</label><select id="horario-consulta" class="form-select" required disabled><option value="">Informe data e profissional</option></select><div class="form-text">Fuso da clínica: <strong id="paciente-agenda-timezone">—</strong>.</div></div>
+                    <div class="vitalis-patient-slot"><label for="horario-consulta" class="form-label">Horário disponível</label><select id="horario-consulta" class="form-select" required disabled><option value="">Informe data e profissional</option></select><div class="form-text">Horário local da clínica: <strong id="paciente-agenda-timezone">—</strong>.</div></div>
                     <div class="vitalis-patient-booking-action"><button type="submit" class="btn vitalis-primary-button"><i class="bi bi-calendar-check"></i> Confirmar agendamento</button></div>
                 </div></form>
             </section>
 
-            <section class="vitalis-panel vitalis-future-discovery" aria-labelledby="future-discovery-title">
-                <span class="vitalis-future-discovery-icon"><i class="bi bi-search-heart"></i></span>
-                <div><p class="vitalis-eyebrow">Próxima evolução</p><h2 id="future-discovery-title">Encontre novos profissionais e clínicas</h2><p>A busca de médicos autônomos e clínicas será implementada na issue #67. Nenhum catálogo ou disponibilidade fictícia é exibido nesta etapa.</p></div>
-                <span class="vitalis-status vitalis-status-agendada">Em preparação</span>
-            </section>
         </main>
     </div>
 
