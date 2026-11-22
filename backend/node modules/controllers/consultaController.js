@@ -108,6 +108,26 @@ async function activeOperator(connection, req) {
     return rows[0]?.papel ?? null;
 }
 
+async function activePracticeOwner(connection, req) {
+    if (!req.workspaceOwner) return null;
+    const [rows] = await connection.execute(`
+        SELECT p.id AS profissional_id
+        FROM consultorios_profissionais cp
+        JOIN identidades_profissionais ip ON ip.usuario_id = cp.titular_usuario_id
+          AND ip.status_verificacao = 'verificada'
+        JOIN clinicas c ON c.id = cp.clinica_id AND c.status = 'ativa'
+        JOIN clinica_usuarios cu ON cu.clinica_id = cp.clinica_id
+          AND cu.usuario_id = cp.titular_usuario_id
+          AND cu.papel = 'profissional' AND cu.status = 'ativo'
+        JOIN usuarios u ON u.id = cp.titular_usuario_id AND u.status = 'ativo'
+        JOIN profissionais p ON p.clinica_id = cp.clinica_id
+          AND p.usuario_id = cp.titular_usuario_id AND p.status = 'ativo'
+        WHERE cp.clinica_id = ? AND cp.titular_usuario_id = ? AND cp.status = 'ativo'
+        LIMIT 1 FOR UPDATE
+    `, [req.tenant.clinicId, req.userId]);
+    return rows[0] ?? null;
+}
+
 async function activeClinic(executor, clinicId, lock = false) {
     const [rows] = await executor.execute(`
         SELECT id, timezone FROM clinicas WHERE id = ? AND status = 'ativa'
@@ -497,6 +517,14 @@ exports.agendarConsulta = async (req, res) => {
     try {
         connection = await pool.getConnection(); await connection.beginTransaction();
         if (!await activeOperator(connection, req)) return await rollback(connection, res, 403, 'Vínculo ativo não autorizado.');
+        const practiceOwner = req.workspaceOwner ? await activePracticeOwner(connection, req) : null;
+        if (req.workspaceOwner && (!practiceOwner
+            || Number(practiceOwner.profissional_id) !== professionalId)) {
+            return await rollback(
+                connection, res, 403,
+                'Titular do consultório não autorizado para este profissional.'
+            );
+        }
         const clinic = await activeClinic(connection, req.tenant.clinicId, true);
         const period = clinic && appointmentPeriod(req.body, clinic.timezone);
         if (!period) return await rollback(connection, res, 400, 'Data, horário ou duração inválida.');
@@ -679,6 +707,9 @@ async function changeStatus(req, res, forced = null) {
         connection = await pool.getConnection(); await connection.beginTransaction();
         const role = await activeOperator(connection, req);
         if (!role) return await rollback(connection, res, 403, 'Vínculo ativo não autorizado.');
+        if (req.workspaceOwner && !await activePracticeOwner(connection, req)) {
+            return await rollback(connection, res, 403, 'Titular do consultório não autorizado.');
+        }
         const appointment = await lockedAppointment(connection, req, appointmentId);
         if (!appointment || !accessible(req, appointment)) return await rollback(connection, res, 404, 'Consulta não encontrada.');
         if (Number(appointment.versao) !== expectedVersion) {
@@ -696,7 +727,8 @@ async function changeStatus(req, res, forced = null) {
             && !await activeClinic(connection, req.tenant.clinicId, true)) {
             return await rollback(connection, res, 409, 'Clínica ativa não disponível.');
         }
-        if (target === 'nao_compareceu' && !['administrador', 'secretaria'].includes(role)) {
+        if (target === 'nao_compareceu'
+            && !['administrador', 'secretaria'].includes(role) && !req.workspaceOwner) {
             return await rollback(connection, res, 403, 'Somente a gestão da clínica pode registrar não comparecimento.');
         }
         if (!canTransition(appointment.status, target)) {
@@ -746,8 +778,16 @@ exports.reschedule = async (req, res) => {
     try {
         connection = await pool.getConnection(); await connection.beginTransaction();
         const role = await activeOperator(connection, req);
-        if (!['administrador', 'secretaria'].includes(role)) {
+        if (!['administrador', 'secretaria'].includes(role) && !req.workspaceOwner) {
             return await rollback(connection, res, 403, 'Papel não autorizado a reagendar consultas.');
+        }
+        const practiceOwner = req.workspaceOwner ? await activePracticeOwner(connection, req) : null;
+        if (req.workspaceOwner && (!practiceOwner
+            || Number(practiceOwner.profissional_id) !== professionalId)) {
+            return await rollback(
+                connection, res, 403,
+                'Titular do consultório não autorizado para este profissional.'
+            );
         }
         const clinic = await activeClinic(connection, req.tenant.clinicId, true);
         const period = clinic && appointmentPeriod(req.body, clinic.timezone);

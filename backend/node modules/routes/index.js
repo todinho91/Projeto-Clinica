@@ -10,11 +10,13 @@ const equipeController = require('../controllers/equipeController');
 const clinicaController = require('../controllers/clinicaController');
 const disponibilidadeController = require('../controllers/disponibilidadeController');
 const confirmacaoConsultaController = require('../controllers/confirmacaoConsultaController');
+const consultorioController = require('../controllers/consultorioController');
 const multerConfig = require('../config/multerConfig');
 const authenticate = require('../middleware/auth');
 const identityOnly = require('../middleware/identityOnly');
 const tenantContext = require('../middleware/tenant');
 const authorize = require('../middleware/authorize');
+const workspaceManager = require('../middleware/workspaceManager');
 const optionalAuth = require('../middleware/optionalAuth');
 const invitationRateLimit = require('../middleware/invitationRateLimit');
 
@@ -54,6 +56,14 @@ router.post('/auth/select-clinic', identityOnly, authController.selectClinic);
 router.get('/plataforma/capacidades', identityOnly, clinicaController.capabilities);
 router.get('/plataforma/clinicas', identityOnly, clinicaController.listPlatformClinics);
 router.post('/plataforma/clinicas', identityOnly, clinicaController.provision);
+router.get('/profissionais/identidade', identityOnly, consultorioController.getIdentity);
+router.post('/profissionais/identidade', identityOnly, consultorioController.createIdentity);
+router.patch(
+    '/plataforma/profissionais/:userId/verificacao',
+    identityOnly,
+    consultorioController.verifyIdentity
+);
+router.post('/consultorios', identityOnly, consultorioController.provision);
 router.post(
     '/plataforma/clinicas/:clinicId/convites/:invitationId/reenviar',
     identityOnly,
@@ -62,14 +72,22 @@ router.post(
 
 router.use(tenantContext);
 
-router.get('/clinica/configuracoes', authorize('administrador'), clinicaController.getSettings);
-router.patch('/clinica/configuracoes', authorize('administrador'), clinicaController.updateSettings);
+router.get('/consultorio/contexto', authorize('profissional'), consultorioController.context);
+router.post('/consultorio/locais', authorize('profissional'), consultorioController.createLocation);
+router.patch(
+    '/consultorio/locais/:id/status',
+    authorize('profissional'),
+    consultorioController.updateLocationStatus
+);
 
-router.get('/equipe', authorize('administrador', 'secretaria'), equipeController.list);
-router.post('/equipe/convites', authorize('administrador', 'secretaria'), equipeController.createInvitation);
-router.post('/equipe/convites/:id/reenviar', authorize('administrador', 'secretaria'), equipeController.reissue);
-router.post('/equipe/convites/:id/revogar', authorize('administrador', 'secretaria'), equipeController.revoke);
-router.patch('/equipe/vinculos/:id/status', authorize('administrador', 'secretaria'), equipeController.updateStatus);
+router.get('/clinica/configuracoes', workspaceManager('administrador'), clinicaController.getSettings);
+router.patch('/clinica/configuracoes', workspaceManager('administrador'), clinicaController.updateSettings);
+
+router.get('/equipe', workspaceManager('administrador', 'secretaria'), equipeController.list);
+router.post('/equipe/convites', workspaceManager('administrador', 'secretaria'), equipeController.createInvitation);
+router.post('/equipe/convites/:id/reenviar', workspaceManager('administrador', 'secretaria'), equipeController.reissue);
+router.post('/equipe/convites/:id/revogar', workspaceManager('administrador', 'secretaria'), equipeController.revoke);
+router.patch('/equipe/vinculos/:id/status', workspaceManager('administrador', 'secretaria'), equipeController.updateStatus);
 router.patch('/equipe/vinculos/:id/papel', authorize('administrador'), equipeController.updateRole);
 
 router.get(
@@ -114,22 +132,22 @@ router.patch(
 );
 router.get(
     '/especialidades/gestao',
-    authorize('administrador', 'secretaria'),
+    workspaceManager('administrador', 'secretaria'),
     especialidadeController.listForManagement
 );
 router.post(
     '/especialidades',
-    authorize('administrador', 'secretaria'),
+    workspaceManager('administrador', 'secretaria'),
     especialidadeController.createSpecialty
 );
 router.put(
     '/especialidades/:id',
-    authorize('administrador', 'secretaria'),
+    workspaceManager('administrador', 'secretaria'),
     especialidadeController.updateSpecialty
 );
 router.patch(
     '/especialidades/:id/status',
-    authorize('administrador', 'secretaria'),
+    workspaceManager('administrador', 'secretaria'),
     especialidadeController.updateSpecialtyStatus
 );
 router.get(
@@ -159,22 +177,22 @@ router.patch(
 );
 router.post(
     '/consultas',
-    authorize('administrador', 'secretaria', 'paciente'),
+    workspaceManager('administrador', 'secretaria', 'paciente'),
     consultaController.agendarConsulta
 );
 router.get(
     '/consultas/contexto',
-    authorize('administrador', 'secretaria', 'paciente'),
+    workspaceManager('administrador', 'secretaria', 'paciente'),
     consultaController.context
 );
 router.get(
     '/consultas/horarios',
-    authorize('administrador', 'secretaria', 'paciente'),
+    workspaceManager('administrador', 'secretaria', 'paciente'),
     consultaController.availableSlots
 );
 router.get(
     '/consultas/gestao',
-    authorize('administrador', 'secretaria'),
+    workspaceManager('administrador', 'secretaria'),
     consultaController.listForManagement
 );
 router.get(
@@ -194,7 +212,7 @@ router.get(
 );
 router.put(
     '/consultas/:id/status',
-    authorize('administrador', 'secretaria'),
+    workspaceManager('administrador', 'secretaria'),
     consultaController.updateStatusConsulta
 );
 router.put(
@@ -204,7 +222,7 @@ router.put(
 );
 router.patch(
     '/consultas/:id/reagendar',
-    authorize('administrador', 'secretaria'),
+    workspaceManager('administrador', 'secretaria'),
     consultaController.reschedule
 );
 router.get(
@@ -214,12 +232,12 @@ router.get(
 );
 router.post(
     '/consultas/:id/confirmacoes',
-    authorize('administrador', 'secretaria'),
+    workspaceManager('administrador', 'secretaria'),
     confirmacaoConsultaController.requestConfirmation
 );
 router.post(
     '/consultas/:id/confirmacoes/manual',
-    authorize('administrador', 'secretaria'),
+    workspaceManager('administrador', 'secretaria'),
     confirmacaoConsultaController.manualResponse
 );
 router.post(
@@ -239,42 +257,42 @@ router.put(
 );
 router.get(
     '/consultas/:id/confirmacoes',
-    authorize('administrador', 'secretaria'),
+    workspaceManager('administrador', 'secretaria'),
     confirmacaoConsultaController.history
 );
 router.delete(
     '/consultas/:id',
-    authorize('administrador', 'secretaria', 'paciente'),
+    workspaceManager('administrador', 'secretaria', 'paciente'),
     consultaController.cancelarConsulta
 );
 router.get(
     '/pacientes/gestao',
-    authorize('administrador', 'secretaria'),
+    workspaceManager('administrador', 'secretaria'),
     pacienteController.listForManagement
 );
 router.get(
     '/pacientes/busca',
-    authorize('administrador', 'secretaria'),
+    workspaceManager('administrador', 'secretaria'),
     pacienteController.searchForScheduling
 );
 router.get(
     '/pacientes/gestao/:id',
-    authorize('administrador', 'secretaria'),
+    workspaceManager('administrador', 'secretaria'),
     pacienteController.getForManagement
 );
 router.post(
     '/pacientes/duplicidades',
-    authorize('administrador', 'secretaria'),
+    workspaceManager('administrador', 'secretaria'),
     pacienteController.previewDuplicates
 );
 router.post(
     '/pacientes',
-    authorize('administrador', 'secretaria'),
+    workspaceManager('administrador', 'secretaria'),
     pacienteController.createPatient
 );
 router.put(
     '/pacientes/:id',
-    authorize('administrador', 'secretaria'),
+    workspaceManager('administrador', 'secretaria'),
     pacienteController.updatePatient
 );
 router.get(

@@ -206,8 +206,8 @@ function requireClinicSession(page) {
         window.location.replace('select-clinic.html');
         return null;
     }
-    if (!VitalisCore.roleCanAccessPage(session.activeClinic.papel, page)) {
-        const destination = VitalisCore.dashboardForRole(session.activeClinic.papel);
+    if (!VitalisCore.roleCanAccessPage(session.activeClinic.papel, page, session.activeClinic)) {
+        const destination = VitalisCore.dashboardForRole(session.activeClinic.papel, session.activeClinic);
         window.location.replace(destination || 'select-clinic.html');
         return null;
     }
@@ -218,7 +218,10 @@ function applyClinicIdentity(clinic) {
     document.querySelectorAll('[data-clinic-name]').forEach((element) => {
         element.textContent = clinic.nome;
     });
-    if (clinic.papel !== 'administrador') {
+    const practiceOwner = typeof VitalisCore !== 'undefined'
+        && typeof VitalisCore.isPracticeOwner === 'function'
+        && VitalisCore.isPracticeOwner(clinic);
+    if (clinic.papel !== 'administrador' && !practiceOwner) {
         document.querySelectorAll('[data-admin-only]').forEach((element) => element.remove());
     }
     document.querySelectorAll('[data-clinic-switch]').forEach((element) => {
@@ -257,7 +260,136 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (page === 'provisionamento-clinicas.html') setupClinicProvisioningPage();
     else if (page === 'disponibilidade.html') setupAvailabilityPage();
     else if (page === 'confirmacao-consulta.html') setupAppointmentConfirmationPage();
+    else if (page === 'consultorio.html') setupPracticePage();
+    else if (page === 'vitalis-profissional.html') setupProfessionalStartPage();
 });
+
+async function setupProfessionalStartPage() {
+    if (!session.identityToken) {
+        window.location.replace('login.html');
+        return;
+    }
+    const identityForm = document.getElementById('professional-identity-form');
+    const practiceForm = document.getElementById('practice-provision-form');
+    const identityStatus = document.getElementById('professional-identity-status');
+    const practiceStatus = document.getElementById('practice-provision-status');
+    async function refreshIdentity() {
+        try {
+            const identity = await apiRequest('/profissionais/identidade', {}, 'identity');
+            identityForm.hidden = true;
+            const labels = { pendente: 'Aguardando verificação', verificada: 'Verificada', suspensa: 'Suspensa' };
+            showMessage(identityStatus, `Identidade profissional: ${labels[identity.status_verificacao]}.`,
+                identity.status_verificacao === 'verificada' ? 'success' : 'info');
+            practiceForm.hidden = identity.status_verificacao !== 'verificada';
+        } catch (error) {
+            if (error.code === 'PROFESSIONAL_IDENTITY_NOT_FOUND') {
+                identityForm.hidden = false;
+                practiceForm.hidden = true;
+                showMessage(identityStatus, 'Cadastre seu registro para solicitar a verificação profissional.', 'info');
+                return;
+            }
+            identityForm.hidden = true; practiceForm.hidden = true;
+            showMessage(identityStatus, error.message);
+        }
+    }
+    identityForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        try {
+            const data = await apiRequest('/profissionais/identidade', {
+                method: 'POST', body: JSON.stringify({
+                    tipo_profissional: document.getElementById('identity-type').value,
+                    conselho_tipo: document.getElementById('identity-council').value,
+                    conselho_numero: document.getElementById('identity-number').value,
+                    conselho_uf: document.getElementById('identity-state').value
+                })
+            }, 'identity');
+            showMessage(identityStatus, data.message, 'success');
+            await refreshIdentity();
+        } catch (error) { showMessage(identityStatus, error.message); }
+    });
+    practiceForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!window.confirm('Criar seu consultório profissional com estes dados?')) return;
+        try {
+            const data = await apiRequest('/consultorios', {
+                method: 'POST', body: JSON.stringify({
+                    nome: document.getElementById('practice-name').value,
+                    slug: document.getElementById('practice-slug').value,
+                    timezone: document.getElementById('practice-timezone').value,
+                    nome_exibicao: document.getElementById('practice-display-name').value
+                })
+            }, 'identity');
+            showMessage(practiceStatus, `${data.message} Atualizando seus acessos...`, 'success');
+            const clinics = await apiRequest('/auth/clinics', {}, 'identity');
+            sessionStorage.setItem(VitalisCore.KEYS.clinics, JSON.stringify(clinics));
+            setTimeout(() => window.location.assign('select-clinic.html'), 700);
+        } catch (error) { showMessage(practiceStatus, error.message); }
+    });
+    await refreshIdentity();
+}
+
+async function setupPracticePage() {
+    const clinic = requireClinicSession('consultorio.html');
+    if (!clinic) return;
+    applyClinicIdentity(clinic);
+    const list = document.getElementById('practice-locations');
+    const status = document.getElementById('practice-status');
+    const form = document.getElementById('practice-location-form');
+    async function load() {
+        try {
+            const data = await apiRequest('/consultorio/contexto');
+            document.querySelectorAll('[data-practice-timezone]').forEach((item) => {
+                item.textContent = data.consultorio.timezone;
+            });
+            list.replaceChildren();
+            if (!data.locais.length) {
+                const empty = document.createElement('p');
+                empty.className = 'text-muted mb-0';
+                empty.textContent = 'Nenhum local de atendimento cadastrado.';
+                list.append(empty);
+                return;
+            }
+            data.locais.forEach((location) => {
+                const card = document.createElement('article');
+                card.className = 'vitalis-practice-location';
+                const details = document.createElement('div');
+                const title = document.createElement('strong'); title.textContent = location.nome;
+                const address = document.createElement('span');
+                address.textContent = `${location.endereco_linha} · ${location.cidade}/${location.uf}`;
+                details.append(title, address);
+                const button = document.createElement('button'); button.type = 'button';
+                button.className = 'btn btn-sm btn-outline-secondary';
+                button.textContent = location.status === 'ativo' ? 'Desativar' : 'Ativar';
+                button.addEventListener('click', async () => {
+                    try {
+                        const next = location.status === 'ativo' ? 'inativo' : 'ativo';
+                        await apiRequest(`/consultorio/locais/${location.id}/status`, {
+                            method: 'PATCH', body: JSON.stringify({ status: next })
+                        });
+                        await load();
+                    } catch (error) { showMessage(status, error.message); }
+                });
+                card.append(details, button); list.append(card);
+            });
+        } catch (error) { showMessage(status, error.message); }
+    }
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        try {
+            const data = await apiRequest('/consultorio/locais', {
+                method: 'POST', body: JSON.stringify({
+                    nome: document.getElementById('location-name').value,
+                    endereco_linha: document.getElementById('location-address').value,
+                    cidade: document.getElementById('location-city').value,
+                    uf: document.getElementById('location-state').value,
+                    cep: document.getElementById('location-postal-code').value
+                })
+            });
+            form.reset(); showMessage(status, data.message, 'success'); await load();
+        } catch (error) { showMessage(status, error.message); }
+    });
+    await load();
+}
 
 async function setupAppointmentConfirmationPage() {
     const loading = document.getElementById('confirmation-loading');
@@ -505,7 +637,7 @@ async function setupAvailabilityPage() {
     if (!clinic) return;
     applyClinicIdentity(clinic);
     document.querySelectorAll('[data-availability-home]').forEach((link) => {
-        link.href = VitalisCore.dashboardForRole(clinic.papel) || 'select-clinic.html';
+        link.href = VitalisCore.dashboardForRole(clinic.papel, clinic) || 'select-clinic.html';
     });
     if (!['administrador', 'secretaria'].includes(clinic.papel)) {
         document.querySelectorAll('[data-management-only]').forEach((element) => element.remove());
@@ -783,9 +915,10 @@ async function setupEquipePage() {
         aceito: ['Aceito', 'vitalis-team-badge-active'],
         revogado: ['Revogado', 'vitalis-team-badge-inactive']
     };
-    if (clinic.papel === 'secretaria') {
+    if (clinic.papel === 'secretaria' || VitalisCore.isPracticeOwner(clinic)) {
         [...roleSelect.options].forEach((option) => {
-            if (option.value !== 'profissional') option.remove();
+            const permitted = VitalisCore.isPracticeOwner(clinic) ? 'secretaria' : 'profissional';
+            if (option.value !== permitted) option.remove();
         });
     }
 
@@ -889,7 +1022,8 @@ async function setupEquipePage() {
                     actions.append(button);
                 };
                 const canManageMember = clinic.papel === 'administrador'
-                    || (clinic.papel === 'secretaria' && member.papel === 'profissional');
+                    || (clinic.papel === 'secretaria' && member.papel === 'profissional')
+                    || (VitalisCore.isPracticeOwner(clinic) && member.papel === 'secretaria');
                 if (canManageMember && member.status === 'convite_pendente') {
                     if (member.convite_id && member.convite_status === 'pendente') {
                         addButton('Reenviar', 'btn-outline-primary', () => {
@@ -1024,7 +1158,7 @@ function setupLoginPage() {
                     method: 'POST', body: JSON.stringify({ clinica_id: entry.clinicId })
                 }, 'identity');
                 session.saveClinic(selected);
-                const destination = VitalisCore.dashboardForRole(selected.clinica.papel);
+                const destination = VitalisCore.dashboardForRole(selected.clinica.papel, selected.clinica);
                 if (!destination) throw new Error('Papel sem painel disponível.');
                 window.location.assign(destination);
                 return;
@@ -1080,7 +1214,7 @@ async function setupClinicSelectionPage() {
                 body: JSON.stringify({ clinica_id: Number(select.value) })
             }, 'identity');
             session.saveClinic(data);
-            const destination = VitalisCore.dashboardForRole(data.clinica.papel);
+            const destination = VitalisCore.dashboardForRole(data.clinica.papel, data.clinica);
             if (!destination) throw new Error('Papel sem painel disponível.');
             window.location.assign(destination);
         } catch (error) {

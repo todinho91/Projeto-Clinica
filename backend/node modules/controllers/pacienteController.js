@@ -108,7 +108,17 @@ async function operatorCanManage(connection, clinicId, userId) {
         FROM clinica_usuarios cu
         JOIN usuarios u ON u.id = cu.usuario_id
         WHERE cu.clinica_id = ? AND cu.usuario_id = ?
-          AND cu.papel IN ('administrador', 'secretaria')
+          AND (cu.papel IN ('administrador', 'secretaria') OR (
+                cu.papel = 'profissional' AND EXISTS (
+                    SELECT 1 FROM consultorios_profissionais cp
+                    JOIN identidades_profissionais ip
+                      ON ip.usuario_id = cp.titular_usuario_id
+                     AND ip.status_verificacao = 'verificada'
+                    WHERE cp.clinica_id = cu.clinica_id
+                      AND cp.titular_usuario_id = cu.usuario_id
+                      AND cp.status = 'ativo'
+                )
+          ))
           AND cu.status = 'ativo' AND u.status = 'ativo'
         LIMIT 1 FOR UPDATE
     `, [clinicId, userId]);

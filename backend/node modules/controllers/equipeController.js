@@ -19,7 +19,8 @@ function normalizedEmail(value) {
     return email.length <= 254 && EMAIL.test(email) ? email : null;
 }
 
-function mayManage(actorRole, targetRole) {
+function mayManage(actorRole, targetRole, isPracticeOwner = false) {
+    if (isPracticeOwner) return actorRole === 'profissional' && targetRole === 'secretaria';
     return actorRole === 'administrador' || (actorRole === 'secretaria' && targetRole === 'profissional');
 }
 
@@ -31,9 +32,14 @@ async function authorizedOperator(connection, req) {
     const [rows] = await connection.execute(`
         SELECT cu.papel, cu.status AS vinculo_status,
                u.status AS usuario_status, c.status AS clinica_status
+               , CASE WHEN cp.titular_usuario_id = cu.usuario_id AND cp.status = 'ativo'
+                         AND ip.status_verificacao = 'verificada'
+                    THEN 1 ELSE 0 END AS consultorio_titular
         FROM clinica_usuarios cu
         JOIN usuarios u ON u.id = cu.usuario_id
         JOIN clinicas c ON c.id = cu.clinica_id
+        LEFT JOIN consultorios_profissionais cp ON cp.clinica_id = cu.clinica_id
+        LEFT JOIN identidades_profissionais ip ON ip.usuario_id = cp.titular_usuario_id
         WHERE cu.clinica_id = ? AND cu.usuario_id = ? AND cu.papel = ?
           AND cu.sessao_versao = ?
         FOR UPDATE
@@ -41,7 +47,7 @@ async function authorizedOperator(connection, req) {
     const actor = rows[0];
     if (!actor || actor.papel !== req.tenant.role || actor.vinculo_status !== 'ativo'
         || actor.usuario_status !== 'ativo' || actor.clinica_status !== 'ativa') return null;
-    return actor;
+    return { ...actor, isPracticeOwner: Boolean(actor.consultorio_titular) };
 }
 
 async function hasRequiredProfile(connection, clinicId, userId, role) {
@@ -162,7 +168,9 @@ exports.createInvitation = async (req, res) => {
     const email = normalizedEmail(req.body?.email);
     const role = req.body?.papel;
     if (!email || !ROLES.has(role)) return res.status(400).json({ error: 'E-mail ou papel inválido.' });
-    if (!mayManage(req.tenant.role, role)) return res.status(403).json({ error: 'Papel não autorizado.' });
+    if (!mayManage(req.tenant.role, role, req.workspaceOwner)) {
+        return res.status(403).json({ error: 'Papel não autorizado.' });
+    }
     let connection;
     let issued;
     let clinicName;
@@ -170,7 +178,7 @@ exports.createInvitation = async (req, res) => {
         connection = await pool.getConnection();
         await connection.beginTransaction();
         const actor = await authorizedOperator(connection, req);
-        if (!actor || !mayManage(actor.papel, role)) {
+        if (!actor || !mayManage(actor.papel, role, actor.isPracticeOwner)) {
             await connection.rollback();
             return res.status(403).json({ error: 'Operador não autorizado ou sessão desatualizada.' });
         }
@@ -306,7 +314,7 @@ exports.reissue = async (req, res) => {
         `, [invitationId, req.tenant.clinicId]);
         target = rows[0];
         if (!target) { await connection.rollback(); return res.status(404).json({ error: 'Convite não encontrado.' }); }
-        if (!mayManage(actor.papel, target.papel)) { await connection.rollback(); return res.status(403).json({ error: 'Papel não autorizado.' }); }
+        if (!mayManage(actor.papel, target.papel, actor.isPracticeOwner)) { await connection.rollback(); return res.status(403).json({ error: 'Papel não autorizado.' }); }
         if (target.status !== 'pendente') {
             await connection.rollback();
             return res.status(409).json({ error: 'Somente convites pendentes podem ser reenviados.' });
@@ -356,7 +364,7 @@ exports.revoke = async (req, res) => {
         const [rows] = await connection.execute(`SELECT id, papel, status FROM convites_clinica WHERE id = ? AND clinica_id = ? FOR UPDATE`, [invitationId, req.tenant.clinicId]);
         const target = rows[0];
         if (!target) { await connection.rollback(); return res.status(404).json({ error: 'Convite não encontrado.' }); }
-        if (!mayManage(actor.papel, target.papel)) { await connection.rollback(); return res.status(403).json({ error: 'Papel não autorizado.' }); }
+        if (!mayManage(actor.papel, target.papel, actor.isPracticeOwner)) { await connection.rollback(); return res.status(403).json({ error: 'Papel não autorizado.' }); }
         if (target.status !== 'pendente') { await connection.rollback(); return res.status(409).json({ error: 'Convite não está pendente.' }); }
         await connection.execute(`UPDATE convites_clinica SET status='revogado', revogado_em=UTC_TIMESTAMP(6) WHERE id=?`, [invitationId]);
         await audit(connection, req, 'convite_revogado', 'convite_clinica', invitationId);
@@ -484,7 +492,8 @@ async function changeLink(req, res, mode) {
         const [rows] = await connection.execute(`SELECT id, usuario_id, papel, status FROM clinica_usuarios WHERE id=? AND clinica_id=? FOR UPDATE`, [linkId, req.tenant.clinicId]);
         const target = rows[0];
         if (!target) { await connection.rollback(); return res.status(404).json({ error: 'Vínculo não encontrado.' }); }
-        if (!mayManage(actor.papel, target.papel) || (mode === 'role' && !mayManage(actor.papel, value))) {
+        if (!mayManage(actor.papel, target.papel, actor.isPracticeOwner)
+            || (mode === 'role' && !mayManage(actor.papel, value, actor.isPracticeOwner))) {
             await connection.rollback(); return res.status(403).json({ error: 'Alteração não autorizada.' });
         }
         if (target.status === 'convite_pendente') {

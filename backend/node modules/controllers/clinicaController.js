@@ -454,13 +454,24 @@ exports.updateSettings = async (req, res) => {
             JOIN usuarios u ON u.id = cu.usuario_id
             JOIN clinicas c ON c.id = cu.clinica_id
             WHERE cu.clinica_id = ? AND cu.usuario_id = ?
-              AND cu.papel = 'administrador' AND cu.status = 'ativo'
+              AND cu.status = 'ativo'
+              AND (cu.papel = 'administrador' OR (
+                    cu.papel = 'profissional' AND EXISTS (
+                        SELECT 1 FROM consultorios_profissionais cp
+                        JOIN identidades_profissionais ip
+                          ON ip.usuario_id = cp.titular_usuario_id
+                         AND ip.status_verificacao = 'verificada'
+                        WHERE cp.clinica_id = cu.clinica_id
+                          AND cp.titular_usuario_id = cu.usuario_id
+                          AND cp.status = 'ativo'
+                    )
+              ))
               AND cu.sessao_versao = ? AND u.status = 'ativo' AND c.status = 'ativa'
             FOR UPDATE
         `, [req.tenant.clinicId, req.userId, req.auth?.membershipVersion]);
         if (!actors[0]) {
             await connection.rollback();
-            return res.status(403).json({ error: 'Administrador não autorizado ou sessão desatualizada.' });
+            return res.status(403).json({ error: 'Responsável não autorizado ou sessão desatualizada.' });
         }
         const [result] = await connection.execute(`
             UPDATE clinicas SET nome = ?, timezone = ?

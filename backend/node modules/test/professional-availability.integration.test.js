@@ -20,6 +20,7 @@ function response() {
 async function resetSchema(connection, database) {
     await confirmAvailabilityTestEnvironment(connection, database);
     const tables = [
+        'consultorio_locais', 'consultorios_profissionais', 'identidades_profissionais',
         'auditoria_plataforma', 'convites_clinica', 'bloqueios_profissional',
         'disponibilidades_profissional', 'auditoria', 'documentos_clinicos', 'consultas_historico', 'consultas',
         'pacientes', 'profissional_especialidades', 'profissionais', 'especialidades',

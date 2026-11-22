@@ -30,7 +30,10 @@ test('migrations criam todas as tabelas previstas para DB-01', async () => {
         'bloqueios_profissional',
         'consultas_historico',
         'confirmacoes_consulta',
-        'confirmacoes_consulta_eventos'
+        'confirmacoes_consulta_eventos',
+        'identidades_profissionais',
+        'consultorios_profissionais',
+        'consultorio_locais'
     ]) {
         assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`));
     }

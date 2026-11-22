@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Meu consultório — Vitalis</title>
+  <link rel="icon" type="image/png" href="img/icons8-blue-heart-96.png">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="css/style.css"><link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body class="vitalis-dashboard-body vitalis-practice-page">
+  <aside class="offcanvas-lg offcanvas-start vitalis-sidebar" tabindex="-1" id="vitalis-sidebar"><div class="offcanvas-body d-flex flex-column p-0">
+    <a class="vitalis-brand" href="consultorio.html"><span class="vitalis-brand-mark"><i class="bi bi-heart-pulse-fill"></i></span><span><strong>Vitalis</strong><small>Consultório profissional</small></span></a>
+    <div class="vitalis-clinic-card"><span>Consultório ativo</span><strong data-clinic-name>Consultório</strong><small data-practice-timezone>Fuso horário</small></div>
+    <nav class="vitalis-nav" aria-label="Navegação do consultório">
+      <a class="active" href="consultorio.html" aria-current="page"><i class="bi bi-grid-1x2-fill"></i> Visão geral</a>
+      <a href="pacientes.html"><i class="bi bi-person-vcard"></i> Pacientes</a>
+      <a href="agenda.html"><i class="bi bi-calendar3"></i> Agenda</a>
+      <a href="calendario.html"><i class="bi bi-calendar-event"></i> Calendário</a>
+      <a href="disponibilidade.html"><i class="bi bi-calendar-week"></i> Disponibilidade</a>
+      <a href="especialidades.html"><i class="bi bi-tags"></i> Especialidades</a>
+      <a href="equipe.html"><i class="bi bi-people"></i> Secretária e acessos</a>
+      <a href="configuracoes-clinica.html"><i class="bi bi-gear"></i> Configurações</a>
+    </nav>
+    <div class="vitalis-sidebar-footer"><a href="select-clinic.html"><i class="bi bi-buildings"></i> Meus vínculos</a><button id="logout-button"><i class="bi bi-box-arrow-right"></i> Sair</button></div>
+  </div></aside>
+  <div class="vitalis-dashboard-content">
+    <header class="vitalis-topbar"><button class="btn vitalis-menu-button d-lg-none" data-bs-toggle="offcanvas" data-bs-target="#vitalis-sidebar" aria-label="Abrir menu"><i class="bi bi-list"></i></button><div class="vitalis-topbar-title"><span>Consultório ativo</span><strong data-clinic-name>Consultório</strong></div></header>
+    <main class="vitalis-main">
+      <section class="vitalis-welcome"><div><p class="vitalis-eyebrow">Vitalis Profissional</p><h1>Meu consultório</h1><p>Gerencie sua operação sem precisar de uma conta administrativa separada.</p></div></section>
+      <section class="vitalis-practice-shortcuts" aria-label="Atalhos">
+        <a href="pacientes.html"><i class="bi bi-person-plus-fill"></i><strong>Cadastrar paciente</strong><span>Dados isolados neste consultório</span></a>
+        <a href="agenda.html"><i class="bi bi-calendar-plus-fill"></i><strong>Gerenciar agenda</strong><span>Agendamentos e confirmações</span></a>
+        <a href="disponibilidade.html"><i class="bi bi-clock-fill"></i><strong>Disponibilidade</strong><span>Horários e bloqueios</span></a>
+        <a href="equipe.html"><i class="bi bi-person-check-fill"></i><strong>Convidar secretária</strong><span>Acesso opcional e revogável</span></a>
+      </section>
+      <div class="vitalis-practice-grid">
+        <section class="vitalis-panel"><div class="vitalis-panel-header"><h2>Locais de atendimento</h2><span>Espaços físicos do consultório</span></div><div id="practice-locations" class="vitalis-practice-locations"></div></section>
+        <section class="vitalis-panel"><div class="vitalis-panel-header"><h2>Novo local</h2><span>Não cria outra clínica</span></div>
+          <form id="practice-location-form"><div class="row g-3">
+            <div class="col-12"><label class="form-label" for="location-name">Nome</label><input class="form-control" id="location-name" maxlength="120" required></div>
+            <div class="col-12"><label class="form-label" for="location-address">Endereço</label><input class="form-control" id="location-address" maxlength="200" required></div>
+            <div class="col-7"><label class="form-label" for="location-city">Cidade</label><input class="form-control" id="location-city" maxlength="120" required></div>
+            <div class="col-5"><label class="form-label" for="location-state">UF</label><input class="form-control text-uppercase" id="location-state" maxlength="2" pattern="[A-Za-z]{2}" required></div>
+            <div class="col-12"><label class="form-label" for="location-postal-code">CEP (opcional)</label><input class="form-control" id="location-postal-code" inputmode="numeric" maxlength="9"></div>
+            <div class="col-12 d-grid"><button class="btn vitalis-primary-button" type="submit">Adicionar local</button></div>
+          </div></form><div id="practice-status" class="mt-3" role="status" aria-live="polite"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script><script src="js/vitalis-client.js"></script><script src="js/main.js"></script>
+</body>
+</html>

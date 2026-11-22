@@ -47,7 +47,12 @@
         };
     }
 
-    function dashboardForRole(role) {
+    function isPracticeOwner(clinic) {
+        return clinic?.tipo_contexto === 'consultorio' && clinic?.titular === true;
+    }
+
+    function dashboardForRole(role, clinic = null) {
+        if (role === 'profissional' && isPracticeOwner(clinic)) return 'consultorio.html';
         return {
             administrador: 'dashboard-secretaria.html',
             secretaria: 'dashboard-secretaria.html',
@@ -64,7 +69,7 @@
             : { mode: 'select' };
     }
 
-    function roleCanAccessPage(role, page) {
+    function roleCanAccessPage(role, page, clinic = null) {
         const allowed = {
             'dashboard-secretaria.html': ['administrador', 'secretaria'],
             'profissionais.html': ['administrador', 'secretaria'],
@@ -78,6 +83,13 @@
             'dashboard-medico.html': ['profissional'],
             'dashboard-paciente.html': ['paciente']
         };
+        if (role === 'profissional' && isPracticeOwner(clinic)) {
+            return new Set([
+                'consultorio.html', 'pacientes.html', 'agenda.html', 'calendario.html',
+                'disponibilidade.html', 'equipe.html', 'especialidades.html',
+                'configuracoes-clinica.html', 'dashboard-medico.html'
+            ]).has(page);
+        }
         return allowed[page]?.includes(role) ?? false;
     }
 
@@ -212,6 +224,7 @@
         dashboardSummary,
         platformAccessState,
         matchingSelectionId,
+        isPracticeOwner,
         roleCanAccessPage
     };
 }));

@@ -46,6 +46,16 @@ test('papéis são direcionados somente aos painéis permitidos', () => {
     assert.equal(core.roleCanAccessPage('paciente', 'especialidades.html'), false);
 });
 
+test('titular do consultório usa painel próprio sem promover profissionais institucionais', () => {
+    const practice = { tipo_contexto: 'consultorio', titular: true, papel: 'profissional' };
+    assert.equal(core.dashboardForRole('profissional', practice), 'consultorio.html');
+    assert.equal(core.roleCanAccessPage('profissional', 'pacientes.html', practice), true);
+    assert.equal(core.roleCanAccessPage('profissional', 'equipe.html', practice), true);
+    assert.equal(core.roleCanAccessPage('profissional', 'pacientes.html', {
+        tipo_contexto: 'clinica', titular: false, papel: 'profissional'
+    }), false);
+});
+
 test('gestão de especialidades mantém menu, acessibilidade e desativação lógica', async () => {
     const root = path.join(__dirname, '..', '..', '..');
     const dashboard = await fs.readFile(path.join(root, 'dashboard-secretaria.html'), 'utf8');

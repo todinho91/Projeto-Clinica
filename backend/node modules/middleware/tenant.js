@@ -15,10 +15,15 @@ module.exports = async function tenantContext(req, res, next) {
 
     try {
         const [rows] = await pool.execute(`
-            SELECT cu.clinica_id, cu.papel, cu.sessao_versao, c.nome AS clinica_nome
+            SELECT cu.clinica_id, cu.papel, cu.sessao_versao, c.nome AS clinica_nome,
+                   CASE WHEN cp.titular_usuario_id = cu.usuario_id AND cp.status = 'ativo'
+                             AND ip.status_verificacao = 'verificada'
+                        THEN 1 ELSE 0 END AS consultorio_titular
             FROM clinica_usuarios cu
             JOIN clinicas c ON c.id = cu.clinica_id
             JOIN usuarios u ON u.id = cu.usuario_id
+            LEFT JOIN consultorios_profissionais cp ON cp.clinica_id = cu.clinica_id
+            LEFT JOIN identidades_profissionais ip ON ip.usuario_id = cp.titular_usuario_id
             WHERE cu.clinica_id = ?
               AND cu.usuario_id = ?
               AND cu.status = 'ativo'
@@ -37,6 +42,7 @@ module.exports = async function tenantContext(req, res, next) {
             clinicName: rows[0].clinica_nome,
             role: rows[0].papel
         };
+        if (rows[0].consultorio_titular) req.tenant.isPracticeOwner = true;
         return next();
     } catch (error) {
         console.error('Erro ao validar clínica ativa:', error);

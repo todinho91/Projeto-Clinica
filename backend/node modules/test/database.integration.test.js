@@ -11,6 +11,7 @@ const migrationsDir = path.join(__dirname, '..', '..', 'database', 'migrations')
 
 async function resetTestSchema(connection) {
     const tables = [
+        'consultorio_locais', 'consultorios_profissionais', 'identidades_profissionais',
         'auditoria_plataforma',
         'bloqueios_profissional',
         'disponibilidades_profissional',

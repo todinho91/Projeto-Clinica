@@ -34,10 +34,15 @@ function validString(value, min, max) {
 
 async function activeClinicsForUser(executor, userId) {
     const [rows] = await executor.execute(`
-        SELECT c.id, c.nome, c.slug, cu.papel
+        SELECT c.id, c.nome, c.slug, cu.papel,
+               CASE WHEN cp.clinica_id IS NULL THEN 'clinica' ELSE 'consultorio' END AS tipo_contexto,
+               CASE WHEN cp.titular_usuario_id = cu.usuario_id
+                          AND ip.status_verificacao = 'verificada' THEN 1 ELSE 0 END AS titular
         FROM clinica_usuarios cu
         JOIN clinicas c ON c.id = cu.clinica_id
         JOIN usuarios u ON u.id = cu.usuario_id
+        LEFT JOIN consultorios_profissionais cp ON cp.clinica_id = c.id AND cp.status = 'ativo'
+        LEFT JOIN identidades_profissionais ip ON ip.usuario_id = cp.titular_usuario_id
         WHERE cu.usuario_id = ?
           AND cu.status = 'ativo'
           AND c.status = 'ativa'
@@ -48,7 +53,9 @@ async function activeClinicsForUser(executor, userId) {
         id: Number(row.id),
         nome: row.nome,
         slug: row.slug,
-        papel: row.papel
+        papel: row.papel,
+        tipo_contexto: row.tipo_contexto,
+        titular: Boolean(row.titular)
     }));
 }
 
@@ -179,10 +186,15 @@ exports.selectClinic = async (req, res) => {
 
     try {
         const [rows] = await pool.execute(`
-            SELECT c.id, c.nome, c.slug, cu.papel, cu.sessao_versao
+            SELECT c.id, c.nome, c.slug, cu.papel, cu.sessao_versao,
+                   CASE WHEN cp.clinica_id IS NULL THEN 'clinica' ELSE 'consultorio' END AS tipo_contexto,
+                   CASE WHEN cp.titular_usuario_id = cu.usuario_id
+                              AND ip.status_verificacao = 'verificada' THEN 1 ELSE 0 END AS titular
             FROM clinica_usuarios cu
             JOIN clinicas c ON c.id = cu.clinica_id
             JOIN usuarios u ON u.id = cu.usuario_id
+            LEFT JOIN consultorios_profissionais cp ON cp.clinica_id = c.id AND cp.status = 'ativo'
+            LEFT JOIN identidades_profissionais ip ON ip.usuario_id = cp.titular_usuario_id
             WHERE cu.usuario_id = ?
               AND cu.clinica_id = ?
               AND cu.status = 'ativo'
@@ -201,7 +213,9 @@ exports.selectClinic = async (req, res) => {
                 id: Number(rows[0].id),
                 nome: rows[0].nome,
                 slug: rows[0].slug,
-                papel: rows[0].papel
+                papel: rows[0].papel,
+                tipo_contexto: rows[0].tipo_contexto,
+                titular: Boolean(rows[0].titular)
             }
         });
     } catch (error) {
