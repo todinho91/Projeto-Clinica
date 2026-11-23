@@ -103,8 +103,8 @@ async function activeOperator(connection, req) {
         SELECT cu.papel FROM clinica_usuarios cu
         JOIN usuarios u ON u.id = cu.usuario_id AND u.status = 'ativo'
         WHERE cu.clinica_id = ? AND cu.usuario_id = ? AND cu.papel = ?
-          AND cu.status = 'ativo' LIMIT 1 FOR UPDATE
-    `, [req.tenant.clinicId, req.userId, req.tenant.role]);
+          AND cu.status = 'ativo' AND cu.sessao_versao = ? LIMIT 1 FOR UPDATE
+    `, [req.tenant.clinicId, req.userId, req.tenant.role, req.auth?.membershipVersion]);
     return rows[0]?.papel ?? null;
 }
 
@@ -123,8 +123,9 @@ async function activePracticeOwner(connection, req) {
         JOIN profissionais p ON p.clinica_id = cp.clinica_id
           AND p.usuario_id = cp.titular_usuario_id AND p.status = 'ativo'
         WHERE cp.clinica_id = ? AND cp.titular_usuario_id = ? AND cp.status = 'ativo'
+          AND cu.sessao_versao = ?
         LIMIT 1 FOR UPDATE
-    `, [req.tenant.clinicId, req.userId]);
+    `, [req.tenant.clinicId, req.userId, req.auth?.membershipVersion]);
     return rows[0] ?? null;
 }
 

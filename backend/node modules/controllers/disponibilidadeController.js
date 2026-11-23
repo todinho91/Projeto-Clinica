@@ -97,8 +97,16 @@ async function accessibleProfessional(executor, req, professionalId, lock = fals
         JOIN usuarios u ON u.id = p.usuario_id AND u.status = 'ativo'
         WHERE p.clinica_id = ? AND p.id = ? AND p.status = 'ativo'
           AND (? <> 'profissional' OR p.usuario_id = ?)
+          AND (? = 0 OR EXISTS (
+                SELECT 1 FROM consultorios_profissionais cp
+                JOIN identidades_profissionais ip ON ip.usuario_id = cp.titular_usuario_id
+                  AND ip.status_verificacao = 'verificada'
+                WHERE cp.clinica_id = p.clinica_id
+                  AND cp.titular_usuario_id = p.usuario_id AND cp.status = 'ativo'
+          ))
         ${lock ? 'FOR UPDATE' : ''}
-    `, [req.tenant.clinicId, professionalId, req.tenant.role, req.userId]);
+    `, [req.tenant.clinicId, professionalId, req.tenant.role, req.userId,
+        req.tenant.isPractice && req.tenant.role === 'profissional' ? 1 : 0]);
     return rows[0] ?? null;
 }
 

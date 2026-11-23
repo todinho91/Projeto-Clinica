@@ -102,11 +102,12 @@ async function lockActiveClinic(connection, clinicId) {
     return clinics.length > 0;
 }
 
-async function operatorCanManage(connection, clinicId, userId) {
+async function operatorCanManage(connection, clinicId, userId, membershipVersion) {
     const [rows] = await connection.execute(`
         SELECT cu.id
         FROM clinica_usuarios cu
         JOIN usuarios u ON u.id = cu.usuario_id
+        JOIN clinicas c ON c.id = cu.clinica_id AND c.status = 'ativa'
         WHERE cu.clinica_id = ? AND cu.usuario_id = ?
           AND (cu.papel IN ('administrador', 'secretaria') OR (
                 cu.papel = 'profissional' AND EXISTS (
@@ -120,8 +121,9 @@ async function operatorCanManage(connection, clinicId, userId) {
                 )
           ))
           AND cu.status = 'ativo' AND u.status = 'ativo'
+          AND cu.sessao_versao = ?
         LIMIT 1 FOR UPDATE
-    `, [clinicId, userId]);
+    `, [clinicId, userId, membershipVersion]);
     return rows.length > 0;
 }
 
@@ -203,7 +205,7 @@ exports.previewDuplicates = async (req, res) => {
             await connection.rollback();
             return res.status(409).json({ error: 'Clínica ativa não disponível.' });
         }
-        if (!(await operatorCanManage(connection, req.tenant.clinicId, req.userId))) {
+        if (!(await operatorCanManage(connection, req.tenant.clinicId, req.userId, req.auth?.membershipVersion))) {
             await connection.rollback();
             return res.status(403).json({ error: 'Permissão insuficiente para gerenciar pacientes.' });
         }
@@ -328,7 +330,7 @@ exports.createPatient = async (req, res) => {
             await connection.rollback();
             return res.status(409).json({ error: 'Clínica ativa não disponível.' });
         }
-        if (!(await operatorCanManage(connection, req.tenant.clinicId, req.userId))) {
+        if (!(await operatorCanManage(connection, req.tenant.clinicId, req.userId, req.auth?.membershipVersion))) {
             await connection.rollback();
             return res.status(403).json({ error: 'Permissão insuficiente para gerenciar pacientes.' });
         }
@@ -379,7 +381,7 @@ exports.updatePatient = async (req, res) => {
             await connection.rollback();
             return res.status(409).json({ error: 'Clínica ativa não disponível.' });
         }
-        if (!(await operatorCanManage(connection, req.tenant.clinicId, req.userId))) {
+        if (!(await operatorCanManage(connection, req.tenant.clinicId, req.userId, req.auth?.membershipVersion))) {
             await connection.rollback();
             return res.status(403).json({ error: 'Permissão insuficiente para gerenciar pacientes.' });
         }

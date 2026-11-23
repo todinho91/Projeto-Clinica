@@ -221,12 +221,46 @@ function applyClinicIdentity(clinic) {
     const practiceOwner = typeof VitalisCore !== 'undefined'
         && typeof VitalisCore.isPracticeOwner === 'function'
         && VitalisCore.isPracticeOwner(clinic);
+    const practice = clinic.tipo_contexto === 'consultorio';
+    document.querySelectorAll('[data-user-name]').forEach((element) => {
+        element.textContent = session.user?.nome || 'profissional';
+    });
+    if (practice) {
+        document.querySelectorAll('.vitalis-brand small').forEach((element) => {
+            element.textContent = practiceOwner ? 'Consultório profissional' : 'Equipe do consultório';
+        });
+        document.querySelectorAll('.vitalis-clinic-card > span, .vitalis-topbar-title > span')
+            .forEach((element) => { element.textContent = 'Consultório ativo'; });
+        document.querySelectorAll('a[href="dashboard-secretaria.html"]').forEach((link) => {
+            if (practiceOwner) link.href = 'consultorio.html';
+        });
+        if (practiceOwner) {
+            document.querySelectorAll('a[href="profissionais.html"], a[href*="#documentos"]')
+                .forEach((element) => element.remove());
+        } else {
+            document.querySelectorAll('a[href="equipe.html"], a[href="profissionais.html"], a[href="especialidades.html"], a[href="configuracoes-clinica.html"]')
+                .forEach((element) => element.remove());
+        }
+    }
+    const roleElement = document.getElementById?.('clinic-role');
+    if (roleElement) roleElement.textContent = workspaceRoleLabel(clinic);
     if (clinic.papel !== 'administrador' && !practiceOwner) {
         document.querySelectorAll('[data-admin-only]').forEach((element) => element.remove());
     }
     document.querySelectorAll('[data-clinic-switch]').forEach((element) => {
         element.hidden = clinic.papel === 'secretaria';
     });
+}
+
+function workspaceRoleLabel(clinic) {
+    if (VitalisCore.isPracticeOwner(clinic)) return 'Titular do consultório';
+    return {
+        administrador: 'Administrador da clínica',
+        secretaria: clinic?.tipo_contexto === 'consultorio'
+            ? 'Secretaria autorizada' : 'Secretaria da clínica',
+        profissional: 'Profissional da clínica',
+        paciente: 'Paciente'
+    }[clinic?.papel] || 'Perfil autorizado';
 }
 
 function formatDate(value) {
@@ -245,6 +279,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const page = currentPage();
     if (page === 'login.html') setupLoginPage();
     else if (page === 'register.html') setupRegisterPage();
+    else if (page === 'cadastro-profissional.html') setupProfessionalRegisterPage();
     else if (page === 'select-clinic.html') setupClinicSelectionPage();
     else if (page === 'dashboard-paciente.html') setupPacienteDashboard();
     else if (page === 'dashboard-medico.html') setupProfissionalDashboard();
@@ -262,7 +297,104 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (page === 'confirmacao-consulta.html') setupAppointmentConfirmationPage();
     else if (page === 'consultorio.html') setupPracticePage();
     else if (page === 'vitalis-profissional.html') setupProfessionalStartPage();
+    else if (page === 'verificacao-profissionais.html') setupProfessionalReviewPage();
 });
+
+function setupProfessionalRegisterPage() {
+    const form = document.getElementById('professional-register-form');
+    if (!form) return;
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const status = document.getElementById('professional-register-status');
+        const submit = form.querySelector('button[type="submit"]');
+        submit.disabled = true;
+        try {
+            const data = await apiRequest('/auth/register-professional', {
+                method: 'POST',
+                body: JSON.stringify({
+                    nome: document.getElementById('professional-register-name').value,
+                    email: document.getElementById('professional-register-email').value,
+                    senha: document.getElementById('professional-register-password').value,
+                    tipo_profissional: document.getElementById('professional-register-type').value,
+                    conselho_tipo: document.getElementById('professional-register-council').value,
+                    conselho_numero: document.getElementById('professional-register-number').value,
+                    conselho_uf: document.getElementById('professional-register-state').value
+                })
+            }, null);
+            form.reset();
+            showMessage(status, `${data.message} Redirecionando para o login...`, 'success');
+            setTimeout(() => window.location.assign('login.html'), 1500);
+        } catch (error) {
+            showMessage(status, error.message);
+            submit.disabled = false;
+        }
+    });
+}
+
+async function setupProfessionalReviewPage() {
+    if (!session.identityToken) {
+        window.location.replace('login.html');
+        return;
+    }
+    const filter = document.getElementById('professional-review-filter');
+    const list = document.getElementById('professional-review-list');
+    const status = document.getElementById('professional-review-status');
+    async function load() {
+        list.replaceChildren();
+        showMessage(status, 'Carregando verificações...', 'info');
+        try {
+            const identities = await apiRequest(
+                `/plataforma/profissionais/verificacoes?status=${encodeURIComponent(filter.value)}`,
+                {}, 'identity'
+            );
+            status.replaceChildren();
+            if (!identities.length) {
+                showMessage(status, 'Nenhum registro nesta situação.', 'secondary');
+                return;
+            }
+            identities.forEach((identity) => {
+                const card = document.createElement('article');
+                card.className = 'vitalis-provisioning-card';
+                const title = document.createElement('strong'); title.textContent = identity.nome;
+                const email = document.createElement('span'); email.textContent = identity.email;
+                const council = document.createElement('small');
+                council.textContent = `${identity.tipo_profissional} · ${identity.conselho_tipo} ${identity.conselho_numero}/${identity.conselho_uf}`;
+                const actions = document.createElement('div'); actions.className = 'd-flex gap-2 flex-wrap mt-2';
+                const actionButton = (label, css, nextStatus) => {
+                    const button = document.createElement('button'); button.type = 'button';
+                    button.className = `btn btn-sm ${css}`; button.textContent = label;
+                    button.addEventListener('click', async () => {
+                        const verb = nextStatus === 'verificada' ? 'verificar' : 'suspender';
+                        if (!window.confirm(`Deseja ${verb} o registro de ${identity.nome}?`)) return;
+                        button.disabled = true;
+                        try {
+                            const data = await apiRequest(
+                                `/plataforma/profissionais/${identity.usuario_id}/verificacao`,
+                                { method: 'PATCH', body: JSON.stringify({ status_verificacao: nextStatus }) },
+                                'identity'
+                            );
+                            showMessage(status, data.message, 'success');
+                            await load();
+                        } catch (error) { showMessage(status, error.message); button.disabled = false; }
+                    });
+                    actions.append(button);
+                };
+                if (identity.status_verificacao !== 'verificada') {
+                    actionButton('Verificar registro', 'btn-success', 'verificada');
+                }
+                if (identity.status_verificacao !== 'suspensa') {
+                    actionButton('Suspender', 'btn-outline-danger', 'suspensa');
+                }
+                card.append(title, email, council, actions); list.append(card);
+            });
+        } catch (error) {
+            showMessage(status, error.message);
+        }
+    }
+    filter.addEventListener('change', load);
+    document.getElementById('professional-review-refresh').addEventListener('click', load);
+    await load();
+}
 
 async function setupProfessionalStartPage() {
     if (!session.identityToken) {
@@ -921,6 +1053,9 @@ async function setupEquipePage() {
             if (option.value !== permitted) option.remove();
         });
     }
+    if (VitalisCore.isPracticeOwner(clinic)) {
+        document.getElementById('institutional-professional-invite-note')?.remove();
+    }
 
     function badge([label, css]) {
         const element = document.createElement('span');
@@ -1194,13 +1329,22 @@ async function setupClinicSelectionPage() {
         if (clinics.length === 0) {
             select.disabled = true;
             document.querySelector('#clinic-form button[type="submit"]').disabled = true;
-            showMessage(
-                status,
-                mayProvision
-                    ? 'Nenhuma clínica ativa vinculada. Você pode provisionar uma nova clínica.'
-                    : 'Nenhuma clínica ativa vinculada ao usuário.',
-                mayProvision ? 'primary' : 'danger'
-            );
+            let professionalMessage = null;
+            if (!mayProvision) {
+                try {
+                    const identity = await apiRequest('/profissionais/identidade', {}, 'identity');
+                    const labels = {
+                        pendente: 'Seu registro profissional aguarda verificação.',
+                        verificada: 'Seu registro está verificado. Crie seu consultório no Vitalis Profissional.',
+                        suspensa: 'Seu registro profissional está suspenso. Entre em contato com o suporte.'
+                    };
+                    professionalMessage = labels[identity.status_verificacao];
+                } catch { /* Conta sem identidade profissional. */ }
+            }
+            showMessage(status, mayProvision
+                ? 'Nenhuma clínica ativa vinculada. Você pode provisionar uma nova clínica.'
+                : professionalMessage || 'Nenhuma clínica ativa vinculada ao usuário.',
+            mayProvision || professionalMessage ? 'primary' : 'danger');
         }
     } catch (error) {
         showMessage(status, error.message);
@@ -1677,9 +1821,7 @@ async function setupAdministracaoDashboard() {
     const clinic = requireClinicSession('dashboard-secretaria.html');
     if (!clinic) return;
     applyClinicIdentity(clinic);
-    document.getElementById('clinic-role').textContent = clinic.papel === 'administrador'
-        ? 'Administrador da clínica'
-        : 'Secretaria da clínica';
+    document.getElementById('clinic-role').textContent = workspaceRoleLabel(clinic);
     document.getElementById('dashboard-title').textContent = clinic.papel === 'administrador'
         ? 'Administração da clínica'
         : 'Painel da secretaria';
@@ -2091,8 +2233,7 @@ async function setupAppointmentsPage() {
     const clinic = requireClinicSession('agenda.html');
     if (!clinic) return;
     applyClinicIdentity(clinic);
-    document.getElementById('clinic-role').textContent = clinic.papel === 'administrador'
-        ? 'Administrador da clínica' : 'Secretaria da clínica';
+    document.getElementById('clinic-role').textContent = workspaceRoleLabel(clinic);
 
     const form = document.getElementById('consulta-form');
     const formStatus = document.getElementById('consulta-form-status');
@@ -2420,8 +2561,7 @@ async function setupPatientsPage() {
     const clinic = requireClinicSession('pacientes.html');
     if (!clinic) return;
     applyClinicIdentity(clinic);
-    document.getElementById('clinic-role').textContent = clinic.papel === 'administrador'
-        ? 'Administrador da clínica' : 'Secretaria da clínica';
+    document.getElementById('clinic-role').textContent = workspaceRoleLabel(clinic);
 
     const form = document.getElementById('paciente-form');
     const list = document.getElementById('pacientes-lista');
@@ -2725,9 +2865,7 @@ async function setupGestaoProfissionaisPage() {
     const clinic = requireClinicSession('profissionais.html');
     if (!clinic) return;
     applyClinicIdentity(clinic);
-    document.getElementById('clinic-role').textContent = clinic.papel === 'administrador'
-        ? 'Administrador da clínica'
-        : 'Secretaria da clínica';
+    document.getElementById('clinic-role').textContent = workspaceRoleLabel(clinic);
 
     const form = document.getElementById('profissional-form');
     const formStatus = document.getElementById('profissional-form-status');
@@ -2949,9 +3087,7 @@ async function setupGestaoEspecialidadesPage() {
     const clinic = requireClinicSession('especialidades.html');
     if (!clinic) return;
     applyClinicIdentity(clinic);
-    document.getElementById('clinic-role').textContent = clinic.papel === 'administrador'
-        ? 'Administrador da clínica'
-        : 'Secretaria da clínica';
+    document.getElementById('clinic-role').textContent = workspaceRoleLabel(clinic);
 
     const form = document.getElementById('especialidade-form');
     const nameInput = document.getElementById('especialidade-nome');

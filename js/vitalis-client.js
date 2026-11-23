@@ -90,6 +90,8 @@
                 'configuracoes-clinica.html', 'dashboard-medico.html'
             ]).has(page);
         }
+        if (clinic?.tipo_contexto === 'consultorio'
+            && ['equipe.html', 'profissionais.html', 'especialidades.html'].includes(page)) return false;
         return allowed[page]?.includes(role) ?? false;
     }
 

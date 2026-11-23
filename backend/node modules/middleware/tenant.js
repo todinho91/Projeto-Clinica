@@ -16,6 +16,9 @@ module.exports = async function tenantContext(req, res, next) {
     try {
         const [rows] = await pool.execute(`
             SELECT cu.clinica_id, cu.papel, cu.sessao_versao, c.nome AS clinica_nome,
+                   cp.clinica_id AS consultorio_id,
+                   cp.titular_usuario_id AS consultorio_titular_usuario_id,
+                   ip.status_verificacao AS identidade_profissional_status,
                    CASE WHEN cp.titular_usuario_id = cu.usuario_id AND cp.status = 'ativo'
                              AND ip.status_verificacao = 'verificada'
                         THEN 1 ELSE 0 END AS consultorio_titular
@@ -36,12 +39,20 @@ module.exports = async function tenantContext(req, res, next) {
         if (rows.length === 0) {
             return res.status(403).json({ error: 'Vínculo com a clínica inexistente ou inativo.' });
         }
+        if (rows[0].consultorio_titular_usuario_id != null
+            && Number(rows[0].consultorio_titular_usuario_id) === req.userId
+            && rows[0].identidade_profissional_status !== 'verificada') {
+            return res.status(403).json({
+                error: 'A verificação profissional do titular não está ativa.'
+            });
+        }
 
         req.tenant = {
             clinicId: Number(rows[0].clinica_id),
             clinicName: rows[0].clinica_nome,
             role: rows[0].papel
         };
+        if (rows[0].consultorio_id != null) req.tenant.isPractice = true;
         if (rows[0].consultorio_titular) req.tenant.isPracticeOwner = true;
         return next();
     } catch (error) {

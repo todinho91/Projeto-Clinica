@@ -36,12 +36,8 @@ async function resetSchema(connection, database) {
     } finally { await connection.query('SET FOREIGN_KEY_CHECKS = 1'); }
 }
 
-async function createVerifiedProfessional(connection, suffix) {
+async function createOperator(connection, suffix) {
     const hash = await bcrypt.hash(randomBytes(24).toString('hex'), 4);
-    const [user] = await connection.execute(`
-        INSERT INTO usuarios (nome, email, senha_hash, status, motivo_bloqueio)
-        VALUES (?, ?, ?, 'ativo', 'nenhum')
-    `, [`Profissional ${suffix}`, `profissional.${suffix}@example.test`, hash]);
     const [operatorUser] = await connection.execute(`
         INSERT INTO usuarios (nome, email, senha_hash, status, motivo_bloqueio)
         VALUES (?, ?, ?, 'ativo', 'nenhum')
@@ -49,16 +45,37 @@ async function createVerifiedProfessional(connection, suffix) {
     const [operator] = await connection.execute(`
         INSERT INTO operadores_plataforma (usuario_id, status) VALUES (?, 'ativo')
     `, [operatorUser.insertId]);
-    await connection.execute(`
-        INSERT INTO identidades_profissionais (
-            usuario_id, tipo_profissional, conselho_tipo, conselho_numero,
-            conselho_uf, status_verificacao, verificado_por_operador_id, verificado_em
-        ) VALUES (?, 'Médico', 'CRM', ?, 'SP', 'verificada', ?, UTC_TIMESTAMP(6))
-    `, [user.insertId, `M3${suffix}`, operator.insertId]);
-    return Number(user.insertId);
+    return { userId: Number(operatorUser.insertId), operatorId: Number(operator.insertId) };
 }
 
-test('MySQL 8 valida provisionamento, concorrência, rollback e isolamento de consultórios', {
+async function registerAndVerifyProfessional(connection, controllers, operatorUserId, suffix) {
+    const registration = response();
+    await controllers.auth.registerProfessional({ body: {
+        nome: `Profissional ${suffix}`,
+        email: `profissional.${suffix}@example.test`,
+        senha: `senha-profissional-${suffix}-segura`,
+        tipo_profissional: 'Médico', conselho_tipo: 'CRM',
+        conselho_numero: `M3${suffix}`, conselho_uf: 'SP'
+    } }, registration);
+    assert.equal(registration.statusCode, 201);
+    const [[user]] = await connection.execute(
+        'SELECT id FROM usuarios WHERE email = ?', [`profissional.${suffix}@example.test`]
+    );
+    const [[before]] = await connection.execute(`
+        SELECT COUNT(*) AS total FROM clinica_usuarios WHERE usuario_id = ?
+    `, [user.id]);
+    assert.equal(Number(before.total), 0);
+    const verification = response();
+    await controllers.practice.verifyIdentity({
+        userId: operatorUserId,
+        params: { userId: String(user.id) },
+        body: { status_verificacao: 'verificada' }
+    }, verification);
+    assert.equal(verification.statusCode, 200);
+    return Number(user.id);
+}
+
+test('MySQL 8 valida fluxo completo, concorrência, rollback e isolamento de consultórios', {
     skip: !enabled
 }, async () => {
     const config = loadDatabaseConfig(process.env, 'TEST_DB_');
@@ -74,18 +91,32 @@ test('MySQL 8 valida provisionamento, concorrência, rollback e isolamento de co
     try {
         await resetSchema(setup, config.database);
         await runMigrations({ connection: setup, migrationsDir, logger: { info() {} } });
-        const ownerA = await createVerifiedProfessional(setup, 'a');
-        const ownerB = await createVerifiedProfessional(setup, 'b');
         pool = require('../config/database');
-        const controller = require('../controllers/consultorioController');
+        const controllers = {
+            auth: require('../controllers/authController'),
+            practice: require('../controllers/consultorioController'),
+            specialty: require('../controllers/especialidadeController'),
+            availability: require('../controllers/disponibilidadeController'),
+            patient: require('../controllers/pacienteController'),
+            appointment: require('../controllers/consultaController'),
+            confirmation: require('../controllers/confirmacaoConsultaController'),
+            team: require('../controllers/equipeController')
+        };
+        const operator = await createOperator(setup, 'm3');
+        const ownerA = await registerAndVerifyProfessional(
+            setup, controllers, operator.userId, 'a'
+        );
+        const ownerB = await registerAndVerifyProfessional(
+            setup, controllers, operator.userId, 'b'
+        );
         const payloadA = {
             nome: 'Consultório A', slug: 'consultorio-a', timezone: 'America/Sao_Paulo',
             nome_exibicao: 'Profissional A'
         };
         const first = response(); const concurrent = response();
         await Promise.all([
-            controller.provision({ userId: ownerA, body: payloadA }, first),
-            controller.provision({ userId: ownerA, body: payloadA }, concurrent)
+            controllers.practice.provision({ userId: ownerA, body: payloadA }, first),
+            controllers.practice.provision({ userId: ownerA, body: payloadA }, concurrent)
         ]);
         assert.deepEqual([first.statusCode, concurrent.statusCode].sort(), [201, 409]);
         const clinicA = Number((first.statusCode === 201 ? first : concurrent).body.id);
@@ -110,7 +141,7 @@ test('MySQL 8 valida provisionamento, concorrência, rollback e isolamento de co
         await setup.query(`ALTER TABLE consultorios_profissionais
             ADD CONSTRAINT chk_consultorio_rollback_teste CHECK (titular_usuario_id <> ${ownerB})`);
         const failed = response();
-        await controller.provision({ userId: ownerB, body: {
+        await controllers.practice.provision({ userId: ownerB, body: {
             nome: 'Consultório Rollback', slug: 'consultorio-rollback',
             timezone: 'America/Sao_Paulo', nome_exibicao: 'Profissional B'
         } }, failed);
@@ -123,29 +154,125 @@ test('MySQL 8 valida provisionamento, concorrência, rollback e isolamento de co
             DROP CHECK chk_consultorio_rollback_teste`);
 
         const second = response();
-        await controller.provision({ userId: ownerB, body: {
+        await controllers.practice.provision({ userId: ownerB, body: {
             nome: 'Consultório B', slug: 'consultorio-b', timezone: 'America/Manaus',
             nome_exibicao: 'Profissional B'
         } }, second);
         assert.equal(second.statusCode, 201);
         const clinicB = Number(second.body.id);
 
-        const location = response();
-        await controller.createLocation({
+        const [[ownerProfile]] = await setup.execute(`
+            SELECT p.id AS profissional_id, cu.sessao_versao
+            FROM profissionais p
+            JOIN clinica_usuarios cu ON cu.clinica_id = p.clinica_id
+              AND cu.usuario_id = p.usuario_id
+            WHERE p.clinica_id = ? AND p.usuario_id = ?
+        `, [clinicA, ownerA]);
+        const ownerRequest = {
+            userId: ownerA,
+            auth: { membershipVersion: Number(ownerProfile.sessao_versao) },
+            tenant: { clinicId: clinicA, role: 'profissional', isPractice: true },
+            workspaceOwner: true
+        };
+
+        const specialty = response();
+        await controllers.specialty.createSpecialty({
+            ...ownerRequest, body: { nome: 'Clínica médica' }
+        }, specialty);
+        assert.equal(specialty.statusCode, 201);
+        const [[specialtyLink]] = await setup.execute(`
+            SELECT COUNT(*) AS total FROM profissional_especialidades
+            WHERE clinica_id = ? AND profissional_id = ? AND especialidade_id = ?
+        `, [clinicA, ownerProfile.profissional_id, specialty.body.id]);
+        assert.equal(Number(specialtyLink.total), 1);
+
+        const availability = response();
+        await controllers.availability.replaceWeeklyAvailability({
+            ...ownerRequest,
+            params: { professionalId: String(ownerProfile.profissional_id) },
+            body: { intervalos: Array.from({ length: 7 }, (_, day) => ({
+                dia_semana: day, tipo: 'atendimento', inicio: '08:00', fim: '18:00'
+            })) }
+        }, availability);
+        assert.equal(availability.statusCode, 200);
+
+        const patient = response();
+        await controllers.patient.createPatient({
+            ...ownerRequest,
+            body: {
+                nome: 'Paciente Sintético M3', email: 'paciente.m3@example.test',
+                telefone: '11987654321', preferencia_contato: 'whatsapp',
+                data_nascimento: '1990-01-15', status: 'ativo'
+            }
+        }, patient);
+        assert.equal(patient.statusCode, 201);
+
+        const future = new Date(Date.now() + 7 * 86400000);
+        const localDate = `${future.getUTCFullYear()}-${String(future.getUTCMonth() + 1).padStart(2, '0')}-${String(future.getUTCDate()).padStart(2, '0')}`;
+        const appointment = response();
+        await controllers.appointment.agendarConsulta({
+            ...ownerRequest,
+            body: {
+                paciente_id: patient.body.id,
+                profissional_id: Number(ownerProfile.profissional_id),
+                especialidade_id: specialty.body.id,
+                inicio_local: `${localDate}T10:00`, duracao_minutos: 30
+            }
+        }, appointment);
+        assert.equal(appointment.statusCode, 201);
+
+        const confirmation = response();
+        await controllers.confirmation.requestConfirmation({
+            ...ownerRequest,
+            params: { id: String(appointment.body.id) },
+            body: { versao: 1, canal_esperado: 'whatsapp' }
+        }, confirmation);
+        assert.equal(confirmation.statusCode, 201);
+        assert.equal(confirmation.body.canal_selecionado, 'whatsapp');
+        const whatsappText = new URL(confirmation.body.whatsapp_url).searchParams.get('text');
+        const token = whatsappText.match(/#token=([A-Za-z0-9_-]+)/)?.[1];
+        assert.ok(token);
+        const patientAnswer = response();
+        await controllers.confirmation.respondPublic({
+            body: { token, resposta: 'confirmada' }
+        }, patientAnswer);
+        assert.equal(patientAnswer.statusCode, 200);
+        const [[confirmed]] = await setup.execute(`
+            SELECT estado FROM confirmacoes_consulta
+            WHERE clinica_id = ? AND consulta_id = ? ORDER BY id DESC LIMIT 1
+        `, [clinicA, appointment.body.id]);
+        assert.equal(confirmed.estado, 'confirmada');
+
+        const secretary = response();
+        await controllers.team.createInvitation({
+            ...ownerRequest,
+            body: {
+                nome: 'Secretária Sintética M3',
+                email: 'secretaria.m3@example.test', papel: 'secretaria'
+            }
+        }, secretary);
+        assert.equal(secretary.statusCode, 201);
+
+        const locationA = response();
+        await controllers.practice.createLocation({
             userId: ownerA, tenant: { clinicId: clinicA, role: 'profissional' },
             body: { nome: 'Unidade A', endereco_linha: 'Rua A, 1', cidade: 'São Paulo', uf: 'SP' }
-        }, location);
-        assert.equal(location.statusCode, 201);
+        }, locationA);
+        assert.equal(locationA.statusCode, 201);
         const crossTenant = response();
-        await controller.updateLocationStatus({
+        await controllers.practice.updateLocationStatus({
             userId: ownerB, tenant: { clinicId: clinicB, role: 'profissional' },
-            params: { id: location.body.id }, body: { status: 'inativo' }
+            params: { id: locationA.body.id }, body: { status: 'inativo' }
         }, crossTenant);
         assert.equal(crossTenant.statusCode, 404);
         const [[preserved]] = await setup.execute(`
             SELECT status FROM consultorio_locais WHERE clinica_id = ? AND id = ?
-        `, [clinicA, location.body.id]);
+        `, [clinicA, locationA.body.id]);
         assert.equal(preserved.status, 'ativo');
+        const [[isolatedPatients]] = await setup.execute(`
+            SELECT COUNT(*) AS total FROM pacientes WHERE clinica_id = ?
+        `, [clinicB]);
+        assert.equal(Number(isolatedPatients.total), 0);
     } finally {
         await pool?.end();
         await setup.end();

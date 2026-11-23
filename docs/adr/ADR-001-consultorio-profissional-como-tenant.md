@@ -24,18 +24,25 @@ institucionais existentes não podem ser reclassificadas automaticamente por uma
    uma promoção para `administrador`.
 4. A identidade profissional global e sua verificação ficam em
    `identidades_profissionais`; perfis clínicos continuam locais a cada tenant.
+   O cadastro global não cria perfil de paciente, vínculo clínico nem tenant.
 5. Endereços físicos ficam em `consultorio_locais` e não criam novos tenants.
 6. Secretárias usam o fluxo existente de convite, com papel `secretaria`, e podem ser
-   revogadas. O titular só pode convidar ou administrar esse papel.
+   revogadas. Somente o titular gerencia a equipe do consultório e só pode administrar
+   esse papel; a secretária não pode cadastrar médicos nem administradores.
 7. O catálogo futuro começa como `privado`. `publicavel` representa apenas prontidão;
    descoberta, consentimento público e busca pertencem à issue #67.
 8. Pacientes e prontuários não são unidos ou transferidos entre vínculos. Toda consulta
    clínica permanece filtrada por `clinica_id`.
+9. Especialidades criadas no consultório são associadas ao perfil clínico do titular na
+   mesma transação. Vínculos históricos permanecem preservados quando uma especialidade
+   é desativada.
 
 ## Provisionamento e segurança
 
-O provisionamento exige token de identidade, usuário ativo e identidade profissional
-`verificada`. Uma única transação cria tenant, vínculo profissional, perfil clínico,
+O cadastro independente cria usuário e identidade `pendente` em uma transação. Um operador
+ativo da plataforma revisa o registro por um fluxo autenticado, com bloqueio transacional e
+auditoria da decisão. O provisionamento exige token de identidade, usuário ativo e identidade
+profissional `verificada`. Uma única transação cria tenant, vínculo profissional, perfil clínico,
 marcador de consultório e auditoria. Slug, titular e conselho possuem restrições únicas.
 Qualquer falha provoca rollback.
 

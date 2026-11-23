@@ -281,7 +281,7 @@ test('consulta exige identidade, vínculo e perfil ativos da mesma clínica', as
             assert.match(sql, /JOIN usuarios u ON u\.id = p\.usuario_id AND u\.status = 'ativo'/);
             assert.match(sql, /p\.clinica_id = \?/);
             assert.match(sql, /p\.status = 'ativo'/);
-            assert.deepEqual(params, [11, 8, 'profissional', 70]);
+            assert.deepEqual(params, [11, 8, 'profissional', 70, 0]);
             return [[{ id: 8, nome_exibicao: 'Profissional' }]];
         }
         if (/FROM disponibilidades_profissional/.test(sql)) return [[]];

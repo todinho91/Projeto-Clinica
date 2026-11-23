@@ -101,8 +101,10 @@ async function recordDelivery(invitationId, clinicId, delivery) {
 
 exports.capabilities = async (req, res) => {
     try {
+        const operator = Boolean(await platformOperator(pool, req.userId));
         return res.status(200).json({
-            provisionar_clinicas: Boolean(await platformOperator(pool, req.userId))
+            provisionar_clinicas: operator,
+            verificar_profissionais: operator
         });
     } catch (error) {
         logFailure('capabilities_failed', error);

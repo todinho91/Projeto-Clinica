@@ -1,4 +1,5 @@
 const pool = require('../config/database');
+const { professionalIdentity } = require('../support/professional-identity');
 
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const UF = /^[A-Z]{2}$/;
@@ -21,15 +22,6 @@ function timezone(value) {
         new Intl.DateTimeFormat('pt-BR', { timeZone: normalized }).format(new Date());
         return normalized;
     } catch { return null; }
-}
-
-function professionalIdentity(body = {}) {
-    const professionalType = text(body.tipo_profissional, 2, 80);
-    const councilType = text(body.conselho_tipo, 2, 30)?.toUpperCase();
-    const councilNumber = text(body.conselho_numero, 2, 40)?.toUpperCase();
-    const councilState = text(body.conselho_uf, 2, 2)?.toUpperCase();
-    return professionalType && councilType && councilNumber && UF.test(councilState)
-        ? { professionalType, councilType, councilNumber, councilState } : null;
 }
 
 async function platformOperator(executor, userId, lock = false) {
@@ -130,23 +122,33 @@ exports.verifyIdentity = async (req, res) => {
             return res.status(403).json({ error: 'Operação restrita à plataforma.' });
         }
         const [identities] = await connection.execute(`
-            SELECT usuario_id, status_verificacao FROM identidades_profissionais
-            WHERE usuario_id = ? FOR UPDATE
+            SELECT ip.usuario_id, ip.status_verificacao, u.status AS usuario_status
+            FROM identidades_profissionais ip
+            JOIN usuarios u ON u.id = ip.usuario_id
+            WHERE ip.usuario_id = ? FOR UPDATE
         `, [userId]);
         if (!identities[0]) {
             await connection.rollback();
             return res.status(404).json({ error: 'Identidade profissional não encontrada.' });
         }
+        if (identities[0].usuario_status !== 'ativo') {
+            await connection.rollback();
+            return res.status(409).json({ error: 'A conta profissional não está ativa.' });
+        }
+        if (identities[0].status_verificacao === nextStatus) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'A identidade profissional já possui esta situação.' });
+        }
         await connection.execute(`
             UPDATE identidades_profissionais
             SET status_verificacao = ?, verificado_por_operador_id = ?,
-                verificado_em = UTC_TIMESTAMP(6)
+                verificado_em = CASE WHEN ? = 'verificada' THEN UTC_TIMESTAMP(6) ELSE verificado_em END
             WHERE usuario_id = ?
-        `, [nextStatus, operatorId, userId]);
+        `, [nextStatus, operatorId, nextStatus, userId]);
         await connection.execute(`
             INSERT INTO auditoria_plataforma (
                 operador_plataforma_id, acao, entidade_tipo, entidade_id, metadados
-            ) VALUES (?, 'identidade_profissional_verificada', 'usuario', ?, ?)
+            ) VALUES (?, 'identidade_profissional_status_alterado', 'usuario', ?, ?)
         `, [operatorId, userId, JSON.stringify({ status: nextStatus })]);
         await connection.commit();
         return res.status(200).json({ message: 'Verificação profissional atualizada.' });
@@ -155,6 +157,34 @@ exports.verifyIdentity = async (req, res) => {
         logFailure('identity_verify', error);
         return res.status(500).json({ error: 'Erro ao atualizar verificação profissional.' });
     } finally { connection?.release(); }
+};
+
+exports.listIdentityReviews = async (req, res) => {
+    const requestedStatus = req.query?.status ?? 'pendente';
+    if (!['pendente', 'verificada', 'suspensa'].includes(requestedStatus)) {
+        return res.status(400).json({ error: 'Situação de verificação inválida.' });
+    }
+    try {
+        if (!await platformOperator(pool, req.userId)) {
+            return res.status(403).json({ error: 'Operação restrita à plataforma.' });
+        }
+        const [rows] = await pool.execute(`
+            SELECT ip.usuario_id, u.nome, u.email, ip.tipo_profissional,
+                   ip.conselho_tipo, ip.conselho_numero, ip.conselho_uf,
+                   ip.status_verificacao, ip.criado_em, ip.verificado_em
+            FROM identidades_profissionais ip
+            JOIN usuarios u ON u.id = ip.usuario_id AND u.status = 'ativo'
+            WHERE ip.status_verificacao = ?
+            ORDER BY ip.criado_em, ip.usuario_id
+            LIMIT 200
+        `, [requestedStatus]);
+        return res.status(200).json(rows.map((row) => ({
+            ...row, usuario_id: Number(row.usuario_id)
+        })));
+    } catch (error) {
+        logFailure('identity_reviews_list', error);
+        return res.status(500).json({ error: 'Erro ao listar verificações profissionais.' });
+    }
 };
 
 exports.provision = async (req, res) => {

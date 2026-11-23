@@ -61,8 +61,9 @@ async function activeManager(connection, req) {
                OR (cu.papel = 'profissional' AND cp.titular_usuario_id = cu.usuario_id
                    AND ip.status_verificacao = 'verificada'))
           AND cu.status = 'ativo'
+          AND cu.sessao_versao = ?
         LIMIT 1 FOR UPDATE
-    `, [req.tenant.clinicId, req.userId, req.tenant.role]);
+    `, [req.tenant.clinicId, req.userId, req.tenant.role, req.auth?.membershipVersion]);
     return rows[0]?.papel ?? null;
 }
 

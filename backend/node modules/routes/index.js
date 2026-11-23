@@ -17,6 +17,8 @@ const identityOnly = require('../middleware/identityOnly');
 const tenantContext = require('../middleware/tenant');
 const authorize = require('../middleware/authorize');
 const workspaceManager = require('../middleware/workspaceManager');
+const practiceTeamManager = require('../middleware/practiceTeamManager');
+const institutionalOnly = require('../middleware/institutionalOnly');
 const optionalAuth = require('../middleware/optionalAuth');
 const invitationRateLimit = require('../middleware/invitationRateLimit');
 
@@ -24,6 +26,7 @@ const router = express.Router();
 const upload = multer(multerConfig);
 
 router.post('/auth/register', authController.register);
+router.post('/auth/register-professional', authController.registerProfessional);
 router.post('/auth/login', authController.login);
 router.get('/convites/:token', invitationRateLimit, equipeController.inspectInvitation);
 router.post('/convites/:token/aceitar', invitationRateLimit, optionalAuth, equipeController.acceptInvitation);
@@ -63,6 +66,11 @@ router.patch(
     identityOnly,
     consultorioController.verifyIdentity
 );
+router.get(
+    '/plataforma/profissionais/verificacoes',
+    identityOnly,
+    consultorioController.listIdentityReviews
+);
 router.post('/consultorios', identityOnly, consultorioController.provision);
 router.post(
     '/plataforma/clinicas/:clinicId/convites/:invitationId/reenviar',
@@ -83,12 +91,12 @@ router.patch(
 router.get('/clinica/configuracoes', workspaceManager('administrador'), clinicaController.getSettings);
 router.patch('/clinica/configuracoes', workspaceManager('administrador'), clinicaController.updateSettings);
 
-router.get('/equipe', workspaceManager('administrador', 'secretaria'), equipeController.list);
-router.post('/equipe/convites', workspaceManager('administrador', 'secretaria'), equipeController.createInvitation);
-router.post('/equipe/convites/:id/reenviar', workspaceManager('administrador', 'secretaria'), equipeController.reissue);
-router.post('/equipe/convites/:id/revogar', workspaceManager('administrador', 'secretaria'), equipeController.revoke);
-router.patch('/equipe/vinculos/:id/status', workspaceManager('administrador', 'secretaria'), equipeController.updateStatus);
-router.patch('/equipe/vinculos/:id/papel', authorize('administrador'), equipeController.updateRole);
+router.get('/equipe', practiceTeamManager, equipeController.list);
+router.post('/equipe/convites', practiceTeamManager, equipeController.createInvitation);
+router.post('/equipe/convites/:id/reenviar', practiceTeamManager, equipeController.reissue);
+router.post('/equipe/convites/:id/revogar', practiceTeamManager, equipeController.revoke);
+router.patch('/equipe/vinculos/:id/status', practiceTeamManager, equipeController.updateStatus);
+router.patch('/equipe/vinculos/:id/papel', institutionalOnly('administrador'), equipeController.updateRole);
 
 router.get(
     '/profissionais',
@@ -102,32 +110,32 @@ router.get(
 );
 router.get(
     '/profissionais/gestao',
-    authorize('administrador', 'secretaria'),
+    institutionalOnly('administrador', 'secretaria'),
     medicoController.listForManagement
 );
 router.get(
     '/profissionais/opcoes',
-    authorize('administrador', 'secretaria'),
+    institutionalOnly('administrador', 'secretaria'),
     medicoController.getManagementOptions
 );
 router.post(
     '/profissionais',
-    authorize('administrador', 'secretaria'),
+    institutionalOnly('administrador', 'secretaria'),
     medicoController.createProfessional
 );
 router.post(
     '/profissionais/cadastro-completo',
-    authorize('administrador', 'secretaria'),
+    institutionalOnly('administrador', 'secretaria'),
     medicoController.createProfessionalAccount
 );
 router.put(
     '/profissionais/:id',
-    authorize('administrador', 'secretaria'),
+    institutionalOnly('administrador', 'secretaria'),
     medicoController.updateProfessional
 );
 router.patch(
     '/profissionais/:id/status',
-    authorize('administrador', 'secretaria'),
+    institutionalOnly('administrador', 'secretaria'),
     medicoController.updateProfessionalStatus
 );
 router.get(
