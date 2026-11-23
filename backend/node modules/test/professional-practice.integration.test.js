@@ -88,10 +88,22 @@ test('MySQL 8 valida fluxo completo, concorrência, rollback e isolamento de con
     });
     const setup = await mysql.createConnection({ ...config, multipleStatements: true });
     let pool;
+    let originalSendInvitation;
     try {
         await resetSchema(setup, config.database);
         await runMigrations({ connection: setup, migrationsDir, logger: { info() {} } });
         pool = require('../config/database');
+        const invitationMailer = require('../services/invitation-mailer');
+        let capturedInvitationToken = null;
+        originalSendInvitation = invitationMailer.sendInvitation;
+        invitationMailer.sendInvitation = async (payload) => {
+            capturedInvitationToken = payload.token;
+            return {
+                status: 'accepted_by_provider',
+                delivered: false,
+                providerMessageId: 'local-integration-test'
+            };
+        };
         const controllers = {
             auth: require('../controllers/authController'),
             practice: require('../controllers/consultorioController'),
@@ -252,6 +264,93 @@ test('MySQL 8 valida fluxo completo, concorrência, rollback e isolamento de con
             }
         }, secretary);
         assert.equal(secretary.statusCode, 201);
+        assert.ok(capturedInvitationToken);
+
+        const [[pendingSecretary]] = await setup.execute(`
+            SELECT cu.id AS vinculo_id, cu.usuario_id, cu.status, cu.sessao_versao,
+                   u.status AS usuario_status
+            FROM clinica_usuarios cu
+            JOIN usuarios u ON u.id = cu.usuario_id
+            WHERE cu.clinica_id = ? AND u.email = ?
+        `, [clinicA, 'secretaria.m3@example.test']);
+        assert.equal(pendingSecretary.status, 'convite_pendente');
+        assert.equal(pendingSecretary.usuario_status, 'bloqueado');
+
+        const acceptedInvitation = response();
+        await controllers.team.acceptInvitation({
+            params: { token: capturedInvitationToken },
+            body: { senha: 'senha-secretaria-m3-segura' }
+        }, acceptedInvitation);
+        assert.equal(acceptedInvitation.statusCode, 200);
+
+        const [[activeSecretary]] = await setup.execute(`
+            SELECT cu.id AS vinculo_id, cu.usuario_id, cu.status, cu.sessao_versao,
+                   u.status AS usuario_status
+            FROM clinica_usuarios cu
+            JOIN usuarios u ON u.id = cu.usuario_id
+            WHERE cu.id = ? AND cu.clinica_id = ?
+        `, [pendingSecretary.vinculo_id, clinicA]);
+        assert.equal(activeSecretary.status, 'ativo');
+        assert.equal(activeSecretary.usuario_status, 'ativo');
+        assert.ok(Number(activeSecretary.sessao_versao) > Number(pendingSecretary.sessao_versao));
+
+        const secretaryRequest = {
+            userId: Number(activeSecretary.usuario_id),
+            auth: { membershipVersion: Number(activeSecretary.sessao_versao) },
+            tenant: { clinicId: clinicA, role: 'secretaria', isPractice: true }
+        };
+        const secretaryPatient = response();
+        await controllers.patient.createPatient({
+            ...secretaryRequest,
+            body: {
+                nome: 'Paciente da Secretária M3',
+                email: 'paciente.secretaria.m3@example.test',
+                telefone: '11976543210', data_nascimento: '1988-03-20', status: 'ativo'
+            }
+        }, secretaryPatient);
+        assert.equal(secretaryPatient.statusCode, 201);
+
+        const revokedSecretary = response();
+        await controllers.team.updateStatus({
+            ...ownerRequest,
+            params: { id: String(activeSecretary.vinculo_id) },
+            body: { status: 'inativo' }
+        }, revokedSecretary);
+        assert.equal(revokedSecretary.statusCode, 200);
+        const [[inactiveSecretary]] = await setup.execute(`
+            SELECT status, sessao_versao
+            FROM clinica_usuarios
+            WHERE id = ? AND clinica_id = ?
+        `, [activeSecretary.vinculo_id, clinicA]);
+        assert.equal(inactiveSecretary.status, 'inativo');
+        assert.ok(Number(inactiveSecretary.sessao_versao) > Number(activeSecretary.sessao_versao));
+
+        const accessAfterRevocation = response();
+        await controllers.patient.createPatient({
+            ...secretaryRequest,
+            body: {
+                nome: 'Acesso Revogado M3', email: 'revogado.m3@example.test',
+                telefone: '11970000000', data_nascimento: '1992-06-10', status: 'ativo'
+            }
+        }, accessAfterRevocation);
+        assert.equal(accessAfterRevocation.statusCode, 403);
+        const [[revokedWrite]] = await setup.execute(`
+            SELECT COUNT(*) AS total
+            FROM pacientes
+            WHERE clinica_id = ? AND email = 'revogado.m3@example.test'
+        `, [clinicA]);
+        assert.equal(Number(revokedWrite.total), 0);
+
+        const [secretaryAudit] = await setup.execute(`
+            SELECT acao
+            FROM auditoria
+            WHERE clinica_id = ?
+              AND acao IN ('convite_aceito', 'vinculo_status_alterado')
+            ORDER BY id
+        `, [clinicA]);
+        assert.deepEqual(secretaryAudit.map((row) => row.acao), [
+            'convite_aceito', 'vinculo_status_alterado'
+        ]);
 
         const locationA = response();
         await controllers.practice.createLocation({
@@ -274,6 +373,9 @@ test('MySQL 8 valida fluxo completo, concorrência, rollback e isolamento de con
         `, [clinicB]);
         assert.equal(Number(isolatedPatients.total), 0);
     } finally {
+        if (originalSendInvitation) {
+            require('../services/invitation-mailer').sendInvitation = originalSendInvitation;
+        }
         await pool?.end();
         await setup.end();
     }

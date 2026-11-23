@@ -89,8 +89,14 @@ async function fixtures(connection) {
         INSERT INTO especialidades (clinica_id, nome, status)
         VALUES (?, 'Especialidade Externa Sintética', 'ativa')
     `, [clinicB]);
+    const [[adminMembership]] = await connection.execute(`
+        SELECT sessao_versao
+        FROM clinica_usuarios
+        WHERE clinica_id = ? AND usuario_id = ?
+    `, [clinicA, adminA]);
     return {
         clinicA, clinicB, adminA,
+        adminAMembershipVersion: Number(adminMembership.sessao_versao),
         professionalA: Number(professionalAResult.insertId),
         professionalB: Number(professionalBResult.insertId),
         specialtyB: Number(specialtyBResult.insertId)
@@ -127,11 +133,17 @@ test('MySQL 8 valida ciclo completo, histórico e isolamento de especialidades',
         const specialtyController = require('../controllers/especialidadeController');
         const professionalController = require('../controllers/medicoController');
         const tenantA = { clinicId: data.clinicA, role: 'administrador' };
+        const adminARequest = {
+            userId: data.adminA,
+            auth: { membershipVersion: data.adminAMembershipVersion },
+            tenant: tenantA
+        };
+        assert.ok(Number.isInteger(data.adminAMembershipVersion));
 
         const createdResponse = response();
         await specialtyController.createSpecialty({
             body: { nome: '  Especialidade   Criada A ', clinica_id: data.clinicB },
-            userId: data.adminA, tenant: tenantA
+            ...adminARequest
         }, createdResponse);
         assert.equal(createdResponse.statusCode, 201);
         const specialtyA = createdResponse.body.id;
@@ -144,7 +156,7 @@ test('MySQL 8 valida ciclo completo, histórico e isolamento de especialidades',
 
         const duplicateResponse = response();
         await specialtyController.createSpecialty({
-            body: { nome: 'especialidade criada a' }, userId: data.adminA, tenant: tenantA
+            body: { nome: 'especialidade criada a' }, ...adminARequest
         }, duplicateResponse);
         assert.equal(duplicateResponse.statusCode, 409);
 
@@ -152,7 +164,7 @@ test('MySQL 8 valida ciclo completo, histórico e isolamento de especialidades',
         await specialtyController.updateSpecialty({
             params: { id: String(specialtyA) },
             body: { nome: 'Especialidade Editada A', clinica_id: data.clinicB },
-            userId: data.adminA, tenant: tenantA
+            ...adminARequest
         }, updateResponse);
         assert.equal(updateResponse.statusCode, 200);
 
@@ -164,7 +176,7 @@ test('MySQL 8 valida ciclo completo, histórico e isolamento de especialidades',
         const deactivateResponse = response();
         await specialtyController.updateSpecialtyStatus({
             params: { id: String(specialtyA) }, body: { status: 'inativa' },
-            userId: data.adminA, tenant: tenantA
+            ...adminARequest
         }, deactivateResponse);
         assert.equal(deactivateResponse.statusCode, 200);
         const [[preservedAfterDeactivation]] = await connection.execute(`
@@ -186,7 +198,7 @@ test('MySQL 8 valida ciclo completo, histórico e isolamento de especialidades',
                 nome_exibicao: 'Profissional Sintético A', conselho_tipo: 'CRM',
                 conselho_numero: 'A-001', especialidade_ids: [activeSpecialty]
             },
-            userId: data.adminA, tenant: tenantA
+            ...adminARequest
         }, professionalUpdate);
         assert.equal(professionalUpdate.statusCode, 200);
         const [[preservedAfterProfessionalEdit]] = await connection.execute(`
@@ -199,7 +211,7 @@ test('MySQL 8 valida ciclo completo, histórico e isolamento de especialidades',
         const crossTenantUpdate = response();
         await specialtyController.updateSpecialty({
             params: { id: String(data.specialtyB) }, body: { nome: 'Tentativa Cruzada' },
-            userId: data.adminA, tenant: tenantA
+            ...adminARequest
         }, crossTenantUpdate);
         assert.equal(crossTenantUpdate.statusCode, 404);
 
@@ -210,12 +222,12 @@ test('MySQL 8 valida ciclo completo, histórico e isolamento de especialidades',
                 nome_exibicao: 'Profissional Sintético A', conselho_tipo: 'CRM',
                 conselho_numero: 'A-001', especialidade_ids: [data.specialtyB]
             },
-            userId: data.adminA, tenant: tenantA
+            ...adminARequest
         }, crossTenantAssociation);
         assert.equal(crossTenantAssociation.statusCode, 400);
 
         const listResponse = response();
-        await specialtyController.listForManagement({ tenant: tenantA }, listResponse);
+        await specialtyController.listForManagement(adminARequest, listResponse);
         assert.equal(listResponse.statusCode, 200);
         assert.equal(listResponse.body.some((item) => item.id === specialtyA), true);
         assert.equal(listResponse.body.some((item) => item.id === data.specialtyB), false);
@@ -223,7 +235,7 @@ test('MySQL 8 valida ciclo completo, histórico e isolamento de especialidades',
         const reactivateResponse = response();
         await specialtyController.updateSpecialtyStatus({
             params: { id: String(specialtyA) }, body: { status: 'ativa' },
-            userId: data.adminA, tenant: tenantA
+            ...adminARequest
         }, reactivateResponse);
         assert.equal(reactivateResponse.statusCode, 200);
 
