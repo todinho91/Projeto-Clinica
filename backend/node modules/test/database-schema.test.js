@@ -33,7 +33,8 @@ test('migrations criam todas as tabelas previstas para DB-01', async () => {
         'confirmacoes_consulta_eventos',
         'identidades_profissionais',
         'consultorios_profissionais',
-        'consultorio_locais'
+        'consultorio_locais',
+        'consultorio_delegacoes'
     ]) {
         assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`));
     }
@@ -152,6 +153,21 @@ test('confirmações usam hash, expiração, trilha e referências multi-tenant'
     assert.match(sql, /FOREIGN KEY \(clinica_id, confirmacao_id\)[\s\S]*REFERENCES confirmacoes_consulta \(clinica_id, id\)/);
     assert.match(sql, /preferencia_contato ENUM\('nenhum', 'whatsapp', 'telefone', 'email'\)/);
     assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM|UPDATE pacientes|INSERT INTO pacientes/i);
+});
+
+test('delegações do consultório são aditivas, tenant-aware e não apagam vínculos', async () => {
+    const sql = await fs.readFile(
+        path.join(migrationsDir, '013_practice_delegations.sql'), 'utf8'
+    );
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS consultorio_delegacoes/);
+    assert.match(sql, /PRIMARY KEY \(clinica_id, clinica_usuario_id\)/);
+    assert.match(sql, /FOREIGN KEY \(clinica_id, clinica_usuario_id\)[\s\S]*REFERENCES clinica_usuarios \(clinica_id, id\)/);
+    assert.match(sql, /FOREIGN KEY \(clinica_id\)[\s\S]*REFERENCES consultorios_profissionais \(clinica_id\)/);
+    assert.match(sql, /CHECK \(gerenciar_disponibilidade IN \(0, 1\)\)/);
+    assert.doesNotMatch(
+        sql,
+        /\b(?:DROP|TRUNCATE)\s+TABLE|\bDELETE\s+FROM|\bUPDATE\s+(?:clinica_usuarios|usuarios)\b/i
+    );
 });
 
 test('pré-voo da migration 008 inclui e-mails vazios e usa a collation real', async () => {

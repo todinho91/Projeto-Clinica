@@ -33,7 +33,7 @@
     <div class="vitalis-dashboard-content">
         <header class="vitalis-topbar"><button class="btn vitalis-menu-button d-lg-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#vitalis-sidebar" aria-controls="vitalis-sidebar" aria-label="Abrir menu"><i class="bi bi-list"></i></button><div class="vitalis-topbar-title"><span>Clínica ativa</span><strong data-clinic-name>Clínica</strong></div><a data-clinic-switch hidden class="btn vitalis-switch-button" href="select-clinic.html"><i class="bi bi-arrow-left-right"></i><span class="d-none d-sm-inline"> Trocar clínica</span></a></header>
         <main class="vitalis-main">
-            <section class="vitalis-welcome" aria-labelledby="page-title"><div><p class="vitalis-eyebrow">M4 — Consultas</p><h1 id="page-title">Agenda da clínica</h1><p>Agende, confirme e acompanhe consultas usando o fuso e a disponibilidade da clínica ativa.</p></div><span class="vitalis-timezone-note"><i class="bi bi-globe-americas"></i><span>Fuso da clínica</span><strong id="agenda-timezone">—</strong></span></section>
+            <section class="vitalis-welcome" aria-labelledby="page-title"><div><p class="vitalis-eyebrow">Gestão de atendimentos</p><h1 id="page-title">Agenda da clínica</h1><p id="workspace-description">Agende, confirme e acompanhe consultas usando o fuso e a disponibilidade da clínica ativa.</p></div><span class="vitalis-timezone-note"><i class="bi bi-globe-americas"></i><span data-workspace-copy data-clinic-text="Fuso da clínica" data-practice-text="Fuso do consultório">Fuso da clínica</span><strong id="agenda-timezone">—</strong></span></section>
             <div class="vitalis-appointment-grid">
                 <section class="vitalis-panel vitalis-appointment-form" aria-labelledby="appointment-form-title">
                     <div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Reserva</p><h2 id="appointment-form-title">Nova consulta</h2></div></div>
@@ -49,7 +49,7 @@
                     </form>
                 </section>
                 <section class="vitalis-panel" aria-labelledby="appointments-title">
-                    <div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Clínica ativa</p><h2 id="appointments-title">Consultas</h2></div><button class="btn btn-sm vitalis-refresh-button" id="agenda-atualizar" type="button"><i class="bi bi-arrow-clockwise"></i> Atualizar</button></div>
+                    <div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Atendimentos</p><h2 id="appointments-title">Consultas</h2></div><button class="btn btn-sm vitalis-refresh-button" id="agenda-atualizar" type="button"><i class="bi bi-arrow-clockwise"></i> Atualizar</button></div>
                     <form id="agenda-filtros" class="vitalis-appointment-filters mb-3" role="search">
                         <div><label class="form-label" for="agenda-data-inicio">De</label><input class="form-control" type="date" id="agenda-data-inicio" required></div>
                         <div><label class="form-label" for="agenda-data-fim">Até</label><input class="form-control" type="date" id="agenda-data-fim" required></div>

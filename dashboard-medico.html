@@ -21,11 +21,11 @@
                 <a href="calendario.html"><i class="bi bi-calendar3"></i> Calendário</a>
                 <a href="disponibilidade.html"><i class="bi bi-calendar-week"></i> Disponibilidade</a>
             </nav>
-            <div class="vitalis-sidebar-footer"><a href="select-clinic.html"><i class="bi bi-arrow-left-right"></i> Trocar clínica</a><button type="button" id="logout-button"><i class="bi bi-box-arrow-right"></i> Sair</button></div>
+            <div class="vitalis-sidebar-footer"><a data-clinic-switch hidden href="select-clinic.html"><i class="bi bi-arrow-left-right"></i> Trocar clínica</a><button type="button" id="logout-button"><i class="bi bi-box-arrow-right"></i> Sair</button></div>
         </div>
     </aside>
     <div class="vitalis-dashboard-content">
-        <header class="vitalis-topbar"><button class="btn vitalis-menu-button d-lg-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#vitalis-sidebar" aria-controls="vitalis-sidebar" aria-label="Abrir menu"><i class="bi bi-list"></i></button><div class="vitalis-topbar-title"><span>Clínica ativa</span><strong data-clinic-name>Clínica</strong></div><a class="btn vitalis-switch-button" href="select-clinic.html"><i class="bi bi-arrow-left-right"></i><span class="d-none d-sm-inline"> Trocar clínica</span></a></header>
+        <header class="vitalis-topbar"><button class="btn vitalis-menu-button d-lg-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#vitalis-sidebar" aria-controls="vitalis-sidebar" aria-label="Abrir menu"><i class="bi bi-list"></i></button><div class="vitalis-topbar-title"><span>Clínica ativa</span><strong data-clinic-name>Clínica</strong></div><a data-clinic-switch hidden class="btn vitalis-switch-button" href="select-clinic.html"><i class="bi bi-arrow-left-right"></i><span class="d-none d-sm-inline"> Trocar clínica</span></a></header>
         <main class="vitalis-main">
             <section class="vitalis-welcome">
                 <div><p class="vitalis-eyebrow">Área profissional</p><h1>Olá, <span data-user-name>profissional</span></h1><p>Acompanhe sua agenda e conclua somente os atendimentos sob sua responsabilidade.</p></div>

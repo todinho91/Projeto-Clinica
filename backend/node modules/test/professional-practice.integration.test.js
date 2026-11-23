@@ -310,6 +310,65 @@ test('MySQL 8 valida fluxo completo, concorrência, rollback e isolamento de con
         }, secretaryPatient);
         assert.equal(secretaryPatient.statusCode, 201);
 
+        const delegation = response();
+        await controllers.team.updatePermissions({
+            ...ownerRequest,
+            params: { id: String(activeSecretary.vinculo_id) },
+            body: { gerenciar_disponibilidade: true }
+        }, delegation);
+        assert.equal(delegation.statusCode, 200);
+        const [[delegatedSecretary]] = await setup.execute(`
+            SELECT cu.sessao_versao, cd.gerenciar_disponibilidade
+            FROM clinica_usuarios cu
+            JOIN consultorio_delegacoes cd
+              ON cd.clinica_id = cu.clinica_id AND cd.clinica_usuario_id = cu.id
+            WHERE cu.id = ? AND cu.clinica_id = ?
+        `, [activeSecretary.vinculo_id, clinicA]);
+        assert.equal(Number(delegatedSecretary.gerenciar_disponibilidade), 1);
+        assert.ok(Number(delegatedSecretary.sessao_versao) > Number(activeSecretary.sessao_versao));
+        const delegatedSecretaryRequest = {
+            ...secretaryRequest,
+            auth: { membershipVersion: Number(delegatedSecretary.sessao_versao) },
+            tenant: {
+                ...secretaryRequest.tenant,
+                permissions: { manageAvailability: true }
+            }
+        };
+
+        const delegatedAvailability = response();
+        await controllers.availability.replaceWeeklyAvailability({
+            ...delegatedSecretaryRequest,
+            params: { professionalId: String(ownerProfile.profissional_id) },
+            body: { intervalos: Array.from({ length: 7 }, (_, day) => ({
+                dia_semana: day, tipo: 'atendimento', inicio: '08:00', fim: '18:00'
+            })) }
+        }, delegatedAvailability);
+        assert.equal(delegatedAvailability.statusCode, 200);
+
+        const archivedPatient = response();
+        await controllers.patient.updatePatientStatus({
+            ...delegatedSecretaryRequest,
+            params: { id: String(secretaryPatient.body.id) },
+            body: { status: 'inativo' }
+        }, archivedPatient);
+        assert.equal(archivedPatient.statusCode, 200);
+        const [[archivedState]] = await setup.execute(`
+            SELECT status FROM pacientes WHERE clinica_id = ? AND id = ?
+        `, [clinicA, secretaryPatient.body.id]);
+        assert.equal(archivedState.status, 'inativo');
+
+        const reactivatedPatient = response();
+        await controllers.patient.updatePatientStatus({
+            ...delegatedSecretaryRequest,
+            params: { id: String(secretaryPatient.body.id) },
+            body: { status: 'ativo' }
+        }, reactivatedPatient);
+        assert.equal(reactivatedPatient.statusCode, 200);
+        const [[reactivatedState]] = await setup.execute(`
+            SELECT status FROM pacientes WHERE clinica_id = ? AND id = ?
+        `, [clinicA, secretaryPatient.body.id]);
+        assert.equal(reactivatedState.status, 'ativo');
+
         const revokedSecretary = response();
         await controllers.team.updateStatus({
             ...ownerRequest,
@@ -324,10 +383,16 @@ test('MySQL 8 valida fluxo completo, concorrência, rollback e isolamento de con
         `, [activeSecretary.vinculo_id, clinicA]);
         assert.equal(inactiveSecretary.status, 'inativo');
         assert.ok(Number(inactiveSecretary.sessao_versao) > Number(activeSecretary.sessao_versao));
+        const [[revokedDelegation]] = await setup.execute(`
+            SELECT gerenciar_disponibilidade
+            FROM consultorio_delegacoes
+            WHERE clinica_id = ? AND clinica_usuario_id = ?
+        `, [clinicA, activeSecretary.vinculo_id]);
+        assert.equal(Number(revokedDelegation.gerenciar_disponibilidade), 0);
 
         const accessAfterRevocation = response();
         await controllers.patient.createPatient({
-            ...secretaryRequest,
+            ...delegatedSecretaryRequest,
             body: {
                 nome: 'Acesso Revogado M3', email: 'revogado.m3@example.test',
                 telefone: '11970000000', data_nascimento: '1992-06-10', status: 'ativo'
@@ -351,6 +416,13 @@ test('MySQL 8 valida fluxo completo, concorrência, rollback e isolamento de con
         assert.deepEqual(secretaryAudit.map((row) => row.acao), [
             'convite_aceito', 'vinculo_status_alterado'
         ]);
+        const [[delegationAudit]] = await setup.execute(`
+            SELECT COUNT(*) AS total
+            FROM auditoria
+            WHERE clinica_id = ? AND acao = 'delegacao_consultorio_alterada'
+              AND entidade_id = ?
+        `, [clinicA, activeSecretary.vinculo_id]);
+        assert.equal(Number(delegationAudit.total), 1);
 
         const locationA = response();
         await controllers.practice.createLocation({

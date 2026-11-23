@@ -38,12 +38,15 @@ async function activeClinicsForUser(executor, userId) {
         SELECT c.id, c.nome, c.slug, cu.papel,
                CASE WHEN cp.clinica_id IS NULL THEN 'clinica' ELSE 'consultorio' END AS tipo_contexto,
                CASE WHEN cp.titular_usuario_id = cu.usuario_id
-                          AND ip.status_verificacao = 'verificada' THEN 1 ELSE 0 END AS titular
+                          AND ip.status_verificacao = 'verificada' THEN 1 ELSE 0 END AS titular,
+               COALESCE(cd.gerenciar_disponibilidade, 0) AS gerenciar_disponibilidade
         FROM clinica_usuarios cu
         JOIN clinicas c ON c.id = cu.clinica_id
         JOIN usuarios u ON u.id = cu.usuario_id
         LEFT JOIN consultorios_profissionais cp ON cp.clinica_id = c.id AND cp.status = 'ativo'
         LEFT JOIN identidades_profissionais ip ON ip.usuario_id = cp.titular_usuario_id
+        LEFT JOIN consultorio_delegacoes cd
+          ON cd.clinica_id = cu.clinica_id AND cd.clinica_usuario_id = cu.id
         WHERE cu.usuario_id = ?
           AND cu.status = 'ativo'
           AND c.status = 'ativa'
@@ -58,7 +61,10 @@ async function activeClinicsForUser(executor, userId) {
         slug: row.slug,
         papel: row.papel,
         tipo_contexto: row.tipo_contexto,
-        titular: Boolean(row.titular)
+        titular: Boolean(row.titular),
+        permissoes: {
+            gerenciar_disponibilidade: Boolean(row.gerenciar_disponibilidade)
+        }
     }));
 }
 
@@ -237,12 +243,15 @@ exports.selectClinic = async (req, res) => {
             SELECT c.id, c.nome, c.slug, cu.papel, cu.sessao_versao,
                    CASE WHEN cp.clinica_id IS NULL THEN 'clinica' ELSE 'consultorio' END AS tipo_contexto,
                    CASE WHEN cp.titular_usuario_id = cu.usuario_id
-                              AND ip.status_verificacao = 'verificada' THEN 1 ELSE 0 END AS titular
+                              AND ip.status_verificacao = 'verificada' THEN 1 ELSE 0 END AS titular,
+                   COALESCE(cd.gerenciar_disponibilidade, 0) AS gerenciar_disponibilidade
             FROM clinica_usuarios cu
             JOIN clinicas c ON c.id = cu.clinica_id
             JOIN usuarios u ON u.id = cu.usuario_id
             LEFT JOIN consultorios_profissionais cp ON cp.clinica_id = c.id AND cp.status = 'ativo'
             LEFT JOIN identidades_profissionais ip ON ip.usuario_id = cp.titular_usuario_id
+            LEFT JOIN consultorio_delegacoes cd
+              ON cd.clinica_id = cu.clinica_id AND cd.clinica_usuario_id = cu.id
             WHERE cu.usuario_id = ?
               AND cu.clinica_id = ?
               AND cu.status = 'ativo'
@@ -265,7 +274,10 @@ exports.selectClinic = async (req, res) => {
                 slug: rows[0].slug,
                 papel: rows[0].papel,
                 tipo_contexto: rows[0].tipo_contexto,
-                titular: Boolean(rows[0].titular)
+                titular: Boolean(rows[0].titular),
+                permissoes: {
+                    gerenciar_disponibilidade: Boolean(rows[0].gerenciar_disponibilidade)
+                }
             }
         });
     } catch (error) {

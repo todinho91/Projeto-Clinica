@@ -24,17 +24,17 @@
         <a href="equipe.html"><i class="bi bi-people"></i> Equipe e acessos</a>
         <a class="active" href="configuracoes-clinica.html" aria-current="page"><i class="bi bi-gear"></i> Configurações</a>
       </nav>
-      <div class="vitalis-sidebar-footer"><a href="select-clinic.html"><i class="bi bi-arrow-left-right"></i> Trocar clínica</a><button id="logout-button"><i class="bi bi-box-arrow-right"></i> Sair</button></div>
+      <div class="vitalis-sidebar-footer"><a data-clinic-switch hidden href="select-clinic.html"><i class="bi bi-arrow-left-right"></i> Trocar clínica</a><button id="logout-button"><i class="bi bi-box-arrow-right"></i> Sair</button></div>
     </div>
   </aside>
   <div class="vitalis-dashboard-content">
     <header class="vitalis-topbar"><button class="btn vitalis-menu-button d-lg-none" data-bs-toggle="offcanvas" data-bs-target="#vitalis-sidebar" aria-label="Abrir menu"><i class="bi bi-list"></i></button><div class="vitalis-topbar-title"><span>Clínica ativa</span><strong data-clinic-name>Clínica</strong></div></header>
     <main class="vitalis-main">
-      <section class="vitalis-welcome"><div><p class="vitalis-eyebrow">Administração</p><h1>Configurações da clínica</h1><p>Atualize somente os dados da clínica selecionada.</p></div></section>
+      <section class="vitalis-welcome"><div><p class="vitalis-eyebrow">Administração</p><h1 id="settings-title">Configurações da clínica</h1><p id="settings-description">Atualize somente os dados da clínica selecionada.</p></div></section>
       <section class="vitalis-panel vitalis-settings-panel">
         <form id="configuracoes-clinica-form">
           <div class="row g-3">
-            <div class="col-12"><label class="form-label" for="config-clinica-nome">Nome da clínica</label><input class="form-control" id="config-clinica-nome" maxlength="160" required></div>
+            <div class="col-12"><label class="form-label" id="settings-name-label" for="config-clinica-nome">Nome da clínica</label><input class="form-control" id="config-clinica-nome" maxlength="160" required></div>
             <div class="col-md-6"><label class="form-label" for="config-clinica-slug">Slug</label><input class="form-control" id="config-clinica-slug" readonly aria-describedby="slug-ajuda"><div class="form-text" id="slug-ajuda">Identificador permanente e exclusivo.</div></div>
             <div class="col-md-6"><label class="form-label" for="config-clinica-timezone">Fuso horário</label><select class="form-select" id="config-clinica-timezone" required><option value="America/Sao_Paulo">América/São Paulo</option><option value="America/Manaus">América/Manaus</option><option value="America/Cuiaba">América/Cuiabá</option><option value="America/Rio_Branco">América/Rio Branco</option><option value="America/Noronha">América/Noronha</option></select></div>
             <div class="col-12"><div class="vitalis-settings-state"><span>Status</span><strong id="config-clinica-status">Carregando...</strong></div></div>

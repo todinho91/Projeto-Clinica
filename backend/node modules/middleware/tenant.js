@@ -21,12 +21,15 @@ module.exports = async function tenantContext(req, res, next) {
                    ip.status_verificacao AS identidade_profissional_status,
                    CASE WHEN cp.titular_usuario_id = cu.usuario_id AND cp.status = 'ativo'
                              AND ip.status_verificacao = 'verificada'
-                        THEN 1 ELSE 0 END AS consultorio_titular
+                        THEN 1 ELSE 0 END AS consultorio_titular,
+                   COALESCE(cd.gerenciar_disponibilidade, 0) AS gerenciar_disponibilidade
             FROM clinica_usuarios cu
             JOIN clinicas c ON c.id = cu.clinica_id
             JOIN usuarios u ON u.id = cu.usuario_id
             LEFT JOIN consultorios_profissionais cp ON cp.clinica_id = cu.clinica_id
             LEFT JOIN identidades_profissionais ip ON ip.usuario_id = cp.titular_usuario_id
+            LEFT JOIN consultorio_delegacoes cd
+              ON cd.clinica_id = cu.clinica_id AND cd.clinica_usuario_id = cu.id
             WHERE cu.clinica_id = ?
               AND cu.usuario_id = ?
               AND cu.status = 'ativo'
@@ -54,6 +57,9 @@ module.exports = async function tenantContext(req, res, next) {
         };
         if (rows[0].consultorio_id != null) req.tenant.isPractice = true;
         if (rows[0].consultorio_titular) req.tenant.isPracticeOwner = true;
+        req.tenant.permissions = {
+            manageAvailability: Boolean(rows[0].gerenciar_disponibilidade)
+        };
         return next();
     } catch (error) {
         console.error('Erro ao validar clínica ativa:', error);

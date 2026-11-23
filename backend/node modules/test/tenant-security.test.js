@@ -64,7 +64,12 @@ test('contexto usa somente a clínica assinada e revalida o vínculo no banco', 
     await tenantContext(req, res, next);
 
     assert.deepEqual(parameters, [11, 3, 4]);
-    assert.deepEqual(req.tenant, { clinicId: 11, clinicName: 'Demo', role: 'secretaria' });
+    assert.deepEqual(req.tenant, {
+        clinicId: 11,
+        clinicName: 'Demo',
+        role: 'secretaria',
+        permissions: { manageAvailability: false }
+    });
     assert.equal(next.mock.callCount(), 1);
 });
 

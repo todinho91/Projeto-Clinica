@@ -69,7 +69,102 @@
             : { mode: 'select' };
     }
 
+    function workspaceSwitchState(clinics, clinic) {
+        const activeLinks = Array.isArray(clinics)
+            ? clinics.filter((item) => Number.isSafeInteger(Number(item?.id)) && Number(item.id) > 0)
+            : [];
+        return {
+            visible: activeLinks.length > 1,
+            label: clinic?.tipo_contexto === 'consultorio' ? 'Alternar espaço' : 'Trocar clínica'
+        };
+    }
+
+    function workspaceCapabilities(clinic) {
+        const role = clinic?.papel;
+        const practice = clinic?.tipo_contexto === 'consultorio';
+        const owner = isPracticeOwner(clinic);
+        if (owner) return {
+            overview: true, patients: true, specialties: true, availability: true,
+            appointments: true, calendar: true, team: true, settings: true,
+            professionals: false, clinicalDashboard: true
+        };
+        if (practice && role === 'secretaria') return {
+            overview: true, patients: true, specialties: false,
+            availability: clinic?.permissoes?.gerenciar_disponibilidade === true,
+            appointments: true, calendar: true, team: false, settings: false,
+            professionals: false, clinicalDashboard: false
+        };
+        if (role === 'administrador') return {
+            overview: true, patients: true, specialties: true, availability: true,
+            appointments: true, calendar: true, team: true, settings: true,
+            professionals: true, clinicalDashboard: false
+        };
+        if (role === 'secretaria') return {
+            overview: true, patients: true, specialties: true, availability: true,
+            appointments: true, calendar: true, team: true, settings: false,
+            professionals: true, clinicalDashboard: false
+        };
+        if (role === 'profissional') return {
+            overview: true, patients: false, specialties: false, availability: true,
+            appointments: false, calendar: true, team: false, settings: false,
+            professionals: false, clinicalDashboard: true
+        };
+        return {
+            overview: role === 'paciente', patients: false, specialties: false,
+            availability: false, appointments: false, calendar: false, team: false,
+            settings: false, professionals: false, clinicalDashboard: false
+        };
+    }
+
+    function workspaceNavigation(clinic) {
+        const capabilities = workspaceCapabilities(clinic);
+        const owner = isPracticeOwner(clinic);
+        const practice = clinic?.tipo_contexto === 'consultorio';
+        const items = owner ? [
+            ['overview', 'consultorio.html', 'bi-house-heart', 'Meu consultório'],
+            ['clinicalDashboard', 'dashboard-medico.html', 'bi-person-badge', 'Meus atendimentos'],
+            ['patients', 'pacientes.html', 'bi-person-vcard', 'Pacientes'],
+            ['specialties', 'especialidades.html', 'bi-tags', 'Minhas especialidades'],
+            ['availability', 'disponibilidade.html', 'bi-calendar-week', 'Minha disponibilidade'],
+            ['appointments', 'agenda.html', 'bi-calendar3', 'Minha agenda'],
+            ['calendar', 'calendario.html', 'bi-calendar-event', 'Calendário'],
+            ['team', 'equipe.html', 'bi-people', 'Secretária e acessos'],
+            ['settings', 'configuracoes-clinica.html', 'bi-gear', 'Configurações']
+        ] : [
+            ['overview', dashboardForRole(clinic?.papel, clinic), 'bi-grid-1x2-fill',
+                practice ? 'Visão do consultório' : 'Visão geral'],
+            ['patients', 'pacientes.html', 'bi-person-vcard', 'Pacientes'],
+            ['professionals', 'profissionais.html', 'bi-person-badge', 'Profissionais'],
+            ['availability', 'disponibilidade.html', 'bi-calendar-week', 'Disponibilidade'],
+            ['specialties', 'especialidades.html', 'bi-tags', 'Especialidades'],
+            ['appointments', 'agenda.html', 'bi-calendar3', 'Agenda'],
+            ['calendar', 'calendario.html', 'bi-calendar-event', 'Calendário'],
+            ['team', 'equipe.html', 'bi-people', 'Equipe e acessos'],
+            ['settings', 'configuracoes-clinica.html', 'bi-gear', 'Configurações']
+        ];
+        return items.filter(([capability, href]) => capabilities[capability] && href)
+            .map(([capability, href, icon, label]) => ({ capability, href, icon, label }));
+    }
+
     function roleCanAccessPage(role, page, clinic = null) {
+        if (page === 'dashboard-secretaria.html') {
+            return ['administrador', 'secretaria'].includes(role);
+        }
+        if (page === 'consultorio.html') return isPracticeOwner(clinic);
+        if (page === 'dashboard-medico.html') return role === 'profissional';
+        if (page === 'dashboard-paciente.html') return role === 'paciente';
+        const capabilities = workspaceCapabilities({ ...(clinic || {}), papel: role });
+        const pageCapability = {
+            'profissionais.html': 'professionals',
+            'especialidades.html': 'specialties',
+            'pacientes.html': 'patients',
+            'agenda.html': 'appointments',
+            'calendario.html': 'calendar',
+            'equipe.html': 'team',
+            'configuracoes-clinica.html': 'settings',
+            'disponibilidade.html': 'availability'
+        }[page];
+        if (pageCapability) return capabilities[pageCapability] === true;
         const allowed = {
             'dashboard-secretaria.html': ['administrador', 'secretaria'],
             'profissionais.html': ['administrador', 'secretaria'],
@@ -83,15 +178,6 @@
             'dashboard-medico.html': ['profissional'],
             'dashboard-paciente.html': ['paciente']
         };
-        if (role === 'profissional' && isPracticeOwner(clinic)) {
-            return new Set([
-                'consultorio.html', 'pacientes.html', 'agenda.html', 'calendario.html',
-                'disponibilidade.html', 'equipe.html', 'especialidades.html',
-                'configuracoes-clinica.html', 'dashboard-medico.html'
-            ]).has(page);
-        }
-        if (clinic?.tipo_contexto === 'consultorio'
-            && ['equipe.html', 'profissionais.html', 'especialidades.html'].includes(page)) return false;
         return allowed[page]?.includes(role) ?? false;
     }
 
@@ -227,6 +313,9 @@
         platformAccessState,
         matchingSelectionId,
         isPracticeOwner,
+        workspaceCapabilities,
+        workspaceNavigation,
+        workspaceSwitchState,
         roleCanAccessPage
     };
 }));

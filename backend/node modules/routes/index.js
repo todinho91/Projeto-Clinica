@@ -17,6 +17,8 @@ const identityOnly = require('../middleware/identityOnly');
 const tenantContext = require('../middleware/tenant');
 const authorize = require('../middleware/authorize');
 const workspaceManager = require('../middleware/workspaceManager');
+const availabilityManager = require('../middleware/availabilityManager');
+const clinicalDocumentAccess = require('../middleware/clinicalDocumentAccess');
 const practiceTeamManager = require('../middleware/practiceTeamManager');
 const institutionalOnly = require('../middleware/institutionalOnly');
 const optionalAuth = require('../middleware/optionalAuth');
@@ -96,6 +98,11 @@ router.post('/equipe/convites', practiceTeamManager, equipeController.createInvi
 router.post('/equipe/convites/:id/reenviar', practiceTeamManager, equipeController.reissue);
 router.post('/equipe/convites/:id/revogar', practiceTeamManager, equipeController.revoke);
 router.patch('/equipe/vinculos/:id/status', practiceTeamManager, equipeController.updateStatus);
+router.patch(
+    '/equipe/vinculos/:id/permissoes',
+    practiceTeamManager,
+    equipeController.updatePermissions
+);
 router.patch('/equipe/vinculos/:id/papel', institutionalOnly('administrador'), equipeController.updateRole);
 
 router.get(
@@ -171,16 +178,19 @@ router.get(
 router.put(
     '/disponibilidade/profissionais/:professionalId/semana',
     authorize('administrador', 'secretaria', 'profissional'),
+    availabilityManager,
     disponibilidadeController.replaceWeeklyAvailability
 );
 router.post(
     '/disponibilidade/profissionais/:professionalId/bloqueios',
     authorize('administrador', 'secretaria', 'profissional'),
+    availabilityManager,
     disponibilidadeController.createBlock
 );
 router.patch(
     '/disponibilidade/profissionais/:professionalId/bloqueios/:blockId/cancelar',
     authorize('administrador', 'secretaria', 'profissional'),
+    availabilityManager,
     disponibilidadeController.cancelBlock
 );
 router.post(
@@ -303,6 +313,11 @@ router.put(
     workspaceManager('administrador', 'secretaria'),
     pacienteController.updatePatient
 );
+router.patch(
+    '/pacientes/:id/status',
+    workspaceManager('administrador', 'secretaria'),
+    pacienteController.updatePatientStatus
+);
 router.get(
     '/pacientes/:id',
     authorize('administrador', 'secretaria', 'profissional', 'paciente'),
@@ -311,12 +326,14 @@ router.get(
 router.post(
     '/documentos/upload',
     authorize('administrador', 'secretaria', 'profissional'),
+    clinicalDocumentAccess,
     upload.single('documento'),
     exameController.uploadExame
 );
 router.post(
     '/exames/upload',
     authorize('administrador', 'secretaria', 'profissional'),
+    clinicalDocumentAccess,
     upload.single('exame'),
     exameController.uploadExame
 );

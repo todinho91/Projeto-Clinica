@@ -28,7 +28,10 @@ institucionais existentes não podem ser reclassificadas automaticamente por uma
 5. Endereços físicos ficam em `consultorio_locais` e não criam novos tenants.
 6. Secretárias usam o fluxo existente de convite, com papel `secretaria`, e podem ser
    revogadas. Somente o titular gerencia a equipe do consultório e só pode administrar
-   esse papel; a secretária não pode cadastrar médicos nem administradores.
+   esse papel; a secretária não pode cadastrar médicos nem administradores. Pacientes,
+   agenda e calendário são capacidades administrativas do vínculo. Alterar disponibilidade
+   exige delegação explícita em `consultorio_delegacoes`; toda mudança da delegação incrementa
+   `sessao_versao`, é auditada e é revalidada dentro da transação de horários.
 7. O catálogo futuro começa como `privado`. `publicavel` representa apenas prontidão;
    descoberta, consentimento público e busca pertencem à issue #67.
 8. Pacientes e prontuários não são unidos ou transferidos entre vínculos. Toda consulta
@@ -54,6 +57,10 @@ Autorizações de gestão aceitam:
 O backend revalida a capacidade; `tipo_contexto` e `titular` enviados ao frontend servem
 apenas à experiência de navegação.
 
+Documentos clínicos não integram a delegação administrativa da secretária do consultório.
+O bloqueio ocorre antes do processamento de upload. A identidade global, os vínculos com
+outros tenants e o histórico de auditoria não são apagados quando um acesso é desativado.
+
 ## Titularidade, custódia e cobrança
 
 Titularidade do workspace, acesso aos dados clínicos, custódia legal e responsabilidade
@@ -64,7 +71,7 @@ Cobrança não faz parte desta ADR.
 ## Consequências
 
 - Clínicas atuais e migrations 001–011 permanecem intactas.
-- A migration 012 é aditiva e não é executada automaticamente.
+- As migrations 012 e 013 são aditivas e não são executadas automaticamente.
 - Um usuário pode alternar entre seu consultório e clínicas autorizadas com uma só conta.
 - A arquitetura comporta múltiplos locais, mas limita um consultório titular por identidade
   nesta etapa; expansão futura deve ser uma decisão explícita.
