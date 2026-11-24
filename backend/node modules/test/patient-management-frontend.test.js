@@ -64,10 +64,14 @@ test('layout de pacientes distribui tabela e formulário nas resoluções-alvo',
 
     assert.match(css, /@media \(max-width: 1399\.98px\) and \(min-width: 992px\)[\s\S]*\.vitalis-patients-page \.vitalis-management-grid[^}]*grid-template-columns: minmax\(0, 1fr\)/);
     assert.match(css, /\.vitalis-patients-page #paciente-nascimento[^}]*width: 100%[^}]*min-width: 0/);
-    assert.match(css, /\.vitalis-patient-table th:nth-child\(1\)[^}]*width: 22%/);
-    assert.match(css, /\.vitalis-patient-table th:nth-child\(6\)[^}]*width: 15%/);
+    assert.match(css, /\.vitalis-patient-table th:nth-child\(1\)[^}]*width: 21%/);
+    assert.match(css, /\.vitalis-patient-table th:nth-child\(5\)[^}]*width: 12%/);
+    assert.match(css, /\.vitalis-patient-table th:nth-child\(6\)[^}]*width: 19%/);
     assert.match(css, /\.vitalis-patient-table th[^}]*white-space: nowrap/);
+    assert.match(css, /\.vitalis-patient-table \.vitalis-table-actions[^}]*display: grid[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)[^}]*white-space: normal/);
+    assert.match(css, /@media \(max-width: 1199\.98px\) and \(min-width: 768px\)[\s\S]*\.vitalis-patient-table \.vitalis-table-actions[^}]*grid-template-columns: minmax\(0, 1fr\)/);
     assert.match(css, /@media \(max-width: 767\.98px\)[\s\S]*\.vitalis-patient-table td[^}]*white-space: normal/);
+    assert.match(css, /@media \(max-width: 767\.98px\)[\s\S]*\.vitalis-patient-table \.vitalis-table-actions[^}]*flex-flow: row wrap/);
     assert.equal((page.match(/<th scope="col"/g) || []).length, 6);
 });
 

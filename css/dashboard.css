@@ -167,18 +167,28 @@ html { scroll-behavior: smooth; }
 .vitalis-patient-table { width: 100%; table-layout: fixed; }
 .vitalis-patient-table th, .vitalis-patient-table td { padding: .85rem .7rem; }
 .vitalis-patient-table th { white-space: nowrap; }
-.vitalis-patient-table th:nth-child(1) { width: 22%; }
-.vitalis-patient-table th:nth-child(2) { width: 22%; }
-.vitalis-patient-table th:nth-child(3) { width: 15%; }
-.vitalis-patient-table th:nth-child(4) { width: 15%; }
-.vitalis-patient-table th:nth-child(5) { width: 11%; }
-.vitalis-patient-table th:nth-child(6) { width: 15%; }
+.vitalis-patient-table th:nth-child(1) { width: 21%; }
+.vitalis-patient-table th:nth-child(2) { width: 20%; }
+.vitalis-patient-table th:nth-child(3) { width: 14%; }
+.vitalis-patient-table th:nth-child(4) { width: 14%; }
+.vitalis-patient-table th:nth-child(5) { width: 12%; }
+.vitalis-patient-table th:nth-child(6) { width: 19%; }
 .vitalis-patient-table td { overflow-wrap: break-word; }
 .vitalis-patient-table td:nth-child(2) { overflow-wrap: anywhere; }
 .vitalis-patient-table td:nth-child(3),
-.vitalis-patient-table td:nth-child(4),
-.vitalis-patient-table td:nth-child(5),
-.vitalis-patient-table td:nth-child(6) { white-space: nowrap; }
+.vitalis-patient-table td:nth-child(4) { white-space: nowrap; }
+.vitalis-patient-table td:nth-child(5) { white-space: normal; }
+.vitalis-patient-table .vitalis-table-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .4rem;
+    white-space: normal;
+}
+.vitalis-patient-table .vitalis-table-actions .btn {
+    min-width: 0;
+    margin: 0;
+    white-space: normal;
+}
 .vitalis-patient-name { color: var(--vitalis-navy); font-weight: 700; }
 .vitalis-duplicate-list { display: grid; gap: .55rem; margin-top: .75rem; }
 .vitalis-duplicate-candidate { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .7rem; border: 1px solid rgb(138 90 0 / 18%); border-radius: 10px; background: #fffdf6; }
@@ -381,6 +391,9 @@ html, body.vitalis-dashboard-body {
     .vitalis-team-page .vitalis-management-grid { grid-template-columns: minmax(0, 1fr); }
     .vitalis-team-page .vitalis-management-form { position: static; }
 }
+@media (max-width: 1199.98px) and (min-width: 768px) {
+    .vitalis-patient-table .vitalis-table-actions { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 767.98px) {
     .vitalis-welcome, .vitalis-section-heading { align-items: flex-start; flex-direction: column; }
     .vitalis-refresh-button { width: 100%; }
@@ -427,7 +440,11 @@ html, body.vitalis-dashboard-body {
     .vitalis-patient-table td::before { content: attr(data-label); color: var(--vitalis-muted); font-size: .68rem; font-weight: 700; text-transform: uppercase; }
     .vitalis-patient-table td[colspan] { display: block; }
     .vitalis-patient-table td[colspan]::before { content: none; }
-    .vitalis-patient-table .vitalis-table-actions { flex-direction: row; justify-content: flex-start; }
+    .vitalis-patient-table .vitalis-table-actions {
+        display: flex;
+        flex-flow: row wrap;
+        justify-content: flex-start;
+    }
     .vitalis-pagination { flex-wrap: wrap; justify-content: space-between; }
     .vitalis-appointment-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .vitalis-appointment-filters .btn { grid-column: 1 / -1; width: 100%; }
