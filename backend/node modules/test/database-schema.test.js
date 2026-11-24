@@ -34,7 +34,8 @@ test('migrations criam todas as tabelas previstas para DB-01', async () => {
         'identidades_profissionais',
         'consultorios_profissionais',
         'consultorio_locais',
-        'consultorio_delegacoes'
+        'consultorio_delegacoes',
+        'pacientes_identificacao_administrativa'
     ]) {
         assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`));
     }
@@ -167,6 +168,26 @@ test('delegações do consultório são aditivas, tenant-aware e não apagam ví
     assert.doesNotMatch(
         sql,
         /\b(?:DROP|TRUNCATE)\s+TABLE|\bDELETE\s+FROM|\bUPDATE\s+(?:clinica_usuarios|usuarios)\b/i
+    );
+});
+
+test('identificação administrativa protege CPF e preserva pacientes históricos', async () => {
+    const sql = await fs.readFile(
+        path.join(migrationsDir, '014_patient_administrative_identity.sql'), 'utf8'
+    );
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS pacientes_identificacao_administrativa/);
+    assert.match(sql, /PRIMARY KEY \(clinica_id, paciente_id\)/);
+    assert.match(sql, /UNIQUE KEY uk_paciente_cpf_tenant \(clinica_id, cpf_busca_hash\)/);
+    assert.match(sql, /cpf_cifrado VARBINARY\(64\)/);
+    assert.match(sql, /cpf_iv BINARY\(12\)/);
+    assert.match(sql, /cpf_auth_tag BINARY\(16\)/);
+    assert.match(sql, /cpf_chave_id VARCHAR\(64\)/);
+    assert.match(sql, /FOREIGN KEY \(clinica_id, paciente_id\)[\s\S]*REFERENCES pacientes \(clinica_id, id\)/);
+    assert.match(sql, /cadastro_status ENUM\('pendente', 'completo', 'excecao'\)/);
+    assert.match(sql, /cadastro_status = 'pendente'[\s\S]*cpf_cifrado IS NULL[\s\S]*cep IS NULL/);
+    assert.doesNotMatch(
+        sql,
+        /ALTER TABLE pacientes|\bDROP\s+(?:TABLE|DATABASE)|\bTRUNCATE\s+TABLE|\bDELETE\s+FROM|\bUPDATE\s+pacientes\s+SET|\bINSERT\s+INTO\b/i
     );
 });
 

@@ -17,17 +17,37 @@ function response() {
     return { statusCode: null, body: null, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } };
 }
 
+function testCpf(base) {
+    let cpf = String(base).replace(/\D/g, '').padStart(9, '0').slice(-9);
+    for (let length = 9; length <= 10; length += 1) {
+        let sum = 0;
+        for (let index = 0; index < length; index += 1) {
+            sum += Number(cpf[index]) * (length + 1 - index);
+        }
+        const remainder = (sum * 10) % 11;
+        cpf += String(remainder === 10 ? 0 : remainder);
+    }
+    return cpf;
+}
+
 function patientRequest(clinicId, userId, membershipVersion, overrides = {}) {
     return {
         tenant: { clinicId, role: 'administrador' }, userId,
         auth: { membershipVersion },
-        body: { nome: 'Paciente Integração', email: 'paciente.integracao@example.test', telefone: '41999990000', data_nascimento: '1990-01-15', status: 'ativo', ...overrides }
+        body: {
+            nome: 'Paciente Integração', email: 'paciente.integracao@example.test',
+            telefone: '41999990000', data_nascimento: '1990-01-15', status: 'ativo',
+            cpf: testCpf(123456789), cep: '86300000', logradouro: 'Rua Integração',
+            numero: '100', complemento: '', bairro: 'Centro',
+            cidade: 'Cornélio Procópio', uf: 'PR', ...overrides
+        }
     };
 }
 
 async function resetSchema(connection, database) {
     await confirmPatientTestEnvironment(connection, database);
     const tables = [
+        'pacientes_identificacao_administrativa',
         'consultorio_delegacoes', 'consultorio_locais', 'consultorios_profissionais', 'identidades_profissionais',
         'auditoria_plataforma', 'convites_clinica', 'bloqueios_profissional',
         'disponibilidades_profissional', 'auditoria', 'documentos_clinicos', 'consultas_historico', 'consultas',
@@ -50,7 +70,10 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
     Object.assign(process.env, {
         DB_HOST: config.host, DB_PORT: String(config.port), DB_USER: config.user,
         DB_PASSWORD: config.password, DB_DATABASE: config.database,
-        JWT_SECRET: randomBytes(32).toString('hex')
+        JWT_SECRET: randomBytes(32).toString('hex'),
+        PATIENT_CPF_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
+        PATIENT_CPF_INDEX_KEY: randomBytes(32).toString('base64'),
+        PATIENT_CPF_KEY_ID: 'integration-key-v1'
     });
     const setup = await mysql.createConnection({ ...config, multipleStatements: true });
     let pool;
@@ -106,50 +129,97 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
         ]);
         assert.deepEqual([first.statusCode, concurrent.statusCode].sort(), [201, 409]);
 
-        const incompleteFirst = response(); const incompleteConcurrent = response();
-        const incomplete = patientRequest(northId, northAdmin, northMembershipVersion, {
-            nome: 'José   Cadastro Incompleto', email: '', telefone: '', data_nascimento: ''
-        });
-        await Promise.all([
-            controller.createPatient(incomplete, incompleteFirst),
-            controller.createPatient({ ...incomplete, body: { ...incomplete.body } }, incompleteConcurrent)
-        ]);
-        assert.deepEqual([incompleteFirst.statusCode, incompleteConcurrent.statusCode].sort(), [201, 409]);
-        const incompleteDuplicate = incompleteFirst.statusCode === 409 ? incompleteFirst : incompleteConcurrent;
-        assert.equal(incompleteDuplicate.body.code, 'PATIENT_DUPLICATE');
-        const accentAndSpacing = response();
+        const duplicateCpf = response();
         await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, {
-            nome: '  jose   cadastro incompleto ', email: '', telefone: '', data_nascimento: ''
-        }), accentAndSpacing);
-        assert.equal(accentAndSpacing.statusCode, 409);
+            nome: 'Outro Nome Mesmo CPF', email: 'outro.cpf@example.test', telefone: '41999990001'
+        }), duplicateCpf);
+        assert.equal(duplicateCpf.statusCode, 409);
+        assert.equal(duplicateCpf.body.code, 'PATIENT_DUPLICATE');
+
+        const incomplete = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, {
+            nome: 'José Cadastro Incompleto', data_nascimento: '', numero: ''
+        }), incomplete);
+        assert.equal(incomplete.statusCode, 400);
+
+        const exception = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, {
+            nome: 'José Cadastro Excepcional', email: '', telefone: '',
+            cpf: '', cpf_excecao: 'nao_possui', cep: '', logradouro: '', numero: '',
+            bairro: '', cidade: '', uf: '', endereco_excecao: 'sem_endereco_convencional'
+        }), exception);
+        assert.equal(exception.statusCode, 201);
+
+        const [legacyInsert] = await setup.execute(`
+            INSERT INTO pacientes (
+                clinica_id, usuario_id, nome, email, telefone, preferencia_contato,
+                data_nascimento, status
+            ) VALUES (?, NULL, 'Paciente Histórico MySQL', NULL, NULL, 'nenhum', NULL, 'ativo')
+        `, [northId]);
+        const legacyId = Number(legacyInsert.insertId);
+        const legacyEdit = response();
+        await controller.updatePatient({
+            ...patientRequest(northId, northAdmin, northMembershipVersion, {
+                nome: 'Paciente Histórico MySQL', email: 'historico.mysql@example.test',
+                telefone: '', data_nascimento: '', cpf: '', cep: '', logradouro: '',
+                numero: '', complemento: '', bairro: '', cidade: '', uf: '',
+                manter_cadastro_pendente: true
+            }),
+            params: { id: String(legacyId) }
+        }, legacyEdit);
+        assert.equal(legacyEdit.statusCode, 200);
+        const [[legacyPending]] = await setup.execute(`
+            SELECT COUNT(*) AS total FROM pacientes_identificacao_administrativa
+            WHERE clinica_id = ? AND paciente_id = ?
+        `, [northId, legacyId]);
+        assert.equal(Number(legacyPending.total), 0);
+        const legacyComplete = response();
+        await controller.updatePatient({
+            ...patientRequest(northId, northAdmin, northMembershipVersion, {
+                nome: 'Paciente Histórico MySQL', email: 'historico.mysql@example.test',
+                telefone: '', data_nascimento: '1975-04-12', cpf: testCpf(123456786)
+            }),
+            params: { id: String(legacyId) }
+        }, legacyComplete);
+        assert.equal(legacyComplete.statusCode, 200);
+        const [[legacyStatus]] = await setup.execute(`
+            SELECT cadastro_status FROM pacientes_identificacao_administrativa
+            WHERE clinica_id = ? AND paciente_id = ?
+        `, [northId, legacyId]);
+        assert.equal(legacyStatus.cadastro_status, 'completo');
 
         const homonymBase = response();
         await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, {
-            nome: 'Ana Homônima', email: '', telefone: '', data_nascimento: '1980-02-10'
+            nome: 'Ana Homônima', email: '', telefone: '', data_nascimento: '1980-02-10',
+            cpf: testCpf(123456780)
         }), homonymBase);
         assert.equal(homonymBase.statusCode, 201);
         const homonymNeedsReview = response();
         await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, {
-            nome: 'ana homonima', email: '', telefone: '', data_nascimento: '1990-03-20'
+            nome: 'ana homonima', email: '', telefone: '', data_nascimento: '1990-03-20',
+            cpf: testCpf(123456781)
         }), homonymNeedsReview);
         assert.equal(homonymNeedsReview.statusCode, 409);
         assert.equal(homonymNeedsReview.body.code, 'PATIENT_REVIEW_REQUIRED');
         const homonymReviewed = response();
         await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, {
             nome: 'ana homonima', email: '', telefone: '', data_nascimento: '1990-03-20',
-            revisao_duplicidade: true, motivo_revisao: 'homonimo_confirmado'
+            cpf: testCpf(123456781), revisao_duplicidade: true,
+            motivo_revisao: 'homonimo_confirmado'
         }), homonymReviewed);
         assert.equal(homonymReviewed.statusCode, 201);
 
         const familyFirst = response();
         await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, {
-            nome: 'Contato Familiar Um', email: '', telefone: '41988887777', data_nascimento: '1985-01-01'
+            nome: 'Contato Familiar Um', email: '', telefone: '41988887777',
+            data_nascimento: '1985-01-01', cpf: testCpf(123456782)
         }), familyFirst);
         assert.equal(familyFirst.statusCode, 201);
         const familyReviewed = response();
         await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, {
             nome: 'Contato Familiar Dois', email: '', telefone: '41988887777', data_nascimento: '2010-01-01',
-            revisao_duplicidade: true, motivo_revisao: 'contato_compartilhado'
+            cpf: testCpf(123456783), revisao_duplicidade: true,
+            motivo_revisao: 'contato_compartilhado'
         }), familyReviewed);
         assert.equal(familyReviewed.statusCode, 201);
 
@@ -168,7 +238,7 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
         const afterTenthBlocking = response();
         await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, {
             nome: 'Candidato Limite', email: '', telefone: '(41) 97777-6666',
-            data_nascimento: '2001-02-02', revisao_duplicidade: true,
+            data_nascimento: '2001-02-02', cpf: testCpf(123456784), revisao_duplicidade: true,
             motivo_revisao: 'dados_conferidos'
         }), afterTenthBlocking);
         assert.equal(afterTenthBlocking.statusCode, 409);
@@ -181,11 +251,22 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
             southId, southAdmin, southMembershipVersion
         ), south);
         assert.equal(south.statusCode, 201, 'o mesmo e-mail é permitido em clínicas independentes');
+        const [[northProtected], [southProtected]] = await Promise.all([
+            setup.execute(`SELECT cpf_cifrado, cpf_busca_hash FROM pacientes_identificacao_administrativa
+                WHERE clinica_id = ? AND cadastro_status = 'completo' ORDER BY paciente_id LIMIT 1`, [northId]),
+            setup.execute(`SELECT cpf_cifrado, cpf_busca_hash FROM pacientes_identificacao_administrativa
+                WHERE clinica_id = ? AND cadastro_status = 'completo' ORDER BY paciente_id LIMIT 1`, [southId])
+        ]);
+        assert.equal(northProtected[0].cpf_cifrado.includes(Buffer.from(testCpf(123456789))), false);
+        assert.equal(northProtected[0].cpf_busca_hash.equals(southProtected[0].cpf_busca_hash), false);
+
         const isolatedIncomplete = response();
         await controller.createPatient(patientRequest(southId, southAdmin, southMembershipVersion, {
-            nome: 'José Cadastro Incompleto', email: '', telefone: '', data_nascimento: ''
+            nome: 'José Cadastro Excepcional', email: '', telefone: '',
+            cpf: '', cpf_excecao: 'nao_possui', cep: '', logradouro: '', numero: '',
+            bairro: '', cidade: '', uf: '', endereco_excecao: 'sem_endereco_convencional'
         }), isolatedIncomplete);
-        assert.equal(isolatedIncomplete.statusCode, 201, 'nome incompleto igual é isolado por clínica');
+        assert.equal(isolatedIncomplete.statusCode, 201, 'exceções iguais são isoladas por clínica');
 
         const publicRegistration = response();
         await authController.register({ body: {
@@ -237,7 +318,8 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
             await controller.createPatient(patientRequest(
                 northId, northAdmin, northMembershipVersion, {
                 nome: 'Paciente Rollback', email: 'rollback.paciente@example.test',
-                telefone: '41999991111', data_nascimento: '1984-03-08', status: 'inativo'
+                telefone: '41999991111', data_nascimento: '1984-03-08', status: 'inativo',
+                cpf: testCpf(123456785)
             }), rollback);
             assert.equal(rollback.statusCode, 500);
             const [[preserved]] = await setup.execute(

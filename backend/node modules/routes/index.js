@@ -294,6 +294,11 @@ router.get(
     pacienteController.searchForScheduling
 );
 router.get(
+    '/pacientes/cep/:cep',
+    workspaceManager('administrador', 'secretaria'),
+    pacienteController.lookupCep
+);
+router.get(
     '/pacientes/gestao/:id',
     workspaceManager('administrador', 'secretaria'),
     pacienteController.getForManagement

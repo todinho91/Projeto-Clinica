@@ -164,6 +164,14 @@ html { scroll-behavior: smooth; }
 /* M5-01: cadastro e busca de pacientes */
 .vitalis-patient-filters { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(130px, .35fr) auto; gap: .65rem; }
 .vitalis-patients-page #paciente-nascimento { width: 100%; min-width: 0; }
+.vitalis-address-fields { min-width: 0; padding: 1rem; border: 1px solid var(--vitalis-border); border-radius: 12px; }
+.vitalis-address-fields legend { float: none; width: auto; margin: 0 0 .75rem; padding: 0 .25rem; color: var(--vitalis-navy); font-size: .82rem; font-weight: 700; }
+.vitalis-exception-box { padding: .75rem; border: 1px dashed #c8d6e4; border-radius: 10px; background: #f9fbfd; }
+.vitalis-field-error { min-height: 1rem; margin-top: .25rem; color: #b42318; font-size: .74rem; }
+.vitalis-registration-state { display: inline-flex; margin-top: .35rem; padding: .28rem .55rem; border-radius: 999px; color: #5c6670; background: #edf2f7; font-size: .72rem; font-weight: 700; }
+.vitalis-registration-state-complete { color: #087f5b; background: #e6f8f1; }
+.vitalis-registration-state-exception { color: #8a5a00; background: #fff4d6; }
+.vitalis-legacy-pending { font-size: .82rem; }
 .vitalis-patient-table { width: 100%; table-layout: fixed; }
 .vitalis-patient-table th, .vitalis-patient-table td { padding: .85rem .7rem; }
 .vitalis-patient-table th { white-space: nowrap; }
@@ -190,6 +198,7 @@ html { scroll-behavior: smooth; }
     white-space: normal;
 }
 .vitalis-patient-name { color: var(--vitalis-navy); font-weight: 700; }
+.vitalis-patient-name small { display: block; margin-top: .25rem; color: var(--vitalis-muted); font-size: .7rem; font-weight: 600; }
 .vitalis-duplicate-list { display: grid; gap: .55rem; margin-top: .75rem; }
 .vitalis-duplicate-candidate { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .7rem; border: 1px solid rgb(138 90 0 / 18%); border-radius: 10px; background: #fffdf6; }
 .vitalis-duplicate-candidate span { min-width: 0; overflow-wrap: anywhere; font-size: .82rem; }

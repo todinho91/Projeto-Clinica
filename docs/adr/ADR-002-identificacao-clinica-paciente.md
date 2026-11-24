@@ -1,125 +1,164 @@
-# ADR-002 — Identificação clínica completa do paciente
+# ADR-002 — Identificação administrativa do paciente
 
-- Status: proposta; implementação bloqueada por decisões de privacidade e segurança
+- Status: aceita para implementação na PR #69; migration ainda não aplicada
 - Dependência: PR #68
 - Relacionamento: issues #18 e #33
-- Escopo: evolução do cadastro administrativo para identificação clínica, sem prontuário
+- Escopo: identificação administrativa para cadastro e agendamento, sem prontuário
 
-## Contexto
+## Contexto e finalidade
 
-A PR #68 mantém o cadastro rápido necessário para agendamento: nome completo,
-nascimento e contatos opcionais, preferência explícita de contato e situação
-ativa/arquivada. Esse cadastro é isolado por `clinica_id`, não cria identidade global
-automaticamente e não reúne prontuários de tenants diferentes.
+O cadastro rápido anterior permitia nome e contatos opcionais. Ele continua válido para
+leitura e histórico, mas novos cadastros rotineiros precisam identificar corretamente a
+pessoa e seu endereço para a operação do atendimento. Isso não autoriza coletar conteúdo
+assistencial, consultar CPF externamente nem reunir registros de clínicas diferentes.
 
-A identificação usada em contexto assistencial pode exigir mais elementos. Entretanto,
-incluir todos eles no formulário administrativo, antes de existir finalidade e controle de
-acesso definidos, ampliaria a coleta e a exposição de dados pessoais. O modelo do e-SUS APS
-é uma referência contextual do SUS; seus campos não devem se tornar requisitos universais
-para consultórios privados.
+A finalidade desta etapa é identificar administrativamente o paciente no tenant ativo,
+permitir contato quando houver preferência explícita e sustentar agendamento, faturamento
+administrativo futuro e correção cadastral. Diagnósticos, anamnese, prescrições, exames,
+alergias e evolução permanecem fora desta estrutura.
 
-## Decisão proposta
+## Decisão funcional
 
-Separar o modelo em dois níveis.
+### Cadastro rotineiro novo
 
-### Nível A — cadastro rápido administrativo
-
-Permanece na tabela `pacientes` e nos fluxos atuais:
+Exige, na mesma transação:
 
 - nome completo;
-- data de nascimento opcional, inclusive quando desconhecida;
+- CPF matematicamente válido;
+- data de nascimento válida;
+- CEP, logradouro, número, bairro, cidade e UF;
 - telefone e e-mail opcionais;
-- preferência de contato;
-- situação ativa ou arquivada;
-- prevenção de duplicidade dentro do tenant;
-- arquivamento lógico e auditável, sem exclusão do histórico.
+- complemento opcional;
+- preferência de contato independente dos dados de identificação.
 
-CPF não será acrescentado ao Nível A até que finalidade, chave de busca e proteção em
-repouso sejam aprovadas.
+A validação de dígitos do CPF não comprova situação regular na Receita Federal e nenhum
+serviço de consulta de CPF integra esta etapa.
 
-### Nível B — identificação clínica
+### Exceções assistenciais
 
-Deve ser implementado em migration aditiva posterior, sem alterar migrations publicadas.
-A proposta é uma tabela tenant-aware, vinculada por `(clinica_id, paciente_id)`, para:
+Ausência de CPF, endereço não convencional e urgência usam códigos fechados e auditáveis.
+Não são aceitos documentos fictícios nem justificativas livres copiadas para a auditoria.
+O atendimento não é bloqueado quando uma exceção autorizada for aplicável.
 
-- nome social;
-- sexo cadastral quando aplicável ao atendimento;
-- nome da mãe;
-- naturalidade;
-- CPF e CNS quando aplicáveis;
-- estado de completude e motivo de informação desconhecida.
+### Pacientes históricos
 
-Endereços, responsáveis legais, contatos de emergência e convênios devem usar estruturas
-filhas próprias, também tenant-aware, porque podem ter múltiplas versões e períodos de
-validade. Nenhuma dessas tabelas deve conter anamnese, alergias, medicamentos, antecedentes,
-diagnósticos ou evolução clínica.
+Pacientes anteriores permanecem na tabela `pacientes`, visíveis e vinculados às consultas.
+Na ausência da nova linha, a API retorna `cadastro_status = pendente`. O operador pode
+completar o cadastro em edição posterior. Uma edição administrativa estritamente necessária
+pode manter o estado pendente por opção explícita; um cadastro novo nunca pode usar essa
+compatibilidade.
 
-## Decisões obrigatórias antes da migration
+Nenhuma coluna histórica recebe `NOT NULL`, nenhum paciente é atualizado em massa e a
+visualização do histórico clínico não depende da complementação administrativa.
 
-1. Definir finalidade e base legal para cada campo, inclusive CPF e CNS.
-2. Definir a matriz de acesso. A secretária pode administrar identificação necessária à
-   operação, mas não recebe conteúdo assistencial restrito.
-3. Definir como CPF será protegido e pesquisado. Não persistir CPF em texto puro nem criar
-   índice global entre tenants. A estratégia de cifra, chave e hash de busca precisa de
-   revisão de segurança e rotação de chaves.
-4. Representar informação desconhecida por estado explícito; não gravar valores fictícios
-   como “não possui” em campos documentais.
-5. Definir responsáveis legais, menores, incapazes e atendimentos urgentes sem bloquear o
-   cuidado por ausência de dado não essencial.
-6. Definir retenção, correção, exportação e exclusão conforme dependências clínicas e
-   obrigações legais.
-7. Concluir a verificação de titularidade da issue #33 antes de qualquer vínculo entre perfil
-   clínico e identidade global.
+## Modelo aditivo
 
-## Regras de autorização e isolamento
+A migration `014_patient_administrative_identity.sql` cria
+`pacientes_identificacao_administrativa`, vinculada por `(clinica_id, paciente_id)`.
 
-- `clinica_id` deriva apenas do contexto autenticado.
-- Toda chave estrangeira clínica deve ser composta pelo tenant.
-- Nenhum CPF, CNS ou paciente é compartilhado automaticamente entre clínicas ou
-  consultórios.
-- Homônimos permanecem registros distintos até revisão humana autorizada.
-- Nunca unir prontuários automaticamente por nome, telefone, e-mail, CPF ou CNS.
-- Toda leitura e escrita sensível é auditada sem copiar o valor sensível para logs ou
-  metadados de auditoria.
-- O arquivamento preserva consultas, confirmações, documentos e trilhas já existentes.
-- Exclusão física não integra este fluxo.
+Ela armazena:
 
-## Sequência de implementação dependente
+- estado `pendente`, `completo` ou `excecao`;
+- CPF cifrado, IV, tag de autenticação, identificador da chave e últimos quatro dígitos;
+- índice de busca HMAC exclusivo por tenant;
+- endereço e códigos controlados de exceção;
+- usuário responsável e timestamps.
 
-1. Aprovar esta ADR e a matriz de acesso.
-2. Definir proteção criptográfica e gestão de chaves para documentos.
-3. Criar migration aditiva `014_*` com pré-voo somente leitura.
-4. Implementar validação de CPF quando informado e normalização de CNS, sem unicidade
-   global.
-5. Criar endpoints transacionais separados do cadastro rápido.
-6. Criar interface progressiva, marcando campos opcionais e estados desconhecidos.
-7. Cobrir isolamento, concorrência, rollback, mascaramento, auditoria e regressões.
-8. Executar integração apenas em MySQL 8 descartável `*_test`, após autorização específica.
+A migration não contém seed, `UPDATE`, `DELETE`, `DROP`, alteração destrutiva ou migração
+automática dos registros existentes.
 
-Até essas decisões, não há migration 014 e nenhum banco deve ser alterado.
+## Proteção do CPF e gestão de chaves
 
-## Critérios de aceite da implementação futura
+O CPF nunca é persistido em texto puro.
 
-- migration exclusivamente aditiva, sem seed ou atualização global;
-- compatibilidade integral com pacientes e consultas existentes;
-- CPF válido quando informado, protegido em repouso e não revelado em listagens;
-- ausência de falsa unicidade entre tenants;
-- estados desconhecidos não bloqueiam atendimento;
-- secretária não acessa dados assistenciais;
-- profissional acessa somente pacientes autorizados no tenant ativo;
-- rollback completo em falha;
-- auditoria sem dados sensíveis;
-- nenhuma fusão automática de prontuários.
+- Cifra: AES-256-GCM com IV aleatório de 96 bits e tag de autenticação.
+- Contexto autenticado adicional: versão do formato e `clinica_id`.
+- Busca: HMAC-SHA-256 com chave separada, calculado sobre versão, tenant e CPF normalizado.
+- Unicidade: `(clinica_id, cpf_busca_hash)`; não existe comparação global entre clínicas.
+- Exposição: somente máscara `***.***.***-0000` para operadores autorizados.
+- Logs e auditoria: registram somente estado, operação e códigos de exceção.
 
-## Referências oficiais
+Segredos obrigatórios, mantidos fora do Git:
 
-- Resolução CFM nº 1.638/2002:
-  https://sistemas.cfm.org.br/normas/visualizar/resolucoes/BR/2002/1638
-- Lei nº 13.787/2018:
-  https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13787.htm
+- `PATIENT_CPF_ENCRYPTION_KEY`: 32 bytes em Base64;
+- `PATIENT_CPF_INDEX_KEY`: 32 bytes em Base64 e separada da chave de cifra;
+- `PATIENT_CPF_KEY_ID`: identificador não secreto da chave ativa.
+
+Em ambiente comercial, as chaves devem ficar em gerenciador de segredos, com acesso mínimo,
+backup seguro e rotação registrada. A chave de cifra pode ser rotacionada recriptografando
+linhas em lote controlado e mantendo o identificador anterior durante a transição. A rotação
+da chave de índice exige migration própria com período de dupla indexação; não deve ser feita
+por substituição direta, pois impediria localizar duplicidades antigas.
+
+Se as chaves não estiverem configuradas, operações que precisem persistir ou pesquisar CPF
+falham antes de qualquer escrita. Não há fallback para texto puro.
+
+## Consulta de CEP
+
+O navegador consulta somente o backend autenticado. O backend envia ao ViaCEP apenas os oito
+dígitos do CEP, por HTTPS, com timeout, limite por operador e cache curto em memória.
+Nome, CPF, telefone, tenant e informações clínicas não são enviados ao provedor.
+
+CEP inexistente, timeout ou indisponibilidade não apagam campos já preenchidos. O formulário
+permite correção e preenchimento manual, mas não salva endereço rotineiro parcial.
+
+## Matriz de acesso
+
+| Papel no tenant ativo | Listagem mascarada | Identificação administrativa completa | Criar/editar | Conteúdo assistencial |
+| --- | --- | --- | --- | --- |
+| Administrador institucional | Sim | Sim | Sim | Conforme permissões clínicas existentes |
+| Secretária institucional | Sim | Sim | Sim | Não ampliado por esta PR |
+| Médico titular do consultório | Sim | Sim | Sim | Conforme vínculo profissional existente |
+| Secretária do consultório | Sim | Sim | Sim | Documentos clínicos continuam bloqueados |
+| Profissional não titular | Somente fluxos clínicos já autorizados | Não pela gestão administrativa | Não | Somente pacientes vinculados ao atendimento |
+| Paciente | Próprios dados em fluxos específicos futuros | Não nesta PR | Não nesta PR | Próprio histórico autorizado |
+
+Toda operação deriva `clinica_id` do token, revalida usuário, clínica, vínculo, versão de
+sessão e papel. Nenhum identificador do navegador escolhe o tenant.
+
+## Retenção e correção
+
+O arquivamento do paciente é lógico e preserva consultas, documentos e auditoria. CPF e
+endereço são mantidos enquanto forem necessários para identificar o registro e cumprir as
+obrigações aplicáveis ao histórico. Eliminação física ou anonimização exige política formal,
+verificação de dependências clínicas e jurídicas e trilha de decisão; não integra esta PR.
+
+Correções substituem a cifra usando a chave ativa. O sistema não une pacientes ou prontuários
+automaticamente por CPF, nome, telefone, e-mail ou endereço. A vinculação a uma identidade
+global continua dependente da verificação de titularidade da issue #33.
+
+## Riscos residuais e operação
+
+- A validação matemática do CPF não consulta nem comprova situação cadastral oficial.
+- ViaCEP é dependência externa auxiliar; o preenchimento manual permanece disponível.
+- Segredos devem ser provisionados antes de aplicar a migration em qualquer ambiente.
+- Backup e restauração precisam incluir as chaves; perder a chave de cifra torna o CPF
+  irrecuperável.
+- Exportação de CPF completo, atendimento de direitos do titular e rotação em massa precisam
+  de procedimentos operacionais aprovados antes do lançamento comercial.
+
+## Validação
+
+- CPF válido, inválido, sequencial, duplicado e concorrente;
+- hash distinto para o mesmo CPF em tenants diferentes;
+- ausência de CPF puro em banco, API, logs e auditoria;
+- CEP válido, inexistente, timeout, limite e preenchimento manual;
+- cadastro incompleto recusado antes de qualquer escrita;
+- exceções controladas e auditadas;
+- leitura e edição gradual de pacientes antigos;
+- isolamento e permissões de administrador, secretária e titular;
+- regressão de consultas, confirmações e arquivamento.
+
+Integrações MySQL permanecem opt-in e somente podem rodar em banco novo `vitalis_pacientes*_test`
+após autorização específica.
+
+## Referências
+
 - LGPD — Lei nº 13.709/2018:
   https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709compilado.htm
-- Guia de segurança da ANPD:
+- Guia de Segurança da Informação da ANPD:
   https://www.gov.br/anpd/pt-br/centrais-de-conteudo/materiais-educativos-e-publicacoes/guia-orientativo-sobre-seguranca-da-informacao-para-agentes-de-tratamento-de-pequeno-porte
-- Cadastro Individual do e-SUS APS, apenas como referência contextual:
-  https://sisaps.saude.gov.br/sistemas/esusaps/docs/manual/PEC/PEC_04_cidadao/
+- Lei nº 13.787/2018:
+  https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13787.htm
+- ViaCEP — documentação do webservice:
+  https://viacep.com.br/

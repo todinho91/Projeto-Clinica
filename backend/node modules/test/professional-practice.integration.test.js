@@ -22,6 +22,26 @@ function response() {
     };
 }
 
+function testCpf(base) {
+    let cpf = String(base).replace(/\D/g, '').padStart(9, '0').slice(-9);
+    for (let length = 9; length <= 10; length += 1) {
+        let sum = 0;
+        for (let index = 0; index < length; index += 1) {
+            sum += Number(cpf[index]) * (length + 1 - index);
+        }
+        const remainder = (sum * 10) % 11;
+        cpf += String(remainder === 10 ? 0 : remainder);
+    }
+    return cpf;
+}
+
+function patientIdentification(base) {
+    return {
+        cpf: testCpf(base), cep: '01001000', logradouro: 'Praça da Sé',
+        numero: String(base), complemento: '', bairro: 'Sé', cidade: 'São Paulo', uf: 'SP'
+    };
+}
+
 async function resetSchema(connection, database) {
     await confirmPracticeTestEnvironment(connection, database);
     const [rows] = await connection.query(`
@@ -84,7 +104,10 @@ test('MySQL 8 valida fluxo completo, concorrência, rollback e isolamento de con
         DB_HOST: config.host, DB_PORT: String(config.port), DB_USER: config.user,
         DB_PASSWORD: config.password, DB_DATABASE: config.database,
         JWT_SECRET: randomBytes(32).toString('hex'), MAIL_PROVIDER: 'disabled',
-        APP_PUBLIC_ORIGIN: 'http://127.0.0.1:5500'
+        APP_PUBLIC_ORIGIN: 'http://127.0.0.1:5500',
+        PATIENT_CPF_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
+        PATIENT_CPF_INDEX_KEY: randomBytes(32).toString('base64'),
+        PATIENT_CPF_KEY_ID: 'practice-integration-v1'
     });
     const setup = await mysql.createConnection({ ...config, multipleStatements: true });
     let pool;
@@ -214,7 +237,8 @@ test('MySQL 8 valida fluxo completo, concorrência, rollback e isolamento de con
             body: {
                 nome: 'Paciente Sintético M3', email: 'paciente.m3@example.test',
                 telefone: '11987654321', preferencia_contato: 'whatsapp',
-                data_nascimento: '1990-01-15', status: 'ativo'
+                data_nascimento: '1990-01-15', status: 'ativo',
+                ...patientIdentification(101)
             }
         }, patient);
         assert.equal(patient.statusCode, 201);
@@ -305,7 +329,8 @@ test('MySQL 8 valida fluxo completo, concorrência, rollback e isolamento de con
             body: {
                 nome: 'Paciente da Secretária M3',
                 email: 'paciente.secretaria.m3@example.test',
-                telefone: '11976543210', data_nascimento: '1988-03-20', status: 'ativo'
+                telefone: '11976543210', data_nascimento: '1988-03-20', status: 'ativo',
+                ...patientIdentification(102)
             }
         }, secretaryPatient);
         assert.equal(secretaryPatient.statusCode, 201);
@@ -395,7 +420,8 @@ test('MySQL 8 valida fluxo completo, concorrência, rollback e isolamento de con
             ...delegatedSecretaryRequest,
             body: {
                 nome: 'Acesso Revogado M3', email: 'revogado.m3@example.test',
-                telefone: '11970000000', data_nascimento: '1992-06-10', status: 'ativo'
+                telefone: '11970000000', data_nascimento: '1992-06-10', status: 'ativo',
+                ...patientIdentification(103)
             }
         }, accessAfterRevocation);
         assert.equal(accessAfterRevocation.statusCode, 403);

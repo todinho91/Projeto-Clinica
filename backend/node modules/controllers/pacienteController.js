@@ -1,4 +1,11 @@
 const pool = require('../config/database');
+const cepService = require('../services/cep-service');
+const {
+    cryptoConfiguration,
+    identificationPayload,
+    maskedCpf,
+    protectCpf
+} = require('../support/patient-identification');
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -50,7 +57,7 @@ function normalizedBirthDate(value, today = new Date()) {
     return value;
 }
 
-function patientPayload(body = {}) {
+function patientPayload(body = {}, options = {}) {
     const name = normalizedText(body.nome, 2, 160);
     const email = normalizedEmail(body.email);
     const phone = normalizedPhone(body.telefone);
@@ -58,9 +65,55 @@ function patientPayload(body = {}) {
     const status = body.status ?? 'ativo';
     const contactPreference = body.preferencia_contato ?? 'nenhum';
     if (!name || email === undefined || phone === undefined || birthDate === undefined
+        || (options.requireBirthDate === true && !birthDate)
         || !['ativo', 'inativo'].includes(status) || !CONTACT_PREFERENCES.has(contactPreference)
         || (contactPreference === 'whatsapp' && !phone)) return null;
     return { name, email, phone, birthDate, status, contactPreference };
+}
+
+function protectedIdentification(body, clinicId, options = {}) {
+    const identification = identificationPayload(body, options);
+    if (!identification) return null;
+    if (identification.pending) return identification;
+    let protectedCpf = null;
+    if (identification.cpf) {
+        protectedCpf = protectCpf(
+            identification.cpf,
+            clinicId,
+            cryptoConfiguration()
+        );
+    }
+    return { ...identification, protectedCpf };
+}
+
+function identificationParameters(identification, existing = null) {
+    const cpf = identification.preserveCpf ? {
+        ciphertext: existing.cpf_cifrado,
+        iv: existing.cpf_iv,
+        authTag: existing.cpf_auth_tag,
+        searchHash: existing.cpf_busca_hash,
+        lastFour: existing.cpf_final,
+        keyId: existing.cpf_chave_id
+    } : identification.protectedCpf;
+    const address = identification.address;
+    return [
+        identification.status,
+        cpf?.ciphertext ?? null,
+        cpf?.iv ?? null,
+        cpf?.authTag ?? null,
+        cpf?.searchHash ?? null,
+        cpf?.lastFour ?? null,
+        cpf?.keyId ?? null,
+        identification.cpfException,
+        address?.cep ?? null,
+        address?.street ?? null,
+        address?.number ?? null,
+        address?.complement ?? null,
+        address?.district ?? null,
+        address?.city ?? null,
+        address?.state ?? null,
+        identification.addressException
+    ];
 }
 
 function boundedInteger(value, fallback, maximum) {
@@ -132,21 +185,27 @@ function canonicalName(value) {
         .trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-async function potentialPatients(connection, clinicId, payload, ignoredId = 0) {
+async function potentialPatients(connection, clinicId, payload, ignoredId = 0, identification = null) {
+    const cpfHash = identification?.protectedCpf?.searchHash ?? null;
     const [rows] = await connection.execute(`
-        SELECT id, nome, email, telefone, data_nascimento, status
-        FROM pacientes
-        WHERE clinica_id = ? AND id <> ?
+        SELECT p.id, p.nome, p.email, p.telefone, p.data_nascimento, p.status,
+               pia.cpf_busca_hash
+        FROM pacientes p
+        LEFT JOIN pacientes_identificacao_administrativa pia
+          ON pia.clinica_id = p.clinica_id AND pia.paciente_id = p.id
+        WHERE p.clinica_id = ? AND p.id <> ?
           AND (
-                LOWER(REGEXP_REPLACE(TRIM(nome), '[[:space:]]+', ' ')) = LOWER(?)
-             OR (? IS NOT NULL AND email = ?)
-             OR (? IS NOT NULL AND telefone = ?)
+                LOWER(REGEXP_REPLACE(TRIM(p.nome), '[[:space:]]+', ' ')) = LOWER(?)
+             OR (? IS NOT NULL AND p.email = ?)
+             OR (? IS NOT NULL AND p.telefone = ?)
+             OR (? IS NOT NULL AND pia.cpf_busca_hash = ?)
           )
-        ORDER BY id
+        ORDER BY p.id
         FOR UPDATE
     `, [
         clinicId, ignoredId, payload.name,
-        payload.email, payload.email, payload.phone, payload.phone
+        payload.email, payload.email, payload.phone, payload.phone,
+        cpfHash, cpfHash
     ]);
     const inputName = canonicalName(payload.name);
     return rows.map((row) => {
@@ -155,6 +214,8 @@ async function potentialPatients(connection, clinicId, payload, ignoredId = 0) {
         const nameMatch = canonicalName(row.nome) === inputName;
         const emailMatch = Boolean(payload.email && row.email === payload.email);
         const phoneMatch = Boolean(payload.phone && String(row.telefone || '') === payload.phone);
+        const cpfMatch = Boolean(cpfHash && Buffer.isBuffer(row.cpf_busca_hash)
+            && row.cpf_busca_hash.equals(cpfHash));
         const birthNameMatch = Boolean(nameMatch && payload.birthDate
             && String(storedBirthDate || '').slice(0, 10) === payload.birthDate);
         const incompleteNameMatch = nameMatch && !payload.email && !payload.phone && !payload.birthDate;
@@ -162,7 +223,8 @@ async function potentialPatients(connection, clinicId, payload, ignoredId = 0) {
             id: Number(row.id), nome: row.nome, status: row.status,
             ano_nascimento: storedBirthDate ? Number(String(storedBirthDate).slice(0, 4)) : null,
             email_mascarado: maskEmail(row.email), telefone_mascarado: maskPhone(row.telefone),
-            bloqueante: emailMatch || birthNameMatch || (nameMatch && phoneMatch) || incompleteNameMatch
+            bloqueante: cpfMatch || emailMatch || birthNameMatch
+                || (nameMatch && phoneMatch) || incompleteNameMatch
         };
     });
 }
@@ -195,8 +257,22 @@ function duplicateBody(result) {
 }
 
 exports.previewDuplicates = async (req, res) => {
-    const payload = patientPayload(req.body);
-    if (!payload) return res.status(400).json({ error: 'Dados do paciente inválidos.' });
+    const payload = patientPayload(req.body, { requireBirthDate: true });
+    let identification;
+    try {
+        identification = protectedIdentification(req.body, req.tenant.clinicId);
+    } catch (error) {
+        if (error.code === 'PATIENT_PROTECTION_CONFIG') {
+            return res.status(503).json({
+                error: 'Proteção de documentos indisponível. Tente novamente mais tarde.'
+            });
+        }
+        logFailure('duplicate_validation', error);
+        return res.status(500).json({ error: 'Erro ao validar identificação do paciente.' });
+    }
+    if (!payload || !identification) {
+        return res.status(400).json({ error: 'Dados obrigatórios do paciente inválidos.' });
+    }
     let connection;
     try {
         connection = await pool.getConnection();
@@ -209,7 +285,9 @@ exports.previewDuplicates = async (req, res) => {
             await connection.rollback();
             return res.status(403).json({ error: 'Permissão insuficiente para gerenciar pacientes.' });
         }
-        const candidates = await potentialPatients(connection, req.tenant.clinicId, payload);
+        const candidates = await potentialPatients(
+            connection, req.tenant.clinicId, payload, 0, identification
+        );
         await connection.rollback();
         const result = duplicateResult(candidates, null);
         return res.status(200).json({
@@ -242,12 +320,16 @@ exports.listForManagement = async (req, res) => {
     try {
         const [[patients], [totals]] = await Promise.all([
             pool.execute(`
-                SELECT id, nome, email, telefone, YEAR(data_nascimento) AS ano_nascimento, status
-                FROM pacientes
-                WHERE clinica_id = ?
-                  AND (? = 'todos' OR status = ?)
-                  AND (? = '' OR nome LIKE ? OR email LIKE ? OR telefone LIKE ?)
-                ORDER BY nome, id
+                SELECT p.id, p.nome, p.email, p.telefone,
+                       YEAR(p.data_nascimento) AS ano_nascimento, p.status,
+                       COALESCE(pia.cadastro_status, 'pendente') AS cadastro_status
+                FROM pacientes p
+                LEFT JOIN pacientes_identificacao_administrativa pia
+                  ON pia.clinica_id = p.clinica_id AND pia.paciente_id = p.id
+                WHERE p.clinica_id = ?
+                  AND (? = 'todos' OR p.status = ?)
+                  AND (? = '' OR p.nome LIKE ? OR p.email LIKE ? OR p.telefone LIKE ?)
+                ORDER BY p.nome, p.id
                 LIMIT ${limit} OFFSET ${offset}
             `, params),
             pool.execute(`
@@ -265,7 +347,8 @@ exports.listForManagement = async (req, res) => {
                 email_mascarado: maskEmail(patient.email),
                 telefone_mascarado: maskPhone(patient.telefone),
                 ano_nascimento: patient.ano_nascimento === null ? null : Number(patient.ano_nascimento),
-                status: patient.status
+                status: patient.status,
+                cadastro_status: patient.cadastro_status
             })),
             paginacao: {
                 pagina: page, limite: limit, total: Number(totals[0]?.total || 0)
@@ -307,12 +390,39 @@ exports.getForManagement = async (req, res) => {
     if (!patientId) return res.status(400).json({ error: 'Paciente inválido.' });
     try {
         const [rows] = await pool.execute(`
-            SELECT id, nome, email, telefone, preferencia_contato,
-                   DATE_FORMAT(data_nascimento, '%Y-%m-%d') AS data_nascimento, status
-            FROM pacientes WHERE clinica_id = ? AND id = ? LIMIT 1
+            SELECT p.id, p.nome, p.email, p.telefone, p.preferencia_contato,
+                   DATE_FORMAT(p.data_nascimento, '%Y-%m-%d') AS data_nascimento,
+                   p.status, COALESCE(pia.cadastro_status, 'pendente') AS cadastro_status,
+                   pia.cpf_final, pia.cpf_excecao, pia.cep, pia.logradouro, pia.numero,
+                   pia.complemento, pia.bairro, pia.cidade, pia.uf, pia.endereco_excecao
+            FROM pacientes p
+            LEFT JOIN pacientes_identificacao_administrativa pia
+              ON pia.clinica_id = p.clinica_id AND pia.paciente_id = p.id
+            WHERE p.clinica_id = ? AND p.id = ? LIMIT 1
         `, [req.tenant.clinicId, patientId]);
         if (!rows[0]) return res.status(404).json({ error: 'Paciente não encontrado na clínica ativa.' });
-        return res.status(200).json({ ...rows[0], id: Number(rows[0].id) });
+        const patient = rows[0];
+        return res.status(200).json({
+            id: Number(patient.id),
+            nome: patient.nome,
+            email: patient.email,
+            telefone: patient.telefone,
+            preferencia_contato: patient.preferencia_contato,
+            data_nascimento: patient.data_nascimento,
+            status: patient.status,
+            cadastro_status: patient.cadastro_status,
+            cpf_mascarado: maskedCpf(patient.cpf_final),
+            cpf_cadastrado: Boolean(patient.cpf_final),
+            cpf_excecao: patient.cpf_excecao,
+            cep: patient.cep,
+            logradouro: patient.logradouro,
+            numero: patient.numero,
+            complemento: patient.complemento,
+            bairro: patient.bairro,
+            cidade: patient.cidade,
+            uf: patient.uf,
+            endereco_excecao: patient.endereco_excecao
+        });
     } catch (error) {
         logFailure('get_management', error);
         return res.status(500).json({ error: 'Erro ao consultar paciente.' });
@@ -320,8 +430,22 @@ exports.getForManagement = async (req, res) => {
 };
 
 exports.createPatient = async (req, res) => {
-    const payload = patientPayload(req.body);
-    if (!payload) return res.status(400).json({ error: 'Dados do paciente inválidos.' });
+    const payload = patientPayload(req.body, { requireBirthDate: true });
+    let identification;
+    try {
+        identification = protectedIdentification(req.body, req.tenant.clinicId);
+    } catch (error) {
+        if (error.code === 'PATIENT_PROTECTION_CONFIG') {
+            return res.status(503).json({
+                error: 'Proteção de documentos indisponível. Tente novamente mais tarde.'
+            });
+        }
+        logFailure('create_validation', error);
+        return res.status(500).json({ error: 'Erro ao validar identificação do paciente.' });
+    }
+    if (!payload || !identification || identification.pending) {
+        return res.status(400).json({ error: 'Dados obrigatórios do paciente inválidos.' });
+    }
     let connection;
     try {
         connection = await pool.getConnection();
@@ -335,7 +459,9 @@ exports.createPatient = async (req, res) => {
             return res.status(403).json({ error: 'Permissão insuficiente para gerenciar pacientes.' });
         }
         const reviewReason = duplicateReview(req.body);
-        const candidates = await potentialPatients(connection, req.tenant.clinicId, payload);
+        const candidates = await potentialPatients(
+            connection, req.tenant.clinicId, payload, 0, identification
+        );
         const duplicate = duplicateResult(candidates, reviewReason);
         if (duplicate.blocked) {
             await connection.rollback();
@@ -350,17 +476,34 @@ exports.createPatient = async (req, res) => {
             payload.contactPreference, payload.birthDate, payload.status
         ]);
         const patientId = Number(result.insertId);
+        await connection.execute(`
+            INSERT INTO pacientes_identificacao_administrativa (
+                clinica_id, paciente_id, cadastro_status,
+                cpf_cifrado, cpf_iv, cpf_auth_tag, cpf_busca_hash, cpf_final,
+                cpf_chave_id, cpf_excecao, cep, logradouro, numero, complemento,
+                bairro, cidade, uf, endereco_excecao, atualizado_por_usuario_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+            req.tenant.clinicId, patientId,
+            ...identificationParameters(identification), req.userId
+        ]);
         await audit(connection, req, 'paciente_criado', patientId, {
             status: payload.status, identidade_global_vinculada: false,
             revisao_duplicidade: Boolean(reviewReason), motivo_revisao: reviewReason,
-            candidatos_revisados: candidates.length
+            candidatos_revisados: candidates.length,
+            cadastro_status: identification.status,
+            cpf_protegido: Boolean(identification.protectedCpf),
+            cpf_excecao: identification.cpfException,
+            endereco_excecao: identification.addressException
         });
         await connection.commit();
         return res.status(201).json({ id: patientId, message: 'Paciente cadastrado com sucesso.' });
     } catch (error) {
         if (connection) await connection.rollback().catch(() => {});
         if (error.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({ error: 'Possível paciente duplicado nesta clínica.' });
+            return res.status(409).json({
+                error: 'Já existe paciente com dados identificadores equivalentes nesta clínica.'
+            });
         }
         logFailure('create', error);
         return res.status(500).json({ error: 'Erro ao cadastrar paciente.' });
@@ -386,29 +529,69 @@ exports.updatePatient = async (req, res) => {
             return res.status(403).json({ error: 'Permissão insuficiente para gerenciar pacientes.' });
         }
         const [rows] = await connection.execute(`
-            SELECT id, usuario_id, nome, email, telefone, preferencia_contato, data_nascimento, status
-            FROM pacientes WHERE clinica_id = ? AND id = ? FOR UPDATE
+            SELECT p.id, p.usuario_id, p.nome, p.email, p.telefone,
+                   p.preferencia_contato, p.data_nascimento, p.status,
+                   pia.paciente_id AS identificacao_paciente_id,
+                   COALESCE(pia.cadastro_status, 'pendente') AS cadastro_status,
+                   pia.cpf_cifrado, pia.cpf_iv, pia.cpf_auth_tag, pia.cpf_busca_hash,
+                   pia.cpf_final, pia.cpf_chave_id, pia.cpf_excecao,
+                   pia.cep, pia.logradouro, pia.numero, pia.complemento,
+                   pia.bairro, pia.cidade, pia.uf, pia.endereco_excecao
+            FROM pacientes p
+            LEFT JOIN pacientes_identificacao_administrativa pia
+              ON pia.clinica_id = p.clinica_id AND pia.paciente_id = p.id
+            WHERE p.clinica_id = ? AND p.id = ? FOR UPDATE
         `, [req.tenant.clinicId, patientId]);
         if (!rows[0]) {
             await connection.rollback();
             return res.status(404).json({ error: 'Paciente não encontrado na clínica ativa.' });
         }
+        const current = rows[0];
+        const keepPending = req.body?.manter_cadastro_pendente === true;
+        const pendingAllowed = keepPending && current.cadastro_status === 'pendente';
+        if (!payload.birthDate && (!pendingAllowed || current.data_nascimento)) {
+            await connection.rollback();
+            return res.status(400).json({ error: 'A data de nascimento é obrigatória.' });
+        }
+        let identification;
+        try {
+            identification = protectedIdentification(req.body, req.tenant.clinicId, {
+                existingCpf: Boolean(current.cpf_cifrado),
+                allowPending: pendingAllowed
+            });
+        } catch (error) {
+            await connection.rollback();
+            if (error.code === 'PATIENT_PROTECTION_CONFIG') {
+                return res.status(503).json({
+                    error: 'Proteção de documentos indisponível. Tente novamente mais tarde.'
+                });
+            }
+            throw error;
+        }
+        if (!identification || (identification.pending && !pendingAllowed)) {
+            await connection.rollback();
+            return res.status(400).json({
+                error: 'Complete CPF e endereço ou registre uma exceção autorizada.'
+            });
+        }
         const reviewReason = duplicateReview(req.body);
-        const candidates = await potentialPatients(connection, req.tenant.clinicId, payload, patientId);
+        const candidates = await potentialPatients(
+            connection, req.tenant.clinicId, payload, patientId, identification
+        );
         const duplicate = duplicateResult(candidates, reviewReason);
         if (duplicate.blocked) {
             await connection.rollback();
             return res.status(409).json(duplicateBody(duplicate));
         }
-        const storedBirthDate = rows[0].data_nascimento instanceof Date
-            ? rows[0].data_nascimento.toISOString().slice(0, 10)
-            : rows[0].data_nascimento;
+        const storedBirthDate = current.data_nascimento instanceof Date
+            ? current.data_nascimento.toISOString().slice(0, 10)
+            : current.data_nascimento;
         const nextValues = {
             nome: payload.name, email: payload.email, telefone: payload.phone,
             preferencia_contato: payload.contactPreference,
             data_nascimento: payload.birthDate, status: payload.status
         };
-        const storedValues = { ...rows[0], data_nascimento: storedBirthDate };
+        const storedValues = { ...current, data_nascimento: storedBirthDate };
         const changedFields = Object.keys(nextValues)
             .filter((field) => String(storedValues[field] ?? '') !== String(nextValues[field] ?? ''));
         await connection.execute(`
@@ -419,6 +602,33 @@ exports.updatePatient = async (req, res) => {
             payload.name, payload.email, payload.phone, payload.contactPreference, payload.birthDate, payload.status,
             req.tenant.clinicId, patientId
         ]);
+        if (!identification.pending) {
+            const identificationValues = identificationParameters(identification, current);
+            if (current.identificacao_paciente_id) {
+                await connection.execute(`
+                    UPDATE pacientes_identificacao_administrativa
+                    SET cadastro_status = ?, cpf_cifrado = ?, cpf_iv = ?, cpf_auth_tag = ?,
+                        cpf_busca_hash = ?, cpf_final = ?, cpf_chave_id = ?, cpf_excecao = ?,
+                        cep = ?, logradouro = ?, numero = ?, complemento = ?, bairro = ?,
+                        cidade = ?, uf = ?, endereco_excecao = ?, atualizado_por_usuario_id = ?
+                    WHERE clinica_id = ? AND paciente_id = ?
+                `, [
+                    ...identificationValues, req.userId, req.tenant.clinicId, patientId
+                ]);
+            } else {
+                await connection.execute(`
+                    INSERT INTO pacientes_identificacao_administrativa (
+                        clinica_id, paciente_id, cadastro_status,
+                        cpf_cifrado, cpf_iv, cpf_auth_tag, cpf_busca_hash, cpf_final,
+                        cpf_chave_id, cpf_excecao, cep, logradouro, numero, complemento,
+                        bairro, cidade, uf, endereco_excecao, atualizado_por_usuario_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `, [
+                    req.tenant.clinicId, patientId,
+                    ...identificationValues, req.userId
+                ]);
+            }
+        }
         const invalidatesConfirmations = changedFields.includes('telefone')
             || changedFields.includes('preferencia_contato')
             || (changedFields.includes('status') && payload.status !== 'ativo');
@@ -442,17 +652,24 @@ exports.updatePatient = async (req, res) => {
         }
         await audit(connection, req, 'paciente_atualizado', patientId, {
             campos_alterados: changedFields,
-            identidade_global_preservada: rows[0].usuario_id !== null,
+            identidade_global_preservada: current.usuario_id !== null,
             revisao_duplicidade: Boolean(reviewReason), motivo_revisao: reviewReason,
             candidatos_revisados: candidates.length,
-            confirmacoes_revogadas: revokedConfirmations
+            confirmacoes_revogadas: revokedConfirmations,
+            cadastro_status: identification.status,
+            identificacao_atualizada: !identification.pending,
+            cpf_alterado: Boolean(identification.protectedCpf),
+            cpf_excecao: identification.cpfException,
+            endereco_excecao: identification.addressException
         });
         await connection.commit();
         return res.status(200).json({ message: 'Paciente atualizado com sucesso.' });
     } catch (error) {
         if (connection) await connection.rollback().catch(() => {});
         if (error.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({ error: 'Possível paciente duplicado nesta clínica.' });
+            return res.status(409).json({
+                error: 'Já existe paciente com dados identificadores equivalentes nesta clínica.'
+            });
         }
         logFailure('update', error);
         return res.status(500).json({ error: 'Erro ao atualizar paciente.' });
@@ -559,8 +776,35 @@ exports.updatePatientStatus = async (req, res) => {
     }
 };
 
+exports.lookupCep = async (req, res) => {
+    const cep = typeof req.params?.cep === 'string' ? req.params.cep.replace(/\D/g, '') : '';
+    if (!/^\d{8}$/.test(cep)) {
+        return res.status(400).json({ error: 'CEP deve conter oito dígitos.' });
+    }
+    const result = await cepService.lookupCep(cep, {
+        rateKey: `${req.tenant.clinicId}:${req.userId}`
+    });
+    res.set?.('Cache-Control', 'no-store');
+    if (result.kind === 'limited') {
+        return res.status(429).json({ error: 'Limite de consultas de CEP atingido. Tente novamente em instantes.' });
+    }
+    if (result.kind === 'not_found') {
+        return res.status(404).json({
+            error: 'CEP não encontrado. Preencha o endereço manualmente.'
+        });
+    }
+    if (result.kind !== 'found') {
+        return res.status(503).json({
+            error: 'Consulta de CEP indisponível. Os campos informados foram preservados.'
+        });
+    }
+    return res.status(200).json(result.address);
+};
+
 exports.canonicalName = canonicalName;
 exports.duplicateResult = duplicateResult;
+exports.patientPayload = patientPayload;
+exports.protectedIdentification = protectedIdentification;
 
 exports.getPacienteDetails = async (req, res) => {
     const patientId = positiveId(req.params.id);

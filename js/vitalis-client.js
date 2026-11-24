@@ -219,6 +219,36 @@
         return Number.isSafeInteger(loaded) && loaded > 0 && loaded === selected ? loaded : null;
     }
 
+    function onlyDigits(value) {
+        return typeof value === 'string' ? value.replace(/\D/g, '') : '';
+    }
+
+    function isValidCpf(value) {
+        const cpf = onlyDigits(value);
+        if (!/^\d{11}$/.test(cpf) || /^(\d)\1{10}$/.test(cpf)) return false;
+        const verifier = (length) => {
+            let sum = 0;
+            for (let index = 0; index < length; index += 1) {
+                sum += Number(cpf[index]) * (length + 1 - index);
+            }
+            const remainder = (sum * 10) % 11;
+            return remainder === 10 ? 0 : remainder;
+        };
+        return verifier(9) === Number(cpf[9]) && verifier(10) === Number(cpf[10]);
+    }
+
+    function formatCpf(value) {
+        const cpf = onlyDigits(value).slice(0, 11);
+        return cpf.replace(/^(\d{3})(\d)/, '$1.$2')
+            .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
+            .replace(/\.(\d{3})(\d)/, '.$1-$2');
+    }
+
+    function formatCep(value) {
+        const cep = onlyDigits(value).slice(0, 8);
+        return cep.replace(/^(\d{5})(\d)/, '$1-$2');
+    }
+
     function appointmentPayload(localStart, durationMinutes, professionalId, specialtyId) {
         const duration = Number(durationMinutes);
         const professional = Number(professionalId);
@@ -310,6 +340,9 @@
         dashboardForRole,
         dashboardAgenda,
         dashboardSummary,
+        formatCep,
+        formatCpf,
+        isValidCpf,
         platformAccessState,
         matchingSelectionId,
         isPracticeOwner,

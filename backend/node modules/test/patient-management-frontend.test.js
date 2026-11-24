@@ -23,12 +23,50 @@ test('página de pacientes exige papel de gestão e não envia clinica_id', asyn
     assert.doesNotMatch(setup, /clinica_id/);
 });
 
+test('cadastro rotineiro exige identificação e mantém contato como preferência separada', async () => {
+    const [page, main] = await Promise.all([
+        fs.readFile(path.join(root, 'pacientes.html'), 'utf8'),
+        fs.readFile(path.join(root, 'js', 'main.js'), 'utf8')
+    ]);
+    for (const id of [
+        'paciente-nome', 'paciente-cpf', 'paciente-nascimento', 'paciente-cep',
+        'paciente-logradouro', 'paciente-numero', 'paciente-bairro',
+        'paciente-cidade', 'paciente-uf'
+    ]) {
+        assert.match(page, new RegExp(`id="${id}"[^>]*required`), `${id} deve ser obrigatório`);
+    }
+    assert.match(page, /id="paciente-email"[^>]*\(opcional\)|E-mail <span[^>]*>\(opcional\)/);
+    assert.match(page, /id="paciente-telefone"[^>]*type="tel"/);
+    assert.match(page, /id="paciente-preferencia-contato"/);
+    assert.match(page, /id="paciente-sem-cpf"/);
+    assert.match(page, /id="paciente-sem-endereco"/);
+    assert.match(page, /não consulta a situação na Receita Federal/);
+    assert.match(main, /VitalisCore\.isValidCpf/);
+    assert.match(main, /\/pacientes\/cep\/\$\{cep\}/);
+    assert.doesNotMatch(main, /viacep\.com\.br/);
+    assert.match(main, /const fieldSnapshots = Object\.fromEntries/);
+    assert.match(main, /input\.value === fieldSnapshots\[id\]/);
+    assert.match(main, /birthInput\.min = earliestBirth\.toISOString/);
+    assert.match(main, /birthInput\.max = today\.toISOString/);
+    assert.match(main, /manter_cadastro_pendente/);
+    assert.match(main, /cpf_mascarado/);
+});
+
+test('máscaras de CPF e CEP são determinísticas no frontend', () => {
+    assert.equal(core.formatCpf('52998224725'), '529.982.247-25');
+    assert.equal(core.isValidCpf('529.982.247-25'), true);
+    assert.equal(core.isValidCpf('111.111.111-11'), false);
+    assert.equal(core.formatCep('86300000'), '86300-000');
+});
+
 test('layout de pacientes cobre 390 e 360 px sem tabela horizontal', async () => {
     const css = await fs.readFile(path.join(root, 'css', 'dashboard.css'), 'utf8');
     assert.match(css, /\.vitalis-patient-filters/);
     assert.match(css, /@media \(max-width: 767\.98px\)[\s\S]*\.vitalis-patient-table/);
     assert.match(css, /@media \(max-width: 389\.98px\)[\s\S]*\.vitalis-patients-page/);
     assert.match(css, /grid-template-columns: minmax\(76px, \.35fr\) minmax\(0, 1fr\)/);
+    assert.match(css, /\.vitalis-address-fields[^}]*min-width: 0/);
+    assert.match(css, /\.vitalis-field-error[^}]*color: #b42318/);
 });
 
 test('layout administrativo mantém navegação rolável e ações da sessão visíveis', async () => {

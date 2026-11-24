@@ -4,10 +4,14 @@ const { test } = require('node:test');
 
 Object.assign(process.env, {
     DB_HOST: '127.0.0.1', DB_USER: 'fixture_user', DB_PASSWORD: 'fixture_password',
-    DB_DATABASE: 'fixture_database', PORT: '3000', JWT_SECRET: randomBytes(32).toString('hex')
+    DB_DATABASE: 'fixture_database', PORT: '3000', JWT_SECRET: randomBytes(32).toString('hex'),
+    PATIENT_CPF_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
+    PATIENT_CPF_INDEX_KEY: randomBytes(32).toString('base64'),
+    PATIENT_CPF_KEY_ID: 'test-key-v1'
 });
 
 const pool = require('../config/database');
+const cepService = require('../services/cep-service');
 const controller = require('../controllers/pacienteController');
 const router = require('../routes');
 
@@ -20,9 +24,15 @@ function connection(execute) {
 }
 
 function request(overrides = {}) {
+    const body = {
+        clinica_id: 999, nome: '  Maria   Silva  ', email: 'MARIA@example.test',
+        telefone: '(41) 99999-1234', data_nascimento: '1990-05-20', status: 'ativo',
+        cpf: '529.982.247-25', cep: '86300-000', logradouro: 'Rua de Teste',
+        numero: '100', complemento: '', bairro: 'Centro', cidade: 'Cornélio Procópio', uf: 'PR',
+        ...overrides.body
+    };
     return {
-        body: { clinica_id: 999, nome: '  Maria   Silva  ', email: 'MARIA@example.test', telefone: '(41) 99999-1234', data_nascimento: '1990-05-20', status: 'ativo' },
-        userId: 7, tenant: { clinicId: 11, role: 'secretaria' }, ...overrides
+        userId: 7, tenant: { clinicId: 11, role: 'secretaria' }, ...overrides, body
     };
 }
 
@@ -40,13 +50,17 @@ test('listagem é isolada e mascara dados pessoais', async (t) => {
     t.mock.method(pool, 'execute', async (sql, params) => {
         calls.push({ sql, params });
         if (/COUNT/.test(sql)) return [[{ total: 1 }]];
-        return [[{ id: 3, nome: 'Maria', email: 'maria@example.test', telefone: '41999991234', ano_nascimento: 1990, status: 'ativo' }]];
+        return [[{
+            id: 3, nome: 'Maria', email: 'maria@example.test', telefone: '41999991234',
+            ano_nascimento: 1990, status: 'ativo', cadastro_status: 'pendente'
+        }]];
     });
     const res = response();
     await controller.listForManagement({ tenant: { clinicId: 11 }, query: {} }, res);
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.pacientes[0].email_mascarado, 'm***@example.test');
     assert.equal(res.body.pacientes[0].telefone_mascarado, '***1234');
+    assert.equal(res.body.pacientes[0].cadastro_status, 'pendente');
     assert.equal('email' in res.body.pacientes[0], false);
     assert.ok(calls.every((call) => call.params[0] === 11 && /clinica_id = \?/.test(call.sql)));
 });
@@ -97,7 +111,7 @@ test('secretaria cadastra no tenant autenticado sem criar identidade global', as
         executions.push({ sql, params });
         if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
         if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
-        if (/SELECT id, nome, email/.test(sql)) return [[]];
+        if (/FROM pacientes p/.test(sql)) return [[]];
         if (/INSERT INTO pacientes/.test(sql)) return [{ insertId: 44 }];
         return [{ affectedRows: 1 }];
     });
@@ -111,6 +125,9 @@ test('secretaria cadastra no tenant autenticado sem criar identidade global', as
     assert.match(insert.sql, /VALUES \(\?, NULL/);
     assert.equal(insert.params[0], 11);
     assert.equal(executions.some((entry) => entry.params?.includes(999)), false);
+    const identification = executions.find((entry) => /INSERT INTO pacientes_identificacao/.test(entry.sql));
+    assert.ok(Buffer.isBuffer(identification.params[3]));
+    assert.equal(identification.params.includes('52998224725'), false);
     const audit = executions.find((entry) => /INSERT INTO auditoria/.test(entry.sql));
     assert.equal(audit.params.join(' ').includes('maria@example.test'), false);
 });
@@ -121,7 +138,7 @@ test('duplicidade na clínica aborta sem inserir', async (t) => {
         executions.push(sql);
         if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
         if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
-        if (/SELECT id, nome, email/.test(sql)) return [[{
+        if (/FROM pacientes p/.test(sql)) return [[{
             id: 5, nome: 'Maria Silva', email: 'maria@example.test',
             telefone: '41999991234', data_nascimento: '1990-05-20', status: 'ativo'
         }]];
@@ -158,28 +175,74 @@ test('telefone formatado é normalizado antes da detecção', () => {
     assert.equal(payload.phone, '41999991234');
 });
 
-test('nome repetido sem contato nem nascimento permanece bloqueado mesmo com revisão', async (t) => {
+test('cadastro rotineiro incompleto é bloqueado antes de consultar o banco', async (t) => {
+    const getConnection = t.mock.method(pool, 'getConnection', async () => {
+        throw new Error('não deveria consultar o banco');
+    });
+    const res = response();
+    await controller.createPatient(request({ body: {
+        nome: 'João da Silva', data_nascimento: '', cep: '', logradouro: '', numero: ''
+    } }), res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(getConnection.mock.callCount(), 0);
+});
+
+test('exceção controlada permite atendimento sem CPF ou endereço fictício', async (t) => {
     const executions = [];
-    const db = connection(async (sql) => {
-        executions.push(sql);
+    const db = connection(async (sql, params) => {
+        executions.push({ sql, params });
         if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
         if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
-        if (/SELECT id, nome, email/.test(sql)) return [[{
-            id: 5, nome: 'João da Silva', email: null, telefone: null,
-            data_nascimento: null, status: 'ativo'
-        }]];
-        throw new Error('nenhuma escrita deveria ocorrer');
+        if (/FROM pacientes p/.test(sql)) return [[]];
+        if (/INSERT INTO pacientes \(/.test(sql)) return [{ insertId: 46 }];
+        return [{ affectedRows: 1 }];
     });
     t.mock.method(pool, 'getConnection', async () => db);
     const res = response();
     await controller.createPatient(request({ body: {
-        nome: '  joao   da silva ', email: '', telefone: '', data_nascimento: '',
-        status: 'ativo', revisao_duplicidade: true, motivo_revisao: 'homonimo_confirmado'
+        nome: 'Paciente sem documento', cpf: '', cpf_excecao: 'nao_possui',
+        cep: '', logradouro: '', numero: '', complemento: '', bairro: '', cidade: '', uf: '',
+        endereco_excecao: 'sem_endereco_convencional'
     } }), res);
-    assert.equal(res.statusCode, 409);
-    assert.equal(res.body.code, 'PATIENT_DUPLICATE');
-    assert.equal(res.body.revisao_permitida, false);
-    assert.equal(executions.some((sql) => /INSERT INTO pacientes/.test(sql)), false);
+    assert.equal(res.statusCode, 201);
+    const identification = executions.find((entry) => /INSERT INTO pacientes_identificacao/.test(entry.sql));
+    assert.equal(identification.params[2], 'excecao');
+    assert.equal(identification.params[9], 'nao_possui');
+    assert.equal(identification.params[17], 'sem_endereco_convencional');
+    const audit = executions.find((entry) => /INSERT INTO auditoria/.test(entry.sql));
+    assert.match(audit.params.at(-1), /"cadastro_status":"excecao"/);
+    assert.doesNotMatch(audit.params.at(-1), /52998224725/);
+});
+
+test('paciente histórico pode ser editado sem perder vínculos e permanece pendente', async (t) => {
+    const executions = [];
+    const db = connection(async (sql, params) => {
+        executions.push({ sql, params });
+        if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
+        if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
+        if (/identificacao_paciente_id/.test(sql) && /FOR UPDATE/.test(sql)) return [[{
+            id: 77, usuario_id: null, nome: 'Paciente Histórico', email: null,
+            telefone: null, preferencia_contato: 'nenhum', data_nascimento: null,
+            status: 'ativo', cadastro_status: 'pendente', identificacao_paciente_id: null
+        }]];
+        if (/FROM pacientes p/.test(sql)) return [[]];
+        return [{ affectedRows: 1 }];
+    });
+    t.mock.method(pool, 'getConnection', async () => db);
+    const res = response();
+    await controller.updatePatient(request({
+        params: { id: '77' },
+        body: {
+            nome: 'Paciente Histórico', email: 'historico@example.test', telefone: '',
+            data_nascimento: '', cpf: '', cep: '', logradouro: '', numero: '',
+            complemento: '', bairro: '', cidade: '', uf: '',
+            manter_cadastro_pendente: true
+        }
+    }), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(executions.some((entry) => /INSERT INTO pacientes_identificacao/.test(entry.sql)), false);
+    const audit = executions.find((entry) => /INSERT INTO auditoria/.test(entry.sql));
+    assert.match(audit.params.at(-1), /"cadastro_status":"pendente"/);
 });
 
 test('homônimo com dados distintos exige revisão explícita e auditada', async (t) => {
@@ -188,7 +251,7 @@ test('homônimo com dados distintos exige revisão explícita e auditada', async
         executions.push({ sql, params });
         if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
         if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
-        if (/SELECT id, nome, email/.test(sql)) return [[{
+        if (/FROM pacientes p/.test(sql)) return [[{
             id: 5, nome: 'Maria Silva', email: null, telefone: null,
             data_nascimento: '1980-01-10', status: 'ativo'
         }]];
@@ -212,7 +275,7 @@ test('pré-verificação expõe somente candidatos mascarados da clínica ativa'
     const db = connection(async (sql, params) => {
         if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
         if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
-        if (/SELECT id, nome, email/.test(sql)) {
+        if (/FROM pacientes p/.test(sql)) {
             assert.equal(params[0], 11);
             return [[{
                 id: 5, nome: 'Maria Silva', email: 'maria@example.test',
@@ -251,7 +314,7 @@ test('edição por identificador de outra clínica retorna 404', async (t) => {
     const db = connection(async (sql) => {
         if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
         if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
-        if (/FROM pacientes WHERE/.test(sql)) return [[]];
+        if (/FROM pacientes p/.test(sql)) return [[]];
         return [{ affectedRows: 1 }];
     });
     t.mock.method(pool, 'getConnection', async () => db);
@@ -271,12 +334,13 @@ test('alteração de telefone, preferência ou inativação revoga links pendent
             executions.push({ sql, params });
             if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
             if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
-            if (/FROM pacientes WHERE clinica_id/.test(sql)) return [[{
+            if (/FROM pacientes p/.test(sql) && /FOR UPDATE/.test(sql)
+                && /identificacao_paciente_id/.test(sql)) return [[{
                 id: 77, usuario_id: null, nome: 'Maria Silva', email: 'maria@example.test',
                 telefone: '43999991234', preferencia_contato: 'whatsapp',
-                data_nascimento: '1990-05-20', status: 'ativo'
+                data_nascimento: '1990-05-20', status: 'ativo', cadastro_status: 'pendente'
             }]];
-            if (/SELECT id, nome, email/.test(sql)) return [[]];
+            if (/FROM pacientes p/.test(sql)) return [[]];
             if (/UPDATE confirmacoes_consulta cc/.test(sql)) return [{ affectedRows: 2 }];
             return [{ affectedRows: 1, insertId: 1 }];
         });
@@ -302,7 +366,7 @@ test('falha parcial provoca rollback e não confirma a transação', async (t) =
     const db = connection(async (sql) => {
         if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
         if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
-        if (/SELECT id, nome, email/.test(sql)) return [[]];
+        if (/FROM pacientes p/.test(sql)) return [[]];
         if (/INSERT INTO pacientes/.test(sql)) return [{ insertId: 44 }];
         throw new Error('falha de auditoria');
     });
@@ -333,11 +397,30 @@ test('logs de falha não expõem mensagem, SQL, parâmetros ou dados pessoais', 
     assert.doesNotMatch(serialized, /maria@example|41999991234|SELECT \*|parâmetros privados/);
 });
 
-test('rotas de gestão aceitam apenas administrador e secretaria', () => {
+test('consulta de CEP usa proxy por tenant e não recebe dados pessoais', async (t) => {
+    const lookup = t.mock.method(cepService, 'lookupCep', async (cep, options) => {
+        assert.equal(cep, '01001000');
+        assert.deepEqual(options, { rateKey: '11:7' });
+        return { kind: 'found', address: {
+            cep, logradouro: 'Praça da Sé', bairro: 'Sé', cidade: 'São Paulo', uf: 'SP'
+        } };
+    });
+    const res = response();
+    await controller.lookupCep({
+        params: { cep: '01001-000' }, tenant: { clinicId: 11 }, userId: 7,
+        body: { nome: 'não deve ser encaminhado', cpf: '52998224725' }
+    }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(lookup.mock.callCount(), 1);
+    assert.equal('nome' in res.body, false);
+    assert.equal('cpf' in res.body, false);
+});
+
+test('rotas de gestão aceitam administrador, secretaria e titular do consultório', () => {
     const routes = router.stack.filter((layer) => layer.route).map((layer) => ({
         path: layer.route.path, methods: layer.route.methods, handlers: layer.route.stack.map((item) => item.handle)
     }));
-    for (const path of ['/pacientes/gestao', '/pacientes/busca', '/pacientes/gestao/:id',
+    for (const path of ['/pacientes/gestao', '/pacientes/busca', '/pacientes/cep/:cep', '/pacientes/gestao/:id',
         '/pacientes/duplicidades', '/pacientes', '/pacientes/:id']) {
         assert.ok(routes.some((route) => route.path === path), `rota ausente: ${path}`);
     }
@@ -348,6 +431,11 @@ test('rotas de gestão aceitam apenas administrador e secretaria', () => {
         authorized({ tenant: { role } }, response(), () => { called = true; });
         assert.equal(called, true);
     }
+    let ownerCalled = false;
+    authorized({ tenant: { role: 'profissional', isPracticeOwner: true } }, response(), () => {
+        ownerCalled = true;
+    });
+    assert.equal(ownerCalled, true);
     for (const role of ['profissional', 'paciente']) {
         const res = response();
         authorized({ tenant: { role } }, res, () => {});
