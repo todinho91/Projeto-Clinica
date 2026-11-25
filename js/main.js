@@ -177,7 +177,7 @@ async function apiRequest(path, options = {}, authType = 'clinic') {
     ) {
         session.clearClinic();
         window.location.assign('select-clinic.html');
-        throw new Error('Selecione novamente uma clínica ativa.');
+        throw new Error('Selecione novamente um espaço de atendimento ativo.');
     }
     if (!response.ok) {
         const error = new Error(data.error || 'Não foi possível concluir a operação.');
@@ -206,24 +206,171 @@ function requireClinicSession(page) {
         window.location.replace('select-clinic.html');
         return null;
     }
-    if (!VitalisCore.roleCanAccessPage(session.activeClinic.papel, page)) {
-        const destination = VitalisCore.dashboardForRole(session.activeClinic.papel);
+    if (!VitalisCore.roleCanAccessPage(session.activeClinic.papel, page, session.activeClinic)) {
+        const destination = VitalisCore.dashboardForRole(session.activeClinic.papel, session.activeClinic);
         window.location.replace(destination || 'select-clinic.html');
         return null;
     }
     return session.activeClinic;
 }
 
+function renderWorkspaceNavigation(clinic) {
+    // The patient portal uses anchors inside one page, not the administrative
+    // workspace navigation shared by clinics and professional practices.
+    if (clinic?.papel === 'paciente') {
+        document.querySelectorAll('.vitalis-nav')
+            .forEach((navigation) => { navigation.dataset.ready = 'true'; });
+        return;
+    }
+    const page = currentPage();
+    const items = VitalisCore.workspaceNavigation(clinic);
+    document.querySelectorAll('.vitalis-nav').forEach((navigation) => {
+        const fragment = document.createDocumentFragment();
+        items.forEach((item) => {
+            const link = document.createElement('a');
+            link.href = item.href;
+            link.innerHTML = `<i class="bi ${item.icon}" aria-hidden="true"></i>`;
+            link.append(document.createTextNode(` ${item.label}`));
+            if (item.href === page) {
+                link.classList.add('active');
+                link.setAttribute('aria-current', 'page');
+            }
+            fragment.append(link);
+        });
+        navigation.replaceChildren(fragment);
+        navigation.dataset.ready = 'true';
+    });
+    const home = VitalisCore.dashboardForRole(clinic.papel, clinic);
+    document.querySelectorAll('.vitalis-brand').forEach((brand) => {
+        if (home) brand.href = home;
+    });
+}
+
+function applyWorkspaceCopy(clinic) {
+    const practice = clinic.tipo_contexto === 'consultorio';
+    if (!practice) return;
+    const page = currentPage();
+    const pageTitles = {
+        'agenda.html': 'Minha agenda — Vitalis',
+        'calendario.html': 'Calendário do consultório — Vitalis',
+        'configuracoes-clinica.html': 'Configurações do consultório — Vitalis',
+        'disponibilidade.html': 'Minha disponibilidade — Vitalis',
+        'equipe.html': 'Secretária e acessos — Vitalis',
+        'especialidades.html': 'Minhas especialidades — Vitalis',
+        'pacientes.html': 'Pacientes do consultório — Vitalis'
+    };
+    if (pageTitles[page]) document.title = pageTitles[page];
+    const replacements = {
+        'Clínica ativa': 'Consultório ativo',
+        'Fuso da clínica': 'Fuso do consultório',
+        'Membros da clínica': 'Equipe do consultório',
+        'Agenda da clínica': 'Minha agenda',
+        'Especialidades da clínica': 'Minhas especialidades'
+    };
+    document.querySelectorAll('[data-workspace-copy]').forEach((element) => {
+        const clinicText = element.dataset.clinicText;
+        const practiceText = element.dataset.practiceText;
+        element.textContent = practiceText || replacements[clinicText] || element.textContent;
+    });
+    const copy = {
+        'especialidades.html': {
+            '#page-title': 'Minhas especialidades',
+            '#workspace-description': 'Organize suas áreas de atuação no consultório.',
+            '#especialidades-title': 'Minhas especialidades'
+        },
+        'agenda.html': {
+            '#page-title': 'Minha agenda',
+            '#workspace-description': 'Agende e acompanhe atendimentos no fuso do consultório.'
+        },
+        'calendario.html': {
+            '#calendar-description': 'Visualização dos atendimentos autorizados no consultório.',
+            '#calendar-privacy-note': 'A agenda exibe somente consultas autorizadas do consultório. Abrir o WhatsApp prepara a mensagem, sem afirmar envio ou entrega.'
+        },
+        'dashboard-medico.html': {
+            '#proximo-atendimento-fuso': 'Fuso do consultório'
+        },
+        'disponibilidade.html': {
+            '#workspace-description': 'Defina seus horários de atendimento, descansos e bloqueios.'
+        },
+        'equipe.html': {
+            '#workspace-description': 'Convide uma secretária e controle os acessos ao consultório.',
+            '#team-list-title': 'Equipe do consultório',
+            '#team-page-title': 'Secretária e acessos',
+            '#team-invite-title': 'Convidar secretária'
+        },
+        'pacientes.html': {
+            '#workspace-description': 'Gerencie os dados administrativos dos pacientes do consultório.'
+        },
+        'configuracoes-clinica.html': {
+            '#settings-title': 'Configurações do consultório',
+            '#settings-description': 'Atualize somente os dados do consultório selecionado.',
+            '#settings-name-label': 'Nome do consultório'
+        },
+        'dashboard-secretaria.html': {
+            '#dashboard-title': 'Gestão do consultório',
+            '#dashboard-description': 'Acompanhe a operação do consultório sem misturar informações de outros espaços.',
+            '#summary-title': 'Resumo do consultório',
+            '#summary-description': 'Dados restritos ao consultório selecionado.',
+            '#dashboard-agenda-description': 'Agendar e atualizar consultas do consultório'
+        }
+    }[page] || {};
+    Object.entries(copy).forEach(([selector, text]) => {
+        const element = document.querySelector(selector);
+        if (element) element.textContent = text;
+    });
+}
+
 function applyClinicIdentity(clinic) {
     document.querySelectorAll('[data-clinic-name]').forEach((element) => {
         element.textContent = clinic.nome;
     });
-    if (clinic.papel !== 'administrador') {
+    const practiceOwner = typeof VitalisCore !== 'undefined'
+        && typeof VitalisCore.isPracticeOwner === 'function'
+        && VitalisCore.isPracticeOwner(clinic);
+    const practice = clinic.tipo_contexto === 'consultorio';
+    renderWorkspaceNavigation(clinic);
+    document.querySelectorAll('[data-user-name]').forEach((element) => {
+        element.textContent = session.user?.nome || 'profissional';
+    });
+    if (practice) {
+        document.querySelectorAll('.vitalis-brand small').forEach((element) => {
+            element.textContent = practiceOwner ? 'Consultório profissional' : 'Equipe do consultório';
+        });
+        document.querySelectorAll('.vitalis-clinic-card > span, .vitalis-topbar-title > span')
+            .forEach((element) => { element.textContent = 'Consultório ativo'; });
+        if (!practiceOwner) {
+            document.querySelectorAll('[href="#documentos"], #documentos')
+                .forEach((element) => element.remove());
+        }
+    }
+    applyWorkspaceCopy(clinic);
+    const roleElement = document.getElementById?.('clinic-role');
+    if (roleElement) roleElement.textContent = workspaceRoleLabel(clinic);
+    if (clinic.papel !== 'administrador' && !practiceOwner) {
         document.querySelectorAll('[data-admin-only]').forEach((element) => element.remove());
     }
+    const switchState = VitalisCore.workspaceSwitchState(session.clinics, clinic);
     document.querySelectorAll('[data-clinic-switch]').forEach((element) => {
-        element.hidden = clinic.papel === 'secretaria';
+        element.hidden = !switchState.visible;
+        element.setAttribute('aria-label', switchState.label);
+        const text = element.querySelector('[data-clinic-switch-label], span.d-none, strong');
+        if (text) text.textContent = switchState.label;
+        else {
+            [...element.childNodes].filter((node) => node.nodeType === 3)
+                .forEach((node) => { node.textContent = ` ${switchState.label}`; });
+        }
     });
+}
+
+function workspaceRoleLabel(clinic) {
+    if (VitalisCore.isPracticeOwner(clinic)) return 'Titular do consultório';
+    return {
+        administrador: 'Administrador da clínica',
+        secretaria: clinic?.tipo_contexto === 'consultorio'
+            ? 'Secretária autorizada' : 'Secretária da clínica',
+        profissional: 'Profissional da clínica',
+        paciente: 'Paciente'
+    }[clinic?.papel] || 'Perfil autorizado';
 }
 
 function formatDate(value) {
@@ -242,6 +389,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const page = currentPage();
     if (page === 'login.html') setupLoginPage();
     else if (page === 'register.html') setupRegisterPage();
+    else if (page === 'cadastro-profissional.html') setupProfessionalRegisterPage();
     else if (page === 'select-clinic.html') setupClinicSelectionPage();
     else if (page === 'dashboard-paciente.html') setupPacienteDashboard();
     else if (page === 'dashboard-medico.html') setupProfissionalDashboard();
@@ -257,7 +405,233 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (page === 'provisionamento-clinicas.html') setupClinicProvisioningPage();
     else if (page === 'disponibilidade.html') setupAvailabilityPage();
     else if (page === 'confirmacao-consulta.html') setupAppointmentConfirmationPage();
+    else if (page === 'consultorio.html') setupPracticePage();
+    else if (page === 'vitalis-profissional.html') setupProfessionalStartPage();
+    else if (page === 'verificacao-profissionais.html') setupProfessionalReviewPage();
 });
+
+function setupProfessionalRegisterPage() {
+    const form = document.getElementById('professional-register-form');
+    if (!form) return;
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const status = document.getElementById('professional-register-status');
+        const submit = form.querySelector('button[type="submit"]');
+        submit.disabled = true;
+        try {
+            const data = await apiRequest('/auth/register-professional', {
+                method: 'POST',
+                body: JSON.stringify({
+                    nome: document.getElementById('professional-register-name').value,
+                    email: document.getElementById('professional-register-email').value,
+                    senha: document.getElementById('professional-register-password').value,
+                    tipo_profissional: document.getElementById('professional-register-type').value,
+                    conselho_tipo: document.getElementById('professional-register-council').value,
+                    conselho_numero: document.getElementById('professional-register-number').value,
+                    conselho_uf: document.getElementById('professional-register-state').value
+                })
+            }, null);
+            form.reset();
+            showMessage(status, `${data.message} Redirecionando para o login...`, 'success');
+            setTimeout(() => window.location.assign('login.html'), 1500);
+        } catch (error) {
+            showMessage(status, error.message);
+            submit.disabled = false;
+        }
+    });
+}
+
+async function setupProfessionalReviewPage() {
+    if (!session.identityToken) {
+        window.location.replace('login.html');
+        return;
+    }
+    const filter = document.getElementById('professional-review-filter');
+    const list = document.getElementById('professional-review-list');
+    const status = document.getElementById('professional-review-status');
+    async function load() {
+        list.replaceChildren();
+        showMessage(status, 'Carregando verificações...', 'info');
+        try {
+            const identities = await apiRequest(
+                `/plataforma/profissionais/verificacoes?status=${encodeURIComponent(filter.value)}`,
+                {}, 'identity'
+            );
+            status.replaceChildren();
+            if (!identities.length) {
+                showMessage(status, 'Nenhum registro nesta situação.', 'secondary');
+                return;
+            }
+            identities.forEach((identity) => {
+                const card = document.createElement('article');
+                card.className = 'vitalis-provisioning-card';
+                const title = document.createElement('strong'); title.textContent = identity.nome;
+                const email = document.createElement('span'); email.textContent = identity.email;
+                const council = document.createElement('small');
+                council.textContent = `${identity.tipo_profissional} · ${identity.conselho_tipo} ${identity.conselho_numero}/${identity.conselho_uf}`;
+                const actions = document.createElement('div'); actions.className = 'd-flex gap-2 flex-wrap mt-2';
+                const actionButton = (label, css, nextStatus) => {
+                    const button = document.createElement('button'); button.type = 'button';
+                    button.className = `btn btn-sm ${css}`; button.textContent = label;
+                    button.addEventListener('click', async () => {
+                        const verb = nextStatus === 'verificada' ? 'verificar' : 'suspender';
+                        if (!window.confirm(`Deseja ${verb} o registro de ${identity.nome}?`)) return;
+                        button.disabled = true;
+                        try {
+                            const data = await apiRequest(
+                                `/plataforma/profissionais/${identity.usuario_id}/verificacao`,
+                                { method: 'PATCH', body: JSON.stringify({ status_verificacao: nextStatus }) },
+                                'identity'
+                            );
+                            showMessage(status, data.message, 'success');
+                            await load();
+                        } catch (error) { showMessage(status, error.message); button.disabled = false; }
+                    });
+                    actions.append(button);
+                };
+                if (identity.status_verificacao !== 'verificada') {
+                    actionButton('Verificar registro', 'btn-success', 'verificada');
+                }
+                if (identity.status_verificacao !== 'suspensa') {
+                    actionButton('Suspender', 'btn-outline-danger', 'suspensa');
+                }
+                card.append(title, email, council, actions); list.append(card);
+            });
+        } catch (error) {
+            showMessage(status, error.message);
+        }
+    }
+    filter.addEventListener('change', load);
+    document.getElementById('professional-review-refresh').addEventListener('click', load);
+    await load();
+}
+
+async function setupProfessionalStartPage() {
+    if (!session.identityToken) {
+        window.location.replace('login.html');
+        return;
+    }
+    const identityForm = document.getElementById('professional-identity-form');
+    const practiceForm = document.getElementById('practice-provision-form');
+    const identityStatus = document.getElementById('professional-identity-status');
+    const practiceStatus = document.getElementById('practice-provision-status');
+    async function refreshIdentity() {
+        try {
+            const identity = await apiRequest('/profissionais/identidade', {}, 'identity');
+            identityForm.hidden = true;
+            const labels = { pendente: 'Aguardando verificação', verificada: 'Verificada', suspensa: 'Suspensa' };
+            showMessage(identityStatus, `Identidade profissional: ${labels[identity.status_verificacao]}.`,
+                identity.status_verificacao === 'verificada' ? 'success' : 'info');
+            practiceForm.hidden = identity.status_verificacao !== 'verificada';
+        } catch (error) {
+            if (error.code === 'PROFESSIONAL_IDENTITY_NOT_FOUND') {
+                identityForm.hidden = false;
+                practiceForm.hidden = true;
+                showMessage(identityStatus, 'Cadastre seu registro para solicitar a verificação profissional.', 'info');
+                return;
+            }
+            identityForm.hidden = true; practiceForm.hidden = true;
+            showMessage(identityStatus, error.message);
+        }
+    }
+    identityForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        try {
+            const data = await apiRequest('/profissionais/identidade', {
+                method: 'POST', body: JSON.stringify({
+                    tipo_profissional: document.getElementById('identity-type').value,
+                    conselho_tipo: document.getElementById('identity-council').value,
+                    conselho_numero: document.getElementById('identity-number').value,
+                    conselho_uf: document.getElementById('identity-state').value
+                })
+            }, 'identity');
+            showMessage(identityStatus, data.message, 'success');
+            await refreshIdentity();
+        } catch (error) { showMessage(identityStatus, error.message); }
+    });
+    practiceForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!window.confirm('Criar seu consultório profissional com estes dados?')) return;
+        try {
+            const data = await apiRequest('/consultorios', {
+                method: 'POST', body: JSON.stringify({
+                    nome: document.getElementById('practice-name').value,
+                    slug: document.getElementById('practice-slug').value,
+                    timezone: document.getElementById('practice-timezone').value,
+                    nome_exibicao: document.getElementById('practice-display-name').value
+                })
+            }, 'identity');
+            showMessage(practiceStatus, `${data.message} Atualizando seus acessos...`, 'success');
+            const clinics = await apiRequest('/auth/clinics', {}, 'identity');
+            sessionStorage.setItem(VitalisCore.KEYS.clinics, JSON.stringify(clinics));
+            setTimeout(() => window.location.assign('select-clinic.html'), 700);
+        } catch (error) { showMessage(practiceStatus, error.message); }
+    });
+    await refreshIdentity();
+}
+
+async function setupPracticePage() {
+    const clinic = requireClinicSession('consultorio.html');
+    if (!clinic) return;
+    applyClinicIdentity(clinic);
+    const list = document.getElementById('practice-locations');
+    const status = document.getElementById('practice-status');
+    const form = document.getElementById('practice-location-form');
+    async function load() {
+        try {
+            const data = await apiRequest('/consultorio/contexto');
+            document.querySelectorAll('[data-practice-timezone]').forEach((item) => {
+                item.textContent = data.consultorio.timezone;
+            });
+            list.replaceChildren();
+            if (!data.locais.length) {
+                const empty = document.createElement('p');
+                empty.className = 'text-muted mb-0';
+                empty.textContent = 'Nenhum local de atendimento cadastrado.';
+                list.append(empty);
+                return;
+            }
+            data.locais.forEach((location) => {
+                const card = document.createElement('article');
+                card.className = 'vitalis-practice-location';
+                const details = document.createElement('div');
+                const title = document.createElement('strong'); title.textContent = location.nome;
+                const address = document.createElement('span');
+                address.textContent = `${location.endereco_linha} · ${location.cidade}/${location.uf}`;
+                details.append(title, address);
+                const button = document.createElement('button'); button.type = 'button';
+                button.className = 'btn btn-sm btn-outline-secondary';
+                button.textContent = location.status === 'ativo' ? 'Desativar' : 'Ativar';
+                button.addEventListener('click', async () => {
+                    try {
+                        const next = location.status === 'ativo' ? 'inativo' : 'ativo';
+                        await apiRequest(`/consultorio/locais/${location.id}/status`, {
+                            method: 'PATCH', body: JSON.stringify({ status: next })
+                        });
+                        await load();
+                    } catch (error) { showMessage(status, error.message); }
+                });
+                card.append(details, button); list.append(card);
+            });
+        } catch (error) { showMessage(status, error.message); }
+    }
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        try {
+            const data = await apiRequest('/consultorio/locais', {
+                method: 'POST', body: JSON.stringify({
+                    nome: document.getElementById('location-name').value,
+                    endereco_linha: document.getElementById('location-address').value,
+                    cidade: document.getElementById('location-city').value,
+                    uf: document.getElementById('location-state').value,
+                    cep: document.getElementById('location-postal-code').value
+                })
+            });
+            form.reset(); showMessage(status, data.message, 'success'); await load();
+        } catch (error) { showMessage(status, error.message); }
+    });
+    await load();
+}
 
 async function setupAppointmentConfirmationPage() {
     const loading = document.getElementById('confirmation-loading');
@@ -324,7 +698,8 @@ async function setupClinicSettingsPage() {
     }
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
-        if (!window.confirm('Salvar nome e fuso horário da clínica ativa?')) return;
+        const workspace = clinic.tipo_contexto === 'consultorio' ? 'consultório' : 'clínica';
+        if (!window.confirm(`Salvar nome e fuso horário do ${workspace} ativo?`)) return;
         try {
             const data = await apiRequest('/clinica/configuracoes', {
                 method: 'PATCH',
@@ -505,11 +880,8 @@ async function setupAvailabilityPage() {
     if (!clinic) return;
     applyClinicIdentity(clinic);
     document.querySelectorAll('[data-availability-home]').forEach((link) => {
-        link.href = VitalisCore.dashboardForRole(clinic.papel) || 'select-clinic.html';
+        link.href = VitalisCore.dashboardForRole(clinic.papel, clinic) || 'select-clinic.html';
     });
-    if (!['administrador', 'secretaria'].includes(clinic.papel)) {
-        document.querySelectorAll('[data-management-only]').forEach((element) => element.remove());
-    }
     const professionalSelect = document.getElementById('disponibilidade-profissional');
     const timezone = document.getElementById('disponibilidade-timezone');
     const pageStatus = document.getElementById('disponibilidade-status');
@@ -751,7 +1123,13 @@ async function setupAvailabilityPage() {
         if (!data.profissionais.length) {
             professionalSelect.append(option('', 'Nenhum profissional ativo disponível', true));
             professionalSelect.disabled = true;
-            showMessage(pageStatus, 'Nenhum profissional ativo está disponível nesta clínica.', 'secondary');
+            showMessage(
+                pageStatus,
+                clinic.tipo_contexto === 'consultorio'
+                    ? 'Nenhum profissional ativo está disponível neste consultório.'
+                    : 'Nenhum profissional ativo está disponível nesta clínica.',
+                'secondary'
+            );
             return;
         }
         professionalSelect.disabled = clinic.papel === 'profissional';
@@ -770,7 +1148,7 @@ async function setupEquipePage() {
     const status = document.getElementById('equipe-status');
     const roleSelect = document.getElementById('convite-papel');
     const roleLabels = {
-        administrador: 'Administrador', secretaria: 'Secretaria',
+        administrador: 'Administrador', secretaria: 'Secretária',
         profissional: 'Profissional', paciente: 'Paciente'
     };
     const linkLabels = {
@@ -783,10 +1161,19 @@ async function setupEquipePage() {
         aceito: ['Aceito', 'vitalis-team-badge-active'],
         revogado: ['Revogado', 'vitalis-team-badge-inactive']
     };
-    if (clinic.papel === 'secretaria') {
+    if (clinic.papel === 'secretaria' || VitalisCore.isPracticeOwner(clinic)) {
         [...roleSelect.options].forEach((option) => {
-            if (option.value !== 'profissional') option.remove();
+            const permitted = VitalisCore.isPracticeOwner(clinic) ? 'secretaria' : 'profissional';
+            if (option.value !== permitted) option.remove();
         });
+    }
+    if (VitalisCore.isPracticeOwner(clinic)) {
+        document.getElementById('institutional-professional-invite-note')?.remove();
+        const help = document.getElementById('team-invite-help');
+        if (help) {
+            help.textContent = 'No consultório, os convites são destinados somente a secretárias. '
+                + 'A titularidade e as funções clínicas permanecem com o profissional.';
+        }
     }
 
     function badge([label, css]) {
@@ -830,10 +1217,13 @@ async function setupEquipePage() {
                 person.append(personName, email);
 
                 const roleCell = setCellLabel(tableCell(roleLabels[member.papel] || member.papel), 'Papel');
-                if (clinic.papel === 'administrador' && member.status !== 'convite_pendente') {
+                const isLastActiveAdministrator = VitalisCore.isLastActiveAdministrator(member, members);
+                if (clinic.papel === 'administrador' && member.status !== 'convite_pendente'
+                    && !isLastActiveAdministrator) {
                     const select = document.createElement('select');
                     select.className = 'form-select form-select-sm vitalis-team-role-select';
                     select.setAttribute('aria-label', `Papel de ${member.nome}`);
+                    select.title = roleLabels[member.papel] || member.papel;
                     ['administrador', 'secretaria', 'profissional', 'paciente'].forEach((role) => {
                         const option = document.createElement('option');
                         option.value = role; option.textContent = roleLabels[role]; option.selected = role === member.papel;
@@ -841,6 +1231,15 @@ async function setupEquipePage() {
                     });
                     select.addEventListener('change', () => {
                         const nextRole = select.value;
+                        if (VitalisCore.isLastActiveAdministrator(member, members)) {
+                            showMessage(
+                                status,
+                                'Mantenha outro administrador ativo antes de transferir este papel. A equipe será atualizada.',
+                                'warning'
+                            );
+                            load();
+                            return;
+                        }
                         if (!window.confirm(`Alterar o papel de ${member.nome} para ${roleLabels[nextRole]}?`)) {
                             select.value = member.papel;
                             return;
@@ -848,9 +1247,30 @@ async function setupEquipePage() {
                         action(
                             `/equipe/vinculos/${member.id}/papel`, 'PATCH', { papel: nextRole },
                             `Papel de ${member.nome} atualizado.`
-                        ).catch((error) => { showMessage(status, error.message); load(); });
+                        ).catch((error) => {
+                            const lastAdministratorConflict = error.message
+                                .includes('A clínica deve manter ao menos um administrador ativo.');
+                            showMessage(
+                                status,
+                                lastAdministratorConflict
+                                    ? 'Outro administrador ativo é necessário. A equipe foi atualizada antes de nova tentativa.'
+                                    : error.message,
+                                lastAdministratorConflict ? 'warning' : 'danger'
+                            );
+                            load();
+                        });
                     });
                     roleCell.replaceChildren(select);
+                } else if (isLastActiveAdministrator) {
+                    const roleReadOnly = document.createElement('div');
+                    roleReadOnly.className = 'vitalis-team-role-readonly';
+                    roleReadOnly.textContent = roleLabels[member.papel] || member.papel;
+                    const roleNote = document.createElement('small');
+                    roleNote.className = 'vitalis-team-role-lock-note';
+                    roleNote.textContent = 'Mantenha outro administrador ativo antes de transferir este papel.';
+                    const rolePresentation = document.createElement('div');
+                    rolePresentation.append(roleReadOnly, roleNote);
+                    roleCell.replaceChildren(rolePresentation);
                 }
                 const deliveryLabel = {
                     not_requested: 'Envio pendente',
@@ -889,7 +1309,8 @@ async function setupEquipePage() {
                     actions.append(button);
                 };
                 const canManageMember = clinic.papel === 'administrador'
-                    || (clinic.papel === 'secretaria' && member.papel === 'profissional');
+                    || (clinic.papel === 'secretaria' && member.papel === 'profissional')
+                    || (VitalisCore.isPracticeOwner(clinic) && member.papel === 'secretaria');
                 if (canManageMember && member.status === 'convite_pendente') {
                     if (member.convite_id && member.convite_status === 'pendente') {
                         addButton('Reenviar', 'btn-outline-primary', () => {
@@ -916,14 +1337,54 @@ async function setupEquipePage() {
                         ).catch((error) => showMessage(status, error.message)));
                     }
                 }
-                if (canManageMember && member.status === 'ativo') addButton('Desativar', 'btn-outline-danger', () => {
-                    if (window.confirm(`Desativar o acesso de ${member.nome}? As sessões desse vínculo serão encerradas.`)) {
-                        action(
-                            `/equipe/vinculos/${member.id}/status`, 'PATCH', {status:'inativo'},
-                            `Acesso de ${member.nome} desativado.`
-                        ).catch((error) => showMessage(status, error.message));
+                if (canManageMember && member.status === 'ativo') {
+                    const practiceSecretary = VitalisCore.isPracticeOwner(clinic)
+                        && member.papel === 'secretaria';
+                    const isLastAdministrator = VitalisCore.isLastActiveAdministrator(member, members);
+                    if (!isLastAdministrator) {
+                        const actionLabel = practiceSecretary ? 'Desativar acesso' : 'Desativar';
+                        addButton(actionLabel, 'btn-outline-danger', () => {
+                            if (window.confirm(`${actionLabel} de ${member.nome}? As sessões desse vínculo serão encerradas e o histórico será preservado.`)) {
+                                action(
+                                    `/equipe/vinculos/${member.id}/status`, 'PATCH', {status:'inativo'},
+                                    `Acesso de ${member.nome} desativado. O histórico foi preservado.`
+                                ).catch((error) => showMessage(status, error.message));
+                            }
+                        });
                     }
-                });
+                }
+                if (canManageMember && VitalisCore.isPracticeOwner(clinic)
+                    && member.papel === 'secretaria' && member.status === 'ativo') {
+                    const delegation = document.createElement('label');
+                    delegation.className = 'vitalis-team-delegation form-check form-switch';
+                    const input = document.createElement('input');
+                    input.type = 'checkbox';
+                    input.className = 'form-check-input';
+                    input.checked = member.gerenciar_disponibilidade === true;
+                    input.setAttribute('aria-label', `Permitir que ${member.nome} altere a disponibilidade`);
+                    const label = document.createElement('span');
+                    label.textContent = 'Gerenciar disponibilidade';
+                    input.addEventListener('change', () => {
+                        const next = input.checked;
+                        if (!window.confirm(next
+                            ? `Permitir que ${member.nome} altere horários e bloqueios?`
+                            : `Remover de ${member.nome} a permissão de alterar horários?`)) {
+                            input.checked = !next;
+                            return;
+                        }
+                        input.disabled = true;
+                        action(
+                            `/equipe/vinculos/${member.id}/permissoes`,
+                            'PATCH',
+                            { gerenciar_disponibilidade: next }
+                        ).catch((error) => {
+                            showMessage(status, error.message);
+                            load();
+                        });
+                    });
+                    delegation.append(input, label);
+                    actions.append(delegation);
+                }
                 if (canManageMember && member.status === 'inativo') addButton('Reativar', 'btn-outline-success', () => {
                     if (window.confirm(`Reativar o acesso de ${member.nome} como ${roleLabels[member.papel]}?`)) {
                         action(
@@ -1024,7 +1485,7 @@ function setupLoginPage() {
                     method: 'POST', body: JSON.stringify({ clinica_id: entry.clinicId })
                 }, 'identity');
                 session.saveClinic(selected);
-                const destination = VitalisCore.dashboardForRole(selected.clinica.papel);
+                const destination = VitalisCore.dashboardForRole(selected.clinica.papel, selected.clinica);
                 if (!destination) throw new Error('Papel sem painel disponível.');
                 window.location.assign(destination);
                 return;
@@ -1060,13 +1521,22 @@ async function setupClinicSelectionPage() {
         if (clinics.length === 0) {
             select.disabled = true;
             document.querySelector('#clinic-form button[type="submit"]').disabled = true;
-            showMessage(
-                status,
-                mayProvision
-                    ? 'Nenhuma clínica ativa vinculada. Você pode provisionar uma nova clínica.'
-                    : 'Nenhuma clínica ativa vinculada ao usuário.',
-                mayProvision ? 'primary' : 'danger'
-            );
+            let professionalMessage = null;
+            if (!mayProvision) {
+                try {
+                    const identity = await apiRequest('/profissionais/identidade', {}, 'identity');
+                    const labels = {
+                        pendente: 'Seu registro profissional aguarda verificação.',
+                        verificada: 'Seu registro está verificado. Crie seu consultório no Vitalis Profissional.',
+                        suspensa: 'Seu registro profissional está suspenso. Entre em contato com o suporte.'
+                    };
+                    professionalMessage = labels[identity.status_verificacao];
+                } catch { /* Conta sem identidade profissional. */ }
+            }
+            showMessage(status, mayProvision
+                ? 'Nenhuma clínica ativa vinculada. Você pode provisionar uma nova clínica.'
+                : professionalMessage || 'Nenhuma clínica ativa vinculada ao usuário.',
+            mayProvision || professionalMessage ? 'primary' : 'danger');
         }
     } catch (error) {
         showMessage(status, error.message);
@@ -1080,7 +1550,7 @@ async function setupClinicSelectionPage() {
                 body: JSON.stringify({ clinica_id: Number(select.value) })
             }, 'identity');
             session.saveClinic(data);
-            const destination = VitalisCore.dashboardForRole(data.clinica.papel);
+            const destination = VitalisCore.dashboardForRole(data.clinica.papel, data.clinica);
             if (!destination) throw new Error('Papel sem painel disponível.');
             window.location.assign(destination);
         } catch (error) {
@@ -1428,7 +1898,8 @@ async function setupProfissionalDashboard() {
             || String(left.inicio_local).localeCompare(String(right.inicio_local)))[0];
         nextContent.replaceChildren();
         document.getElementById('proximo-atendimento-fuso').textContent = next?.timezone
-            ? `Fuso: ${next.timezone}` : 'Fuso da clínica';
+            ? `Fuso: ${next.timezone}`
+            : clinic.tipo_contexto === 'consultorio' ? 'Fuso do consultório' : 'Fuso da clínica';
         if (!next) {
             const empty = document.createElement('p');
             empty.className = 'text-muted mb-0';
@@ -1543,12 +2014,10 @@ async function setupAdministracaoDashboard() {
     const clinic = requireClinicSession('dashboard-secretaria.html');
     if (!clinic) return;
     applyClinicIdentity(clinic);
-    document.getElementById('clinic-role').textContent = clinic.papel === 'administrador'
-        ? 'Administrador da clínica'
-        : 'Secretaria da clínica';
-    document.getElementById('dashboard-title').textContent = clinic.papel === 'administrador'
-        ? 'Administração da clínica'
-        : 'Painel da secretaria';
+    document.getElementById('clinic-role').textContent = workspaceRoleLabel(clinic);
+    document.getElementById('dashboard-title').textContent = clinic.tipo_contexto === 'consultorio'
+        ? 'Gestão do consultório'
+        : clinic.papel === 'administrador' ? 'Administração da clínica' : 'Painel da secretaria';
     const summaryStatus = document.getElementById('resumo-status');
     try {
         const [professionals, appointments] = await Promise.all([
@@ -1611,13 +2080,18 @@ async function setupCalendarPage() {
     if (!clinic) return;
     applyClinicIdentity(clinic);
     const isProfessional = clinic.papel === 'profissional';
-    document.querySelectorAll(isProfessional ? '[data-management-only]' : '[data-professional-only]')
-        .forEach((element) => element.remove());
+    const practice = clinic.tipo_contexto === 'consultorio';
     document.getElementById('calendar-role').textContent = isProfessional
-        ? 'Agenda do profissional' : clinic.papel === 'administrador' ? 'Administrador da clínica' : 'Secretaria da clínica';
-    document.getElementById('calendar-description').textContent = isProfessional
-        ? 'Seus atendimentos na clínica ativa, no fuso configurado pela clínica.'
-        : 'Atendimentos autorizados da clínica ativa, com filtros por profissional e especialidade.';
+        ? practice ? 'Titular do consultório' : 'Agenda do profissional'
+        : practice ? 'Secretária autorizada' : clinic.papel === 'administrador'
+            ? 'Administrador da clínica' : 'Secretária da clínica';
+    document.getElementById('calendar-description').textContent = practice
+        ? isProfessional
+            ? 'Seus atendimentos no consultório, no fuso configurado por você.'
+            : 'Atendimentos autorizados do consultório, com filtros administrativos.'
+        : isProfessional
+            ? 'Seus atendimentos na clínica ativa, no fuso configurado pela clínica.'
+            : 'Atendimentos autorizados da clínica ativa, com filtros por profissional e especialidade.';
 
     const grid = document.getElementById('calendar-grid');
     const periodLabel = document.getElementById('calendar-period-label');
@@ -1957,8 +2431,7 @@ async function setupAppointmentsPage() {
     const clinic = requireClinicSession('agenda.html');
     if (!clinic) return;
     applyClinicIdentity(clinic);
-    document.getElementById('clinic-role').textContent = clinic.papel === 'administrador'
-        ? 'Administrador da clínica' : 'Secretaria da clínica';
+    document.getElementById('clinic-role').textContent = workspaceRoleLabel(clinic);
 
     const form = document.getElementById('consulta-form');
     const formStatus = document.getElementById('consulta-form-status');
@@ -2286,8 +2759,7 @@ async function setupPatientsPage() {
     const clinic = requireClinicSession('pacientes.html');
     if (!clinic) return;
     applyClinicIdentity(clinic);
-    document.getElementById('clinic-role').textContent = clinic.papel === 'administrador'
-        ? 'Administrador da clínica' : 'Secretaria da clínica';
+    document.getElementById('clinic-role').textContent = workspaceRoleLabel(clinic);
 
     const form = document.getElementById('paciente-form');
     const list = document.getElementById('pacientes-lista');
@@ -2318,7 +2790,7 @@ async function setupPatientsPage() {
     }
 
     function setEditActionsDisabled(disabled) {
-        list.querySelectorAll('[data-patient-edit]').forEach((button) => {
+        list.querySelectorAll('[data-patient-edit], [data-patient-status]').forEach((button) => {
             button.disabled = disabled;
         });
     }
@@ -2326,7 +2798,7 @@ async function setupPatientsPage() {
     function statusBadge(status) {
         const badge = document.createElement('span');
         badge.className = `vitalis-status ${status === 'ativo' ? 'vitalis-status-confirmada' : 'vitalis-status-inativo'}`;
-        badge.textContent = status === 'ativo' ? 'Ativo' : 'Inativo';
+        badge.textContent = status === 'ativo' ? 'Ativo' : 'Arquivado';
         return badge;
     }
 
@@ -2460,11 +2932,44 @@ async function setupPatientsPage() {
         }
     }
 
+    async function changePatientStatus(patient) {
+        if (!mutationLock.tryBegin()) return;
+        const archive = patient.status === 'ativo';
+        const nextStatus = archive ? 'inativo' : 'ativo';
+        const confirmation = archive
+            ? `Arquivar ${patient.nome}? Novos agendamentos serão bloqueados, mas consultas e históricos serão preservados.`
+            : `Reativar ${patient.nome} para permitir novos agendamentos?`;
+        if (!window.confirm(confirmation)) {
+            mutationLock.end();
+            return;
+        }
+        editGate.invalidate();
+        clearPatientForm();
+        setFormDisabled(true);
+        setEditActionsDisabled(true);
+        try {
+            const result = await apiRequest(`/pacientes/${patient.id}/status`, {
+                method: 'PATCH',
+                body: JSON.stringify({ status: nextStatus })
+            });
+            await loadPatients();
+            showMessage(listStatus, result.message, 'success');
+        } catch (error) {
+            showMessage(listStatus, error.message);
+        } finally {
+            mutationLock.end();
+            setFormDisabled(false);
+            setEditActionsDisabled(false);
+        }
+    }
+
     function render(patients) {
         list.replaceChildren();
         if (!patients.length) {
             const row = document.createElement('tr');
-            const cell = tableCell('Nenhum paciente encontrado nesta clínica.');
+            const cell = tableCell(clinic.tipo_contexto === 'consultorio'
+                ? 'Nenhum paciente encontrado neste consultório.'
+                : 'Nenhum paciente encontrado nesta clínica.');
             cell.colSpan = 6;
             cell.className = 'text-center py-4 text-muted';
             row.append(cell);
@@ -2500,7 +3005,21 @@ async function setupPatientsPage() {
             edit.innerHTML = '<i class="bi bi-pencil"></i> Editar';
             edit.setAttribute('aria-label', `Editar ${patient.nome}`);
             edit.addEventListener('click', () => startEdit(patient.id));
-            actions.append(edit);
+            const statusAction = document.createElement('button');
+            statusAction.type = 'button';
+            statusAction.className = patient.status === 'ativo'
+                ? 'btn btn-sm btn-outline-danger' : 'btn btn-sm btn-outline-success';
+            statusAction.dataset.patientStatus = '';
+            statusAction.disabled = mutationLock.active;
+            statusAction.innerHTML = patient.status === 'ativo'
+                ? '<i class="bi bi-archive"></i> Arquivar'
+                : '<i class="bi bi-arrow-counterclockwise"></i> Reativar';
+            statusAction.setAttribute(
+                'aria-label',
+                `${patient.status === 'ativo' ? 'Arquivar' : 'Reativar'} ${patient.nome}`
+            );
+            statusAction.addEventListener('click', () => changePatientStatus(patient));
+            actions.append(edit, statusAction);
             row.append(actions);
             list.append(row);
         });
@@ -2591,9 +3110,7 @@ async function setupGestaoProfissionaisPage() {
     const clinic = requireClinicSession('profissionais.html');
     if (!clinic) return;
     applyClinicIdentity(clinic);
-    document.getElementById('clinic-role').textContent = clinic.papel === 'administrador'
-        ? 'Administrador da clínica'
-        : 'Secretaria da clínica';
+    document.getElementById('clinic-role').textContent = workspaceRoleLabel(clinic);
 
     const form = document.getElementById('profissional-form');
     const formStatus = document.getElementById('profissional-form-status');
@@ -2815,9 +3332,7 @@ async function setupGestaoEspecialidadesPage() {
     const clinic = requireClinicSession('especialidades.html');
     if (!clinic) return;
     applyClinicIdentity(clinic);
-    document.getElementById('clinic-role').textContent = clinic.papel === 'administrador'
-        ? 'Administrador da clínica'
-        : 'Secretaria da clínica';
+    document.getElementById('clinic-role').textContent = workspaceRoleLabel(clinic);
 
     const form = document.getElementById('especialidade-form');
     const nameInput = document.getElementById('especialidade-nome');
@@ -2857,7 +3372,9 @@ async function setupGestaoEspecialidadesPage() {
         table.replaceChildren();
         if (specialties.length === 0) {
             const row = document.createElement('tr');
-            const cell = tableCell('Nenhuma especialidade cadastrada nesta clínica.');
+            const cell = tableCell(clinic.tipo_contexto === 'consultorio'
+                ? 'Nenhuma área de atuação cadastrada neste consultório.'
+                : 'Nenhuma especialidade cadastrada nesta clínica.');
             cell.colSpan = 4;
             cell.className = 'text-center py-4 text-muted';
             row.append(cell);

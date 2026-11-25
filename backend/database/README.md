@@ -156,3 +156,9 @@ A branch de integração adapta o backend ao novo esquema, mas a compatibilidade
 - Não compartilhe `.env`.
 - Não altere migrations já aplicadas.
 - Faça backup antes de futuras migrations em ambientes persistentes.
+
+### Migration 012 — Consultório profissional
+
+`012_professional_practices.sql` adiciona identidade profissional verificável, marcação
+explícita de tenants individuais e locais físicos de atendimento. Ela não reclassifica
+clínicas existentes e não deve ser aplicada automaticamente em bancos de demonstração.

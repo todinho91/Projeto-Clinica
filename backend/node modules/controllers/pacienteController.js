@@ -102,16 +102,28 @@ async function lockActiveClinic(connection, clinicId) {
     return clinics.length > 0;
 }
 
-async function operatorCanManage(connection, clinicId, userId) {
+async function operatorCanManage(connection, clinicId, userId, membershipVersion) {
     const [rows] = await connection.execute(`
         SELECT cu.id
         FROM clinica_usuarios cu
         JOIN usuarios u ON u.id = cu.usuario_id
+        JOIN clinicas c ON c.id = cu.clinica_id AND c.status = 'ativa'
         WHERE cu.clinica_id = ? AND cu.usuario_id = ?
-          AND cu.papel IN ('administrador', 'secretaria')
+          AND (cu.papel IN ('administrador', 'secretaria') OR (
+                cu.papel = 'profissional' AND EXISTS (
+                    SELECT 1 FROM consultorios_profissionais cp
+                    JOIN identidades_profissionais ip
+                      ON ip.usuario_id = cp.titular_usuario_id
+                     AND ip.status_verificacao = 'verificada'
+                    WHERE cp.clinica_id = cu.clinica_id
+                      AND cp.titular_usuario_id = cu.usuario_id
+                      AND cp.status = 'ativo'
+                )
+          ))
           AND cu.status = 'ativo' AND u.status = 'ativo'
+          AND cu.sessao_versao = ?
         LIMIT 1 FOR UPDATE
-    `, [clinicId, userId]);
+    `, [clinicId, userId, membershipVersion]);
     return rows.length > 0;
 }
 
@@ -193,7 +205,7 @@ exports.previewDuplicates = async (req, res) => {
             await connection.rollback();
             return res.status(409).json({ error: 'Clínica ativa não disponível.' });
         }
-        if (!(await operatorCanManage(connection, req.tenant.clinicId, req.userId))) {
+        if (!(await operatorCanManage(connection, req.tenant.clinicId, req.userId, req.auth?.membershipVersion))) {
             await connection.rollback();
             return res.status(403).json({ error: 'Permissão insuficiente para gerenciar pacientes.' });
         }
@@ -318,7 +330,7 @@ exports.createPatient = async (req, res) => {
             await connection.rollback();
             return res.status(409).json({ error: 'Clínica ativa não disponível.' });
         }
-        if (!(await operatorCanManage(connection, req.tenant.clinicId, req.userId))) {
+        if (!(await operatorCanManage(connection, req.tenant.clinicId, req.userId, req.auth?.membershipVersion))) {
             await connection.rollback();
             return res.status(403).json({ error: 'Permissão insuficiente para gerenciar pacientes.' });
         }
@@ -369,7 +381,7 @@ exports.updatePatient = async (req, res) => {
             await connection.rollback();
             return res.status(409).json({ error: 'Clínica ativa não disponível.' });
         }
-        if (!(await operatorCanManage(connection, req.tenant.clinicId, req.userId))) {
+        if (!(await operatorCanManage(connection, req.tenant.clinicId, req.userId, req.auth?.membershipVersion))) {
             await connection.rollback();
             return res.status(403).json({ error: 'Permissão insuficiente para gerenciar pacientes.' });
         }
@@ -449,6 +461,104 @@ exports.updatePatient = async (req, res) => {
     }
 };
 
+exports.updatePatientStatus = async (req, res) => {
+    const patientId = positiveId(req.params.id);
+    const status = req.body?.status;
+    if (!patientId || !['ativo', 'inativo'].includes(status)) {
+        return res.status(400).json({ error: 'Paciente ou situação inválida.' });
+    }
+    let connection;
+    try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        if (!(await lockActiveClinic(connection, req.tenant.clinicId))) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'Clínica ativa não disponível.' });
+        }
+        if (!(await operatorCanManage(
+            connection,
+            req.tenant.clinicId,
+            req.userId,
+            req.auth?.membershipVersion
+        ))) {
+            await connection.rollback();
+            return res.status(403).json({
+                error: 'Permissão insuficiente para gerenciar pacientes.'
+            });
+        }
+        const [rows] = await connection.execute(`
+            SELECT id, status
+            FROM pacientes
+            WHERE clinica_id = ? AND id = ?
+            FOR UPDATE
+        `, [req.tenant.clinicId, patientId]);
+        const patient = rows[0];
+        if (!patient) {
+            await connection.rollback();
+            return res.status(404).json({
+                error: 'Paciente não encontrado na clínica ativa.'
+            });
+        }
+        if (patient.status === status) {
+            await connection.rollback();
+            return res.status(200).json({
+                message: status === 'ativo'
+                    ? 'O paciente já está ativo.' : 'O paciente já está arquivado.'
+            });
+        }
+        let revokedConfirmations = 0;
+        if (status === 'inativo') {
+            await connection.execute(`INSERT INTO confirmacoes_consulta_eventos
+                (clinica_id, confirmacao_id, evento, origem, usuario_id, metadados)
+                SELECT cc.clinica_id, cc.id, 'revogada', 'operador', ?,
+                       JSON_OBJECT('motivo', 'paciente_arquivado')
+                FROM confirmacoes_consulta cc
+                JOIN consultas c
+                  ON c.clinica_id = cc.clinica_id AND c.id = cc.consulta_id
+                WHERE cc.clinica_id = ? AND c.paciente_id = ?
+                  AND cc.estado = 'preparada'`,
+            [req.userId, req.tenant.clinicId, patientId]);
+            const [revoked] = await connection.execute(`UPDATE confirmacoes_consulta cc
+                JOIN consultas c
+                  ON c.clinica_id = cc.clinica_id AND c.id = cc.consulta_id
+                SET cc.estado = 'revogada', cc.revogado_em = UTC_TIMESTAMP(6),
+                    cc.motivo_revogacao = 'paciente_arquivado'
+                WHERE cc.clinica_id = ? AND c.paciente_id = ?
+                  AND cc.estado = 'preparada'`,
+            [req.tenant.clinicId, patientId]);
+            revokedConfirmations = Number(revoked.affectedRows || 0);
+        }
+        await connection.execute(`
+            UPDATE pacientes SET status = ?
+            WHERE clinica_id = ? AND id = ?
+        `, [status, req.tenant.clinicId, patientId]);
+        await audit(
+            connection,
+            req,
+            status === 'ativo' ? 'paciente_reativado' : 'paciente_arquivado',
+            patientId,
+            {
+                status_anterior: patient.status,
+                status_novo: status,
+                confirmacoes_revogadas: revokedConfirmations,
+                historico_preservado: true
+            }
+        );
+        await connection.commit();
+        return res.status(200).json({
+            message: status === 'ativo'
+                ? 'Paciente reativado com sucesso.'
+                : 'Paciente arquivado. Consultas e históricos foram preservados.'
+        });
+    } catch (error) {
+        if (connection) await connection.rollback().catch(() => {});
+        logFailure('update_status', error);
+        return res.status(500).json({ error: 'Erro ao alterar a situação do paciente.' });
+    } finally {
+        connection?.release();
+    }
+};
+
 exports.canonicalName = canonicalName;
 exports.duplicateResult = duplicateResult;
 
@@ -509,12 +619,19 @@ exports.getPacienteDetails = async (req, res) => {
             ORDER BY c.inicio_em DESC
         `, [clinicId, patientId]);
 
-        const [documentos] = await pool.execute(`
-            SELECT id, titulo, mime_type, tamanho_bytes, status, criado_em
-            FROM documentos_clinicos
-            WHERE clinica_id = ? AND paciente_id = ?
-            ORDER BY criado_em DESC
-        `, [clinicId, patientId]);
+        // A secretária do consultório recebe somente os dados administrativos.
+        // A clínica institucional mantém o comportamento já publicado, enquanto
+        // o consultório impede que uma delegação administrativa amplie o acesso
+        // para documentos clínicos.
+        let documentos = [];
+        if (!(req.tenant.isPractice && req.tenant.role === 'secretaria')) {
+            [documentos] = await pool.execute(`
+                SELECT id, titulo, mime_type, tamanho_bytes, status, criado_em
+                FROM documentos_clinicos
+                WHERE clinica_id = ? AND paciente_id = ?
+                ORDER BY criado_em DESC
+            `, [clinicId, patientId]);
+        }
 
         return res.status(200).json({
             info: patientRows[0],

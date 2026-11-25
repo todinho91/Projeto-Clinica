@@ -20,6 +20,7 @@ function response() {
 async function resetSchema(connection, database) {
     await confirmAvailabilityTestEnvironment(connection, database);
     const tables = [
+        'consultorio_delegacoes', 'consultorio_locais', 'consultorios_profissionais', 'identidades_profissionais',
         'auditoria_plataforma', 'convites_clinica', 'bloqueios_profissional',
         'disponibilidades_profissional', 'auditoria', 'documentos_clinicos', 'consultas_historico', 'consultas',
         'pacientes', 'profissional_especialidades', 'profissionais', 'especialidades',
@@ -82,13 +83,23 @@ test('MySQL 8 valida disponibilidade, fuso, concorrência, rollback e isolamento
         `, [southId, profSouthUser]);
         const northProfessionalId = Number(northProfessional.insertId);
         const southProfessionalId = Number(southProfessional.insertId);
+        const [[adminMembership]] = await setup.execute(`
+            SELECT sessao_versao
+            FROM clinica_usuarios
+            WHERE clinica_id = ? AND usuario_id = ? AND papel = 'administrador'
+        `, [northId, adminNorth]);
+        const adminRequest = {
+            userId: adminNorth,
+            auth: { membershipVersion: Number(adminMembership.sessao_versao) },
+            tenant: { clinicId: northId, role: 'administrador', isPractice: false }
+        };
 
         pool = require('../config/database');
         const controller = require('../controllers/disponibilidadeController');
         const weekly = response();
         await controller.replaceWeeklyAvailability({
-            params: { professionalId: String(northProfessionalId) }, userId: adminNorth,
-            tenant: { clinicId: northId, role: 'administrador' },
+            ...adminRequest,
+            params: { professionalId: String(northProfessionalId) },
             body: { intervalos: [
                 { dia_semana: 1, tipo: 'atendimento', inicio: '08:00', fim: '12:00' },
                 { dia_semana: 1, tipo: 'descanso', inicio: '12:00', fim: '13:00' },
@@ -105,8 +116,8 @@ test('MySQL 8 valida disponibilidade, fuso, concorrência, rollback e isolamento
         assert.equal(crossTenant.statusCode, 404);
 
         const blockRequest = {
-            params: { professionalId: String(northProfessionalId) }, userId: adminNorth,
-            tenant: { clinicId: northId, role: 'administrador' },
+            ...adminRequest,
+            params: { professionalId: String(northProfessionalId) },
             body: {
                 tipo: 'indisponibilidade', inicio_local: '2032-05-10T09:00',
                 fim_local: '2032-05-10T11:00', motivo: 'Teste concorrente'
@@ -138,8 +149,8 @@ test('MySQL 8 valida disponibilidade, fuso, concorrência, rollback e isolamento
         const rollback = response();
         try {
             await controller.replaceWeeklyAvailability({
-                params: { professionalId: String(northProfessionalId) }, userId: adminNorth,
-                tenant: { clinicId: northId, role: 'administrador' },
+                ...adminRequest,
+                params: { professionalId: String(northProfessionalId) },
                 body: { intervalos: [
                     { dia_semana: 2, tipo: 'atendimento', inicio: '10:00', fim: '16:00' }
                 ] }

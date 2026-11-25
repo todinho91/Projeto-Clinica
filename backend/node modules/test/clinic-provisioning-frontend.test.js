@@ -70,5 +70,5 @@ test('painel mantém conteúdo protegido oculto até confirmar autorização', a
 test('seleção sem clínicas usa estado informativo para operador autorizado', async () => {
     const main = await fs.readFile(path.join(root, 'js', 'main.js'), 'utf8');
     assert.match(main, /Nenhuma clínica ativa vinculada\. Você pode provisionar uma nova clínica\./);
-    assert.match(main, /mayProvision \? 'primary' : 'danger'/);
+    assert.match(main, /mayProvision \|\| professionalMessage \? 'primary' : 'danger'/);
 });

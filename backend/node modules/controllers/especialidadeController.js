@@ -20,6 +20,38 @@ async function audit(connection, req, action, specialtyId, metadata = {}) {
     `, [req.tenant.clinicId, req.userId, action, specialtyId, JSON.stringify(metadata)]);
 }
 
+async function lockAuthorizedManager(connection, req) {
+    const [rows] = await connection.execute(`
+        SELECT cu.papel, cp.clinica_id AS consultorio_id,
+               p.id AS titular_profissional_id,
+               CASE WHEN cp.titular_usuario_id = cu.usuario_id
+                          AND cp.status = 'ativo'
+                          AND ip.status_verificacao = 'verificada'
+                    THEN 1 ELSE 0 END AS consultorio_titular
+        FROM clinica_usuarios cu
+        JOIN usuarios u ON u.id = cu.usuario_id AND u.status = 'ativo'
+        JOIN clinicas c ON c.id = cu.clinica_id AND c.status = 'ativa'
+        LEFT JOIN consultorios_profissionais cp ON cp.clinica_id = cu.clinica_id
+        LEFT JOIN identidades_profissionais ip ON ip.usuario_id = cp.titular_usuario_id
+        LEFT JOIN profissionais p ON p.clinica_id = cp.clinica_id
+          AND p.usuario_id = cp.titular_usuario_id AND p.status = 'ativo'
+        WHERE cu.clinica_id = ? AND cu.usuario_id = ? AND cu.papel = ?
+          AND cu.status = 'ativo' AND cu.sessao_versao = ?
+        FOR UPDATE
+    `, [req.tenant.clinicId, req.userId, req.tenant.role, req.auth?.membershipVersion]);
+    const actor = rows[0];
+    if (!actor) return null;
+    const isPractice = actor.consultorio_id != null;
+    if (isPractice && (!actor.consultorio_titular || actor.papel !== 'profissional'
+        || !actor.titular_profissional_id)) return null;
+    if (!isPractice && !['administrador', 'secretaria'].includes(actor.papel)) return null;
+    return {
+        isPractice,
+        professionalId: actor.titular_profissional_id
+            ? Number(actor.titular_profissional_id) : null
+    };
+}
+
 exports.listForManagement = async (req, res) => {
     try {
         const [specialties] = await pool.execute(`
@@ -59,11 +91,23 @@ exports.createSpecialty = async (req, res) => {
     try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
+        const actor = await lockAuthorizedManager(connection, req);
+        if (!actor) {
+            await connection.rollback();
+            return res.status(403).json({ error: 'Responsável não autorizado ou sessão desatualizada.' });
+        }
         const [result] = await connection.execute(`
             INSERT INTO especialidades (clinica_id, nome, status)
             VALUES (?, ?, 'ativa')
         `, [clinicId, payload.name]);
         const specialtyId = Number(result.insertId);
+        if (actor.isPractice) {
+            await connection.execute(`
+                INSERT INTO profissional_especialidades (
+                    clinica_id, profissional_id, especialidade_id
+                ) VALUES (?, ?, ?)
+            `, [clinicId, actor.professionalId, specialtyId]);
+        }
         await audit(connection, req, 'especialidade_criada', specialtyId, { status: 'ativa' });
         await connection.commit();
         return res.status(201).json({ id: specialtyId, message: 'Especialidade cadastrada com sucesso.' });
@@ -91,6 +135,10 @@ exports.updateSpecialty = async (req, res) => {
     try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
+        if (!await lockAuthorizedManager(connection, req)) {
+            await connection.rollback();
+            return res.status(403).json({ error: 'Responsável não autorizado ou sessão desatualizada.' });
+        }
         const [rows] = await connection.execute(`
             SELECT id, nome FROM especialidades
             WHERE clinica_id = ? AND id = ?
@@ -134,6 +182,10 @@ exports.updateSpecialtyStatus = async (req, res) => {
     try {
         connection = await pool.getConnection();
         await connection.beginTransaction();
+        if (!await lockAuthorizedManager(connection, req)) {
+            await connection.rollback();
+            return res.status(403).json({ error: 'Responsável não autorizado ou sessão desatualizada.' });
+        }
         const [rows] = await connection.execute(`
             SELECT id, status FROM especialidades
             WHERE clinica_id = ? AND id = ?
@@ -162,3 +214,4 @@ exports.updateSpecialtyStatus = async (req, res) => {
 };
 
 exports.specialtyPayload = specialtyPayload;
+exports.lockAuthorizedManager = lockAuthorizedManager;

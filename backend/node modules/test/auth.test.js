@@ -53,6 +53,9 @@ test('login emite token de identidade HS256 e lista vínculos ativos', async (t)
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.clinicas[0].id, 7);
+    assert.deepEqual(res.body.clinicas[0].permissoes, {
+        gerenciar_disponibilidade: false
+    });
     const decoded = jwt.verify(res.body.token, testConfig.JWT_SECRET, { algorithms: ['HS256'] });
     assert.equal(decoded.sub, '42');
     assert.equal(decoded.token_type, 'identity');
@@ -84,12 +87,16 @@ test('login com senha incorreta não emite token', async (t) => {
 
 test('seleção de clínica assina a versão atual do vínculo', async (t) => {
     t.mock.method(pool,'execute',async()=>[[{
-        id:7,nome:'Clínica Demo',slug:'demo',papel:'secretaria',sessao_versao:9
+        id:7,nome:'Consultório Demo',slug:'demo',papel:'secretaria',sessao_versao:9,
+        tipo_contexto:'consultorio',titular:0,gerenciar_disponibilidade:1
     }]]);
     const res=response(); await selectClinic({userId:42,body:{clinica_id:7}},res);
     assert.equal(res.statusCode,200);
     const decoded=jwt.verify(res.body.token,testConfig.JWT_SECRET,{algorithms:['HS256']});
     assert.equal(decoded.membership_version,9);
+    assert.deepEqual(res.body.clinica.permissoes, {
+        gerenciar_disponibilidade: true
+    });
     const req={headers:{authorization:`Bearer ${res.body.token}`}};
     authenticate(req,response(),()=>{});
     assert.equal(req.auth.membershipVersion,9);

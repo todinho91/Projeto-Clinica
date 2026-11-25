@@ -47,13 +47,23 @@ function whatsappUrl(phone, clinicName, localStart, link) {
 
 async function activeManager(connection, req) {
     const [rows] = await connection.execute(`
-        SELECT cu.papel FROM clinica_usuarios cu
+        SELECT cu.papel,
+               CASE WHEN cp.titular_usuario_id = cu.usuario_id AND cp.status = 'ativo'
+                         AND ip.status_verificacao = 'verificada'
+                    THEN 1 ELSE 0 END AS consultorio_titular
+        FROM clinica_usuarios cu
         JOIN usuarios u ON u.id = cu.usuario_id AND u.status = 'ativo'
         JOIN clinicas c ON c.id = cu.clinica_id AND c.status = 'ativa'
+        LEFT JOIN consultorios_profissionais cp ON cp.clinica_id = cu.clinica_id
+        LEFT JOIN identidades_profissionais ip ON ip.usuario_id = cp.titular_usuario_id
         WHERE cu.clinica_id = ? AND cu.usuario_id = ? AND cu.papel = ?
-          AND cu.papel IN ('administrador', 'secretaria') AND cu.status = 'ativo'
+          AND (cu.papel IN ('administrador', 'secretaria')
+               OR (cu.papel = 'profissional' AND cp.titular_usuario_id = cu.usuario_id
+                   AND ip.status_verificacao = 'verificada'))
+          AND cu.status = 'ativo'
+          AND cu.sessao_versao = ?
         LIMIT 1 FOR UPDATE
-    `, [req.tenant.clinicId, req.userId, req.tenant.role]);
+    `, [req.tenant.clinicId, req.userId, req.tenant.role, req.auth?.membershipVersion]);
     return rows[0]?.papel ?? null;
 }
 

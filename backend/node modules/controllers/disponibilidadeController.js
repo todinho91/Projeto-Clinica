@@ -97,9 +97,53 @@ async function accessibleProfessional(executor, req, professionalId, lock = fals
         JOIN usuarios u ON u.id = p.usuario_id AND u.status = 'ativo'
         WHERE p.clinica_id = ? AND p.id = ? AND p.status = 'ativo'
           AND (? <> 'profissional' OR p.usuario_id = ?)
+          AND (? = 0 OR EXISTS (
+                SELECT 1 FROM consultorios_profissionais cp
+                JOIN identidades_profissionais ip ON ip.usuario_id = cp.titular_usuario_id
+                  AND ip.status_verificacao = 'verificada'
+                WHERE cp.clinica_id = p.clinica_id
+                  AND cp.titular_usuario_id = p.usuario_id AND cp.status = 'ativo'
+          ))
         ${lock ? 'FOR UPDATE' : ''}
-    `, [req.tenant.clinicId, professionalId, req.tenant.role, req.userId]);
+    `, [req.tenant.clinicId, professionalId, req.tenant.role, req.userId,
+        req.tenant.isPractice && req.tenant.role === 'profissional' ? 1 : 0]);
     return rows[0] ?? null;
+}
+
+async function authorizedAvailabilityOperator(connection, req) {
+    const [rows] = await connection.execute(`
+        SELECT cu.papel, cu.status AS vinculo_status,
+               u.status AS usuario_status, c.status AS clinica_status,
+               cp.clinica_id AS consultorio_id,
+               CASE WHEN cp.titular_usuario_id = cu.usuario_id
+                          AND cp.status = 'ativo'
+                          AND ip.status_verificacao = 'verificada'
+                    THEN 1 ELSE 0 END AS consultorio_titular,
+               COALESCE(cd.gerenciar_disponibilidade, 0) AS gerenciar_disponibilidade
+        FROM clinica_usuarios cu
+        JOIN usuarios u ON u.id = cu.usuario_id
+        JOIN clinicas c ON c.id = cu.clinica_id
+        LEFT JOIN consultorios_profissionais cp ON cp.clinica_id = cu.clinica_id
+        LEFT JOIN identidades_profissionais ip ON ip.usuario_id = cp.titular_usuario_id
+        LEFT JOIN consultorio_delegacoes cd
+          ON cd.clinica_id = cu.clinica_id AND cd.clinica_usuario_id = cu.id
+        WHERE cu.clinica_id = ? AND cu.usuario_id = ? AND cu.papel = ?
+          AND cu.sessao_versao = ?
+        FOR UPDATE
+    `, [
+        req.tenant.clinicId,
+        req.userId,
+        req.tenant.role,
+        req.auth?.membershipVersion
+    ]);
+    const actor = rows[0];
+    if (!actor || actor.vinculo_status !== 'ativo' || actor.usuario_status !== 'ativo'
+        || actor.clinica_status !== 'ativa' || actor.papel !== req.tenant.role) return false;
+    if (actor.consultorio_id == null) {
+        return ['administrador', 'secretaria', 'profissional'].includes(actor.papel);
+    }
+    if (actor.papel === 'profissional') return Boolean(actor.consultorio_titular);
+    return actor.papel === 'secretaria' && Boolean(actor.gerenciar_disponibilidade);
 }
 
 exports.context = async (req, res) => {
@@ -192,6 +236,12 @@ exports.replaceWeeklyAvailability = async (req, res) => {
             await connection.rollback();
             return res.status(404).json({ error: 'Profissional não encontrado na clínica ativa.' });
         }
+        if (!(await authorizedAvailabilityOperator(connection, req))) {
+            await connection.rollback();
+            return res.status(403).json({
+                error: 'A permissão para alterar a disponibilidade não está mais ativa.'
+            });
+        }
         const timeZone = await clinicTimeZone(connection, req.tenant.clinicId);
         const [appointments] = await connection.execute(`
             SELECT id, inicio_em, fim_em FROM consultas
@@ -246,6 +296,12 @@ exports.createBlock = async (req, res) => {
         if (!professional) {
             await connection.rollback();
             return res.status(404).json({ error: 'Profissional não encontrado na clínica ativa.' });
+        }
+        if (!(await authorizedAvailabilityOperator(connection, req))) {
+            await connection.rollback();
+            return res.status(403).json({
+                error: 'A permissão para alterar a disponibilidade não está mais ativa.'
+            });
         }
         const timeZone = await clinicTimeZone(connection, req.tenant.clinicId);
         const block = blockPayload(req.body, timeZone);
@@ -313,6 +369,12 @@ exports.cancelBlock = async (req, res) => {
             await connection.rollback();
             return res.status(404).json({ error: 'Profissional não encontrado na clínica ativa.' });
         }
+        if (!(await authorizedAvailabilityOperator(connection, req))) {
+            await connection.rollback();
+            return res.status(403).json({
+                error: 'A permissão para alterar a disponibilidade não está mais ativa.'
+            });
+        }
         const [result] = await connection.execute(`
             UPDATE bloqueios_profissional
             SET status = 'cancelado', cancelado_por_usuario_id = ?, cancelado_em = UTC_TIMESTAMP(6)
@@ -339,3 +401,4 @@ exports.cancelBlock = async (req, res) => {
 exports.blockPayload = blockPayload;
 exports.weeklyPayload = weeklyPayload;
 exports.appointmentFitsWeekly = appointmentFitsWeekly;
+exports.authorizedAvailabilityOperator = authorizedAvailabilityOperator;

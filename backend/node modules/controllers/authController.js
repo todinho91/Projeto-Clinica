@@ -2,6 +2,7 @@ const pool = require('../config/database');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { jwtSecret } = require('../config/environment');
+const { professionalIdentity } = require('../support/professional-identity');
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PUBLIC_REGISTRATION_CONFLICT = 'Não foi possível concluir o cadastro com os dados informados.';
@@ -34,21 +35,36 @@ function validString(value, min, max) {
 
 async function activeClinicsForUser(executor, userId) {
     const [rows] = await executor.execute(`
-        SELECT c.id, c.nome, c.slug, cu.papel
+        SELECT c.id, c.nome, c.slug, cu.papel,
+               CASE WHEN cp.clinica_id IS NULL THEN 'clinica' ELSE 'consultorio' END AS tipo_contexto,
+               CASE WHEN cp.titular_usuario_id = cu.usuario_id
+                          AND ip.status_verificacao = 'verificada' THEN 1 ELSE 0 END AS titular,
+               COALESCE(cd.gerenciar_disponibilidade, 0) AS gerenciar_disponibilidade
         FROM clinica_usuarios cu
         JOIN clinicas c ON c.id = cu.clinica_id
         JOIN usuarios u ON u.id = cu.usuario_id
+        LEFT JOIN consultorios_profissionais cp ON cp.clinica_id = c.id AND cp.status = 'ativo'
+        LEFT JOIN identidades_profissionais ip ON ip.usuario_id = cp.titular_usuario_id
+        LEFT JOIN consultorio_delegacoes cd
+          ON cd.clinica_id = cu.clinica_id AND cd.clinica_usuario_id = cu.id
         WHERE cu.usuario_id = ?
           AND cu.status = 'ativo'
           AND c.status = 'ativa'
           AND u.status = 'ativo'
+          AND (cp.clinica_id IS NULL OR cp.titular_usuario_id <> cu.usuario_id
+               OR ip.status_verificacao = 'verificada')
         ORDER BY c.nome
     `, [userId]);
     return rows.map((row) => ({
         id: Number(row.id),
         nome: row.nome,
         slug: row.slug,
-        papel: row.papel
+        papel: row.papel,
+        tipo_contexto: row.tipo_contexto,
+        titular: Boolean(row.titular),
+        permissoes: {
+            gerenciar_disponibilidade: Boolean(row.gerenciar_disponibilidade)
+        }
     }));
 }
 
@@ -131,6 +147,51 @@ exports.register = async (req, res) => {
     }
 };
 
+exports.registerProfessional = async (req, res) => {
+    const { nome, email, senha } = req.body ?? {};
+    const identity = professionalIdentity(req.body);
+    if (!validString(nome, 2, 160)) return res.status(400).json({ error: 'Nome inválido.' });
+    if (!validString(email, 3, 254) || !EMAIL_PATTERN.test(email.trim())) {
+        return res.status(400).json({ error: 'E-mail inválido.' });
+    }
+    if (!validString(senha, 12, 200)) {
+        return res.status(400).json({ error: 'A senha deve ter entre 12 e 200 caracteres.' });
+    }
+    if (!identity) return res.status(400).json({ error: 'Dados profissionais inválidos.' });
+
+    let connection;
+    try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        const passwordHash = await bcrypt.hash(senha, 12);
+        const [userResult] = await connection.execute(`
+            INSERT INTO usuarios (nome, email, senha_hash, status)
+            VALUES (?, ?, ?, 'ativo')
+        `, [nome.trim().replace(/\s+/g, ' '), email.trim().toLowerCase(), passwordHash]);
+        await connection.execute(`
+            INSERT INTO identidades_profissionais (
+                usuario_id, tipo_profissional, conselho_tipo, conselho_numero, conselho_uf
+            ) VALUES (?, ?, ?, ?, ?)
+        `, [userResult.insertId, identity.professionalType, identity.councilType,
+            identity.councilNumber, identity.councilState]);
+        await connection.commit();
+        return res.status(201).json({
+            message: 'Conta profissional criada. Entre para acompanhar a verificação do registro.'
+        });
+    } catch (error) {
+        if (connection) await connection.rollback().catch(() => {});
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({
+                error: 'Não foi possível concluir o cadastro profissional com os dados informados.'
+            });
+        }
+        logAuthFailure('register_professional', error);
+        return res.status(500).json({ error: 'Erro ao cadastrar conta profissional.' });
+    } finally {
+        connection?.release();
+    }
+};
+
 exports.login = async (req, res) => {
     const { email, senha } = req.body ?? {};
     if (!validString(email, 3, 254) || typeof senha !== 'string') {
@@ -179,15 +240,25 @@ exports.selectClinic = async (req, res) => {
 
     try {
         const [rows] = await pool.execute(`
-            SELECT c.id, c.nome, c.slug, cu.papel, cu.sessao_versao
+            SELECT c.id, c.nome, c.slug, cu.papel, cu.sessao_versao,
+                   CASE WHEN cp.clinica_id IS NULL THEN 'clinica' ELSE 'consultorio' END AS tipo_contexto,
+                   CASE WHEN cp.titular_usuario_id = cu.usuario_id
+                              AND ip.status_verificacao = 'verificada' THEN 1 ELSE 0 END AS titular,
+                   COALESCE(cd.gerenciar_disponibilidade, 0) AS gerenciar_disponibilidade
             FROM clinica_usuarios cu
             JOIN clinicas c ON c.id = cu.clinica_id
             JOIN usuarios u ON u.id = cu.usuario_id
+            LEFT JOIN consultorios_profissionais cp ON cp.clinica_id = c.id AND cp.status = 'ativo'
+            LEFT JOIN identidades_profissionais ip ON ip.usuario_id = cp.titular_usuario_id
+            LEFT JOIN consultorio_delegacoes cd
+              ON cd.clinica_id = cu.clinica_id AND cd.clinica_usuario_id = cu.id
             WHERE cu.usuario_id = ?
               AND cu.clinica_id = ?
               AND cu.status = 'ativo'
               AND c.status = 'ativa'
               AND u.status = 'ativo'
+              AND (cp.clinica_id IS NULL OR cp.titular_usuario_id <> cu.usuario_id
+                   OR ip.status_verificacao = 'verificada')
             LIMIT 1
         `, [req.userId, clinicId]);
 
@@ -201,7 +272,12 @@ exports.selectClinic = async (req, res) => {
                 id: Number(rows[0].id),
                 nome: rows[0].nome,
                 slug: rows[0].slug,
-                papel: rows[0].papel
+                papel: rows[0].papel,
+                tipo_contexto: rows[0].tipo_contexto,
+                titular: Boolean(rows[0].titular),
+                permissoes: {
+                    gerenciar_disponibilidade: Boolean(rows[0].gerenciar_disponibilidade)
+                }
             }
         });
     } catch (error) {

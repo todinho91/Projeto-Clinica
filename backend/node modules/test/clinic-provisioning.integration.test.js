@@ -20,6 +20,7 @@ async function resetSchema(connection, database) {
     const [[selected]] = await connection.query('SELECT DATABASE() AS database_name');
     if (selected.database_name !== database) throw new Error('Conexão não aponta para o banco descartável autorizado.');
     const tables = [
+        'consultorio_delegacoes', 'consultorio_locais', 'consultorios_profissionais', 'identidades_profissionais',
         'bloqueios_profissional', 'disponibilidades_profissional',
         'auditoria_plataforma', 'convites_clinica', 'auditoria', 'documentos_clinicos',
         'consultas_historico', 'consultas', 'pacientes', 'profissional_especialidades', 'profissionais',

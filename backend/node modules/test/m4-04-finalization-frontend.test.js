@@ -1,7 +1,6 @@
 const assert = require('node:assert/strict');
 const { promises: fs } = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
 const { test } = require('node:test');
 const core = require('../../../js/vitalis-client');
 
@@ -24,38 +23,19 @@ test('login entra direto com vínculo único e mantém seleção para múltiplos
     assert.match(login, /window\.location\.assign\('select-clinic\.html'\)/);
 });
 
-async function clinicIdentityHarness() {
-    const source = await fs.readFile(path.join(root, 'js', 'main.js'), 'utf8');
-    const start = source.indexOf('function applyClinicIdentity');
-    const end = source.indexOf('function formatDate', start);
-    const clinicName = { textContent: '' };
-    const adminOnly = { removed: false, remove() { this.removed = true; } };
-    const switches = [{ hidden: true }, { hidden: true }];
-    const context = {
-        document: {
-            querySelectorAll(selector) {
-                if (selector === '[data-clinic-name]') return [clinicName];
-                if (selector === '[data-admin-only]') return [adminOnly];
-                if (selector === '[data-clinic-switch]') return switches;
-                return [];
-            }
-        }
-    };
-    vm.createContext(context);
-    vm.runInContext(`${source.slice(start, end)}\nthis.applyClinicIdentity = applyClinicIdentity;`, context);
-    return { ...context, clinicName, adminOnly, switches };
-}
-
-test('secretaria não vê troca de clínica e administrador mantém a ação autorizada', async () => {
-    const secretary = await clinicIdentityHarness();
-    secretary.applyClinicIdentity({ nome: 'Clínica A', papel: 'secretaria' });
-    assert.equal(secretary.clinicName.textContent, 'Clínica A');
-    assert.equal(secretary.switches.every((element) => element.hidden), true);
-
-    const administrator = await clinicIdentityHarness();
-    administrator.applyClinicIdentity({ nome: 'Clínica B', papel: 'administrador' });
-    assert.equal(administrator.switches.every((element) => !element.hidden), true);
-    assert.equal(administrator.adminOnly.removed, false);
+test('troca de contexto depende da quantidade de vínculos, não do nome do papel', () => {
+    assert.deepEqual(core.workspaceSwitchState(
+        [{ id: 17, papel: 'secretaria' }],
+        { id: 17, papel: 'secretaria', tipo_contexto: 'clinica' }
+    ), { visible: false, label: 'Trocar clínica' });
+    assert.deepEqual(core.workspaceSwitchState(
+        [{ id: 17, papel: 'secretaria' }, { id: 22, papel: 'secretaria' }],
+        { id: 17, papel: 'secretaria', tipo_contexto: 'clinica' }
+    ), { visible: true, label: 'Trocar clínica' });
+    assert.deepEqual(core.workspaceSwitchState(
+        [{ id: 17 }, { id: 22 }],
+        { id: 22, papel: 'profissional', tipo_contexto: 'consultorio', titular: true }
+    ), { visible: true, label: 'Alternar espaço' });
 });
 
 test('páginas da secretaria mantêm troca oculta até a autorização do perfil', async () => {

@@ -27,7 +27,15 @@ function response() {
 
 function transactionConnection(execute) {
     return {
-        execute,
+        execute: async (sql, params) => {
+            if (/FROM clinica_usuarios cu/.test(sql) && /cu\.sessao_versao/.test(sql)) {
+                return [[{
+                    papel: 'administrador', consultorio_id: null,
+                    titular_profissional_id: null, consultorio_titular: 0
+                }]];
+            }
+            return execute(sql, params);
+        },
         beginTransaction: async () => {},
         commit: async () => {},
         rollback: async () => {},

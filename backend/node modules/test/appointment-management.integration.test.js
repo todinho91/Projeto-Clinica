@@ -24,6 +24,7 @@ function response() {
 async function resetSchema(connection, database) {
     await confirmAppointmentTestEnvironment(connection, database);
     const tables = [
+        'consultorio_delegacoes', 'consultorio_locais', 'consultorios_profissionais', 'identidades_profissionais',
         'auditoria_plataforma', 'convites_clinica', 'confirmacoes_consulta_eventos',
         'confirmacoes_consulta', 'bloqueios_profissional',
         'disponibilidades_profissional', 'auditoria', 'documentos_clinicos',
@@ -78,6 +79,42 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
         [auroraId, secretaryAurora, auroraId, professionalAuroraUser, auroraId, patientAuroraUser,
             horizonteId, secretaryHorizonte, horizonteId, professionalHorizonteUser,
             horizonteId, patientHorizonteUser]);
+        const [membershipRows] = await setup.execute(`
+            SELECT clinica_id, usuario_id, sessao_versao
+            FROM clinica_usuarios
+            WHERE clinica_id IN (?, ?)
+        `, [auroraId, horizonteId]);
+        const membershipVersionByLink = new Map(membershipRows.map((row) => [
+            `${Number(row.clinica_id)}:${Number(row.usuario_id)}`,
+            Number(row.sessao_versao)
+        ]));
+        const actorContext = (clinicId, userId, role) => {
+            const membershipVersion = membershipVersionByLink.get(`${clinicId}:${userId}`);
+            assert.ok(Number.isInteger(membershipVersion));
+            return {
+                userId,
+                auth: { membershipVersion },
+                tenant: { clinicId, role }
+            };
+        };
+        const secretaryAuroraContext = actorContext(
+            auroraId, secretaryAurora, 'secretaria'
+        );
+        const secretaryHorizonteContext = actorContext(
+            horizonteId, secretaryHorizonte, 'secretaria'
+        );
+        const professionalAuroraContext = actorContext(
+            auroraId, professionalAuroraUser, 'profissional'
+        );
+        const professionalHorizonteContext = actorContext(
+            horizonteId, professionalHorizonteUser, 'profissional'
+        );
+        const patientAuroraContext = actorContext(
+            auroraId, patientAuroraUser, 'paciente'
+        );
+        const patientHorizonteContext = actorContext(
+            horizonteId, patientHorizonteUser, 'paciente'
+        );
         const [specialties] = await setup.execute(`INSERT INTO especialidades (clinica_id, nome, status) VALUES
             (?, 'Clínica Geral', 'ativa'), (?, 'Psicologia', 'ativa')`, [auroraId, horizonteId]);
         const auroraSpecialty = Number(specialties.insertId); const horizonteSpecialty = auroraSpecialty + 1;
@@ -111,7 +148,7 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
         pool = require('../config/database');
         const controller = require('../controllers/consultaController');
         const request = {
-            userId: secretaryAurora, tenant: { clinicId: auroraId, role: 'secretaria' },
+            ...secretaryAuroraContext,
             body: {
                 paciente_id: auroraPatientId, profissional_id: auroraProfessionalId,
                 especialidade_id: auroraSpecialty, inicio_local: '2032-05-10T14:00',
@@ -129,14 +166,14 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
         const confirmationController = require('../controllers/confirmacaoConsultaController');
         const prepared = response();
         await confirmationController.requestConfirmation({
-            userId: secretaryAurora, tenant: request.tenant,
+            ...secretaryAuroraContext,
             params: { id: String(appointmentId) }, body: { versao: 1 }
         }, prepared);
         assert.equal(prepared.statusCode, 201);
         assert.equal(prepared.body.estado_entrega, 'nao_enviado');
         const repeatedPreparation = response();
         await confirmationController.requestConfirmation({
-            userId: secretaryAurora, tenant: request.tenant,
+            ...secretaryAuroraContext,
             params: { id: String(appointmentId) }, body: { versao: 1 }
         }, repeatedPreparation);
         assert.equal(repeatedPreparation.statusCode, 200);
@@ -144,7 +181,7 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
         assert.equal(repeatedPreparation.body.whatsapp_url, null);
         const replacementA = response(); const replacementB = response();
         const replacementRequest = {
-            userId: secretaryAurora, tenant: request.tenant,
+            ...secretaryAuroraContext,
             params: { id: String(appointmentId) },
             body: {
                 versao: 1, substituir: true,
@@ -170,7 +207,7 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
                 body: { token: replacementToken, resposta: 'confirmada' }
             }, publicConcurrent),
             confirmationController.manualResponse({
-                userId: secretaryAurora, tenant: request.tenant,
+                ...secretaryAuroraContext,
                 params: { id: String(appointmentId) }, body: { versao: 1, resposta: 'recusada' }
             }, manualConcurrent)
         ]);
@@ -180,7 +217,7 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
 
         const crossTenantConfirmation = response();
         await confirmationController.requestConfirmation({
-            userId: secretaryHorizonte, tenant: { clinicId: horizonteId, role: 'secretaria' },
+            ...secretaryHorizonteContext,
             params: { id: String(appointmentId) }, body: { versao: 1 }
         }, crossTenantConfirmation);
         assert.equal(crossTenantConfirmation.statusCode, 404);
@@ -200,19 +237,19 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
 
         const confirmed = response();
         await controller.updateStatusConsulta({
-            userId: secretaryAurora, tenant: request.tenant,
+            ...secretaryAuroraContext,
             params: { id: String(appointmentId) }, body: { status: 'confirmada', versao: 1 }
         }, confirmed);
         assert.equal(confirmed.statusCode, 200);
         const stale = response();
         await controller.updateStatusConsulta({
-            userId: secretaryAurora, tenant: request.tenant,
+            ...secretaryAuroraContext,
             params: { id: String(appointmentId) }, body: { status: 'cancelada', versao: 1 }
         }, stale);
         assert.equal(stale.statusCode, 409);
         const invalidTransition = response();
         await controller.updateStatusConsulta({
-            userId: secretaryAurora, tenant: request.tenant,
+            ...secretaryAuroraContext,
             params: { id: String(appointmentId) }, body: { status: 'agendada', versao: 2 }
         }, invalidTransition);
         assert.equal(invalidTransition.statusCode, 400);
@@ -230,7 +267,7 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
         const availabilityController = require('../controllers/disponibilidadeController');
         const conflictingBlock = response();
         await availabilityController.createBlock({
-            userId: secretaryAurora, tenant: request.tenant,
+            ...secretaryAuroraContext,
             params: { professionalId: String(auroraProfessionalId) },
             body: {
                 tipo: 'indisponibilidade', inicio_local: '2032-05-10T13:30',
@@ -240,7 +277,7 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
         assert.equal(conflictingBlock.statusCode, 409);
         const incompatibleWeekly = response();
         await availabilityController.replaceWeeklyAvailability({
-            userId: secretaryAurora, tenant: request.tenant,
+            ...secretaryAuroraContext,
             params: { professionalId: String(auroraProfessionalId) },
             body: { intervalos: [
                 { dia_semana: 1, tipo: 'atendimento', inicio: '15:00', fim: '18:00' }
@@ -250,7 +287,7 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
 
         const forcedBySecretary = response();
         await controller.updateStatusConsulta({
-            userId: secretaryAurora, tenant: request.tenant,
+            ...secretaryAuroraContext,
             params: { id: String(appointmentId) },
             body: { status: 'realizada', versao: 2 }
         }, forcedBySecretary);
@@ -258,8 +295,7 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
 
         const crossClinicDoctor = response();
         await controller.concluirAtendimento({
-            userId: professionalHorizonteUser,
-            tenant: { clinicId: horizonteId, role: 'profissional' },
+            ...professionalHorizonteContext,
             params: { id: String(appointmentId) }, body: { versao: 2 }
         }, crossClinicDoctor);
         assert.equal(crossClinicDoctor.statusCode, 404);
@@ -270,13 +306,11 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
         const concludeFirst = response(); const concludeSecond = response();
         await Promise.all([
             controller.concluirAtendimento({
-                userId: professionalAuroraUser,
-                tenant: { clinicId: auroraId, role: 'profissional' },
+                ...professionalAuroraContext,
                 params: { id: String(appointmentId) }, body: { versao: 2 }
             }, concludeFirst),
             controller.concluirAtendimento({
-                userId: professionalAuroraUser,
-                tenant: { clinicId: auroraId, role: 'profissional' },
+                ...professionalAuroraContext,
                 params: { id: String(appointmentId) }, body: { versao: 2 }
             }, concludeSecond)
         ]);
@@ -284,8 +318,7 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
 
         const doctorAgenda = response();
         await controller.getMinhaAgenda({
-            userId: professionalAuroraUser,
-            tenant: { clinicId: auroraId, role: 'profissional' }
+            ...professionalAuroraContext
         }, doctorAgenda);
         assert.equal(doctorAgenda.statusCode, 200);
         assert.equal(doctorAgenda.body.length, 1);
@@ -293,7 +326,7 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
 
         const secretaryAgenda = response();
         await controller.getMinhaAgenda({
-            userId: secretaryAurora, tenant: request.tenant
+            ...secretaryAuroraContext
         }, secretaryAgenda);
         assert.equal(secretaryAgenda.statusCode, 200);
         assert.equal(secretaryAgenda.body.some((item) => item.id === appointmentId
@@ -308,7 +341,7 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
             WHERE clinica_id = ? AND id = ?`, [auroraId, auroraPatientId]);
         const portalRequest = response();
         await confirmationController.requestConfirmation({
-            userId: secretaryAurora, tenant: request.tenant,
+            ...secretaryAuroraContext,
             params: { id: String(secondAppointment.body.id) },
             body: { versao: 1, canal_esperado: 'portal_vitalis' }
         }, portalRequest);
@@ -318,12 +351,12 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
         const portalConfirmed = response(); const portalDeclined = response();
         await Promise.all([
             confirmationController.authenticatedPatientResponse({
-                userId: patientAuroraUser, tenant: { clinicId: auroraId, role: 'paciente' },
+                ...patientAuroraContext,
                 params: { id: String(secondAppointment.body.id) },
                 body: { versao: 1, resposta: 'confirmada' }
             }, portalConfirmed),
             confirmationController.authenticatedPatientResponse({
-                userId: patientAuroraUser, tenant: { clinicId: auroraId, role: 'paciente' },
+                ...patientAuroraContext,
                 params: { id: String(secondAppointment.body.id) },
                 body: { versao: 1, resposta: 'recusada' }
             }, portalDeclined)
@@ -331,7 +364,7 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
         assert.deepEqual([portalConfirmed.statusCode, portalDeclined.statusCode].sort(), [201, 409]);
         const crossPatientResponse = response();
         await confirmationController.authenticatedPatientResponse({
-            userId: patientHorizonteUser, tenant: { clinicId: horizonteId, role: 'paciente' },
+            ...patientHorizonteContext,
             params: { id: String(secondAppointment.body.id) },
             body: { versao: 1, resposta: 'confirmada' }
         }, crossPatientResponse);
@@ -339,11 +372,11 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
         const cancelConcurrent = response(); const rescheduleConcurrent = response();
         await Promise.all([
             controller.cancelarConsulta({
-                userId: secretaryAurora, tenant: request.tenant,
+                ...secretaryAuroraContext,
                 params: { id: String(secondAppointment.body.id) }, body: { versao: 1 }
             }, cancelConcurrent),
             controller.reschedule({
-                userId: secretaryAurora, tenant: request.tenant,
+                ...secretaryAuroraContext,
                 params: { id: String(secondAppointment.body.id) },
                 body: {
                     paciente_id: auroraPatientId, profissional_id: auroraProfessionalId,
@@ -356,7 +389,7 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
 
         const auroraCalendar = response();
         await controller.listCalendar({
-            userId: secretaryAurora, tenant: request.tenant,
+            ...secretaryAuroraContext,
             query: { data_inicio: '2032-05-10', data_fim: '2032-05-16', status: 'todos' }
         }, auroraCalendar);
         assert.equal(auroraCalendar.statusCode, 200);
@@ -365,8 +398,7 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
 
         const horizonteCalendar = response();
         await controller.listCalendar({
-            userId: secretaryHorizonte,
-            tenant: { clinicId: horizonteId, role: 'secretaria' },
+            ...secretaryHorizonteContext,
             query: { data_inicio: '2032-05-10', data_fim: '2032-05-16', status: 'todos' }
         }, horizonteCalendar);
         assert.equal(horizonteCalendar.statusCode, 200);
@@ -374,8 +406,7 @@ test('MySQL 8 valida concorrência, transições, rollback e isolamento da agend
 
         const doctorCrossFilter = response();
         await controller.listCalendar({
-            userId: professionalAuroraUser,
-            tenant: { clinicId: auroraId, role: 'profissional' },
+            ...professionalAuroraContext,
             query: {
                 data_inicio: '2032-05-10', data_fim: '2032-05-16', status: 'todos',
                 profissional_id: String(horizonteProfessionalId)

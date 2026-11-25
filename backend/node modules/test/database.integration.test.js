@@ -11,6 +11,7 @@ const migrationsDir = path.join(__dirname, '..', '..', 'database', 'migrations')
 
 async function resetTestSchema(connection) {
     const tables = [
+        'consultorio_delegacoes', 'consultorio_locais', 'consultorios_profissionais', 'identidades_profissionais',
         'auditoria_plataforma',
         'bloqueios_profissional',
         'disponibilidades_profissional',
@@ -52,8 +53,8 @@ test('MySQL 8 aplica migrations, repete seed e bloqueia referência entre clíni
         await resetTestSchema(connection);
         const firstMigration = await runMigrations({ connection, migrationsDir, logger: { info() {} } });
         const secondMigration = await runMigrations({ connection, migrationsDir, logger: { info() {} } });
-        assert.equal(firstMigration.applied.length, 9);
-        assert.equal(secondMigration.skipped.length, 9);
+        assert.equal(firstMigration.applied.length, 13);
+        assert.equal(secondMigration.skipped.length, 13);
 
         const password = readSeedPassword();
         const rounds = readBcryptRounds();

@@ -28,7 +28,16 @@ function response() {
 
 function connection(execute) {
     return {
-        execute, beginTransaction: async () => {}, commit: async () => {},
+        execute: async (sql, params) => {
+            if (/AS vinculo_status[\s\S]*gerenciar_disponibilidade/.test(sql)) {
+                return [[{
+                    papel: params[2], vinculo_status: 'ativo', usuario_status: 'ativo',
+                    clinica_status: 'ativa', consultorio_id: null,
+                    consultorio_titular: 0, gerenciar_disponibilidade: 0
+                }]];
+            }
+            return execute(sql, params);
+        }, beginTransaction: async () => {}, commit: async () => {},
         rollback: async () => {}, release() {}
     };
 }
@@ -126,6 +135,7 @@ test('atualização semanal usa tenant autenticado, preserva histórico e audita
     const res = response();
     await controller.replaceWeeklyAvailability({
         params: { professionalId: '8' }, userId: 4,
+        auth: { membershipVersion: 1 },
         tenant: { clinicId: 11, role: 'secretaria' },
         body: { clinica_id: 999, intervalos: [
             { dia_semana: 1, tipo: 'atendimento', inicio: '08:00', fim: '12:00' }
@@ -154,12 +164,46 @@ test('falha parcial da grade semanal realiza rollback', async (t) => {
     const res = response();
     await controller.replaceWeeklyAvailability({
         params: { professionalId: '8' }, userId: 4,
+        auth: { membershipVersion: 1 },
         tenant: { clinicId: 11, role: 'administrador' },
         body: { intervalos: [{ dia_semana: 1, tipo: 'atendimento', inicio: '08:00', fim: '12:00' }] }
     }, res);
     assert.equal(res.statusCode, 500);
     assert.equal(rollback.mock.callCount(), 1);
     assert.equal(commit.mock.callCount(), 0);
+});
+
+test('permissão delegada é revalidada dentro da transação antes de qualquer escrita', async (t) => {
+    const executions = [];
+    const db = {
+        beginTransaction: async () => {}, commit: async () => {},
+        rollback: async () => {}, release() {},
+        execute: async (sql, params) => {
+            executions.push({ sql, params });
+            if (/SELECT p\.id/.test(sql)) return [[{ id: 8, nome_exibicao: 'Profissional' }]];
+            if (/AS vinculo_status[\s\S]*gerenciar_disponibilidade/.test(sql)) return [[]];
+            throw new Error('nenhuma escrita deveria ocorrer sem a delegação atual');
+        }
+    };
+    const rollback = t.mock.method(db, 'rollback');
+    t.mock.method(pool, 'getConnection', async () => db);
+    const res = response();
+    await controller.replaceWeeklyAvailability({
+        params: { professionalId: '8' }, userId: 4,
+        auth: { membershipVersion: 7 },
+        tenant: {
+            clinicId: 11, role: 'secretaria', isPractice: true,
+            permissions: { manageAvailability: true }
+        },
+        body: { intervalos: [
+            { dia_semana: 1, tipo: 'atendimento', inicio: '08:00', fim: '12:00' }
+        ] }
+    }, res);
+    assert.equal(res.statusCode, 403);
+    assert.equal(rollback.mock.callCount(), 1);
+    const operatorQuery = executions.find(({ sql }) => /AS vinculo_status/.test(sql));
+    assert.deepEqual(operatorQuery.params, [11, 4, 'secretaria', 7]);
+    assert.equal(executions.some(({ sql }) => /^\s*(?:UPDATE|INSERT\s+INTO)\b/i.test(sql)), false);
 });
 
 test('bloqueio sobreposto é recusado dentro da transação e do tenant', async (t) => {
@@ -176,6 +220,7 @@ test('bloqueio sobreposto é recusado dentro da transação e do tenant', async 
     const res = response();
     await controller.createBlock({
         params: { professionalId: '8' }, userId: 4,
+        auth: { membershipVersion: 1 },
         tenant: { clinicId: 11, role: 'secretaria' },
         body: { tipo: 'ferias', inicio_local: '2032-01-10T08:00', fim_local: '2032-01-20T18:00' }
     }, res);
@@ -203,6 +248,7 @@ test('bloqueio válido converte o fuso, usa tenant do token e registra auditoria
     const res = response();
     await controller.createBlock({
         params: { professionalId: '8' }, userId: 4,
+        auth: { membershipVersion: 1 },
         tenant: { clinicId: 11, role: 'administrador' },
         body: {
             clinica_id: 999, tipo: 'feriado',
@@ -235,6 +281,7 @@ test('bloqueio que cruza consulta ativa é recusado sem cancelar a reserva', asy
     const res = response();
     await controller.createBlock({
         params: { professionalId: '8' }, userId: 4,
+        auth: { membershipVersion: 1 },
         tenant: { clinicId: 11, role: 'secretaria' },
         body: {
             tipo: 'indisponibilidade', inicio_local: '2032-06-15T08:00',
@@ -261,6 +308,7 @@ test('grade incompatível com consulta futura é recusada antes de desativar int
     const res = response();
     await controller.replaceWeeklyAvailability({
         params: { professionalId: '8' }, userId: 4,
+        auth: { membershipVersion: 1 },
         tenant: { clinicId: 11, role: 'administrador' },
         body: { intervalos: [
             { dia_semana: 1, tipo: 'atendimento', inicio: '13:00', fim: '17:00' }
@@ -281,7 +329,7 @@ test('consulta exige identidade, vínculo e perfil ativos da mesma clínica', as
             assert.match(sql, /JOIN usuarios u ON u\.id = p\.usuario_id AND u\.status = 'ativo'/);
             assert.match(sql, /p\.clinica_id = \?/);
             assert.match(sql, /p\.status = 'ativo'/);
-            assert.deepEqual(params, [11, 8, 'profissional', 70]);
+            assert.deepEqual(params, [11, 8, 'profissional', 70, 0]);
             return [[{ id: 8, nome_exibicao: 'Profissional' }]];
         }
         if (/FROM disponibilidades_profissional/.test(sql)) return [[]];
