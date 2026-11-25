@@ -1224,6 +1224,7 @@ async function setupEquipePage() {
                     const select = document.createElement('select');
                     select.className = 'form-select form-select-sm vitalis-team-role-select';
                     select.setAttribute('aria-label', `Papel de ${member.nome}`);
+                    select.title = roleLabels[member.papel] || member.papel;
                     ['administrador', 'secretaria', 'profissional', 'paciente'].forEach((role) => {
                         const option = document.createElement('option');
                         option.value = role; option.textContent = roleLabels[role]; option.selected = role === member.papel;
