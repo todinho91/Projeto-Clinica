@@ -1217,13 +1217,10 @@ async function setupEquipePage() {
                 person.append(personName, email);
 
                 const roleCell = setCellLabel(tableCell(roleLabels[member.papel] || member.papel), 'Papel');
-                const isLastActiveAdministrator = VitalisCore.isLastActiveAdministrator(member, members);
-                if (clinic.papel === 'administrador' && member.status !== 'convite_pendente'
-                    && !isLastActiveAdministrator) {
+                if (clinic.papel === 'administrador' && member.status !== 'convite_pendente') {
                     const select = document.createElement('select');
                     select.className = 'form-select form-select-sm vitalis-team-role-select';
                     select.setAttribute('aria-label', `Papel de ${member.nome}`);
-                    select.title = roleLabels[member.papel] || member.papel;
                     ['administrador', 'secretaria', 'profissional', 'paciente'].forEach((role) => {
                         const option = document.createElement('option');
                         option.value = role; option.textContent = roleLabels[role]; option.selected = role === member.papel;
@@ -1231,15 +1228,6 @@ async function setupEquipePage() {
                     });
                     select.addEventListener('change', () => {
                         const nextRole = select.value;
-                        if (VitalisCore.isLastActiveAdministrator(member, members)) {
-                            showMessage(
-                                status,
-                                'Mantenha outro administrador ativo antes de transferir este papel. A equipe será atualizada.',
-                                'warning'
-                            );
-                            load();
-                            return;
-                        }
                         if (!window.confirm(`Alterar o papel de ${member.nome} para ${roleLabels[nextRole]}?`)) {
                             select.value = member.papel;
                             return;
@@ -1247,30 +1235,9 @@ async function setupEquipePage() {
                         action(
                             `/equipe/vinculos/${member.id}/papel`, 'PATCH', { papel: nextRole },
                             `Papel de ${member.nome} atualizado.`
-                        ).catch((error) => {
-                            const lastAdministratorConflict = error.message
-                                .includes('A clínica deve manter ao menos um administrador ativo.');
-                            showMessage(
-                                status,
-                                lastAdministratorConflict
-                                    ? 'Outro administrador ativo é necessário. A equipe foi atualizada antes de nova tentativa.'
-                                    : error.message,
-                                lastAdministratorConflict ? 'warning' : 'danger'
-                            );
-                            load();
-                        });
+                        ).catch((error) => { showMessage(status, error.message); load(); });
                     });
                     roleCell.replaceChildren(select);
-                } else if (isLastActiveAdministrator) {
-                    const roleReadOnly = document.createElement('div');
-                    roleReadOnly.className = 'vitalis-team-role-readonly';
-                    roleReadOnly.textContent = roleLabels[member.papel] || member.papel;
-                    const roleNote = document.createElement('small');
-                    roleNote.className = 'vitalis-team-role-lock-note';
-                    roleNote.textContent = 'Mantenha outro administrador ativo antes de transferir este papel.';
-                    const rolePresentation = document.createElement('div');
-                    rolePresentation.append(roleReadOnly, roleNote);
-                    roleCell.replaceChildren(rolePresentation);
                 }
                 const deliveryLabel = {
                     not_requested: 'Envio pendente',
@@ -1340,18 +1307,15 @@ async function setupEquipePage() {
                 if (canManageMember && member.status === 'ativo') {
                     const practiceSecretary = VitalisCore.isPracticeOwner(clinic)
                         && member.papel === 'secretaria';
-                    const isLastAdministrator = VitalisCore.isLastActiveAdministrator(member, members);
-                    if (!isLastAdministrator) {
-                        const actionLabel = practiceSecretary ? 'Desativar acesso' : 'Desativar';
-                        addButton(actionLabel, 'btn-outline-danger', () => {
-                            if (window.confirm(`${actionLabel} de ${member.nome}? As sessões desse vínculo serão encerradas e o histórico será preservado.`)) {
-                                action(
-                                    `/equipe/vinculos/${member.id}/status`, 'PATCH', {status:'inativo'},
-                                    `Acesso de ${member.nome} desativado. O histórico foi preservado.`
-                                ).catch((error) => showMessage(status, error.message));
-                            }
-                        });
-                    }
+                    const actionLabel = practiceSecretary ? 'Desativar acesso' : 'Desativar';
+                    addButton(actionLabel, 'btn-outline-danger', () => {
+                        if (window.confirm(`${actionLabel} de ${member.nome}? As sessões desse vínculo serão encerradas e o histórico será preservado.`)) {
+                            action(
+                                `/equipe/vinculos/${member.id}/status`, 'PATCH', {status:'inativo'},
+                                `Acesso de ${member.nome} desativado. O histórico foi preservado.`
+                            ).catch((error) => showMessage(status, error.message));
+                        }
+                    });
                 }
                 if (canManageMember && VitalisCore.isPracticeOwner(clinic)
                     && member.papel === 'secretaria' && member.status === 'ativo') {
@@ -3055,39 +3019,43 @@ async function setupPatientsPage() {
         showMessage(formStatus, '', 'muted');
     }
 
-    async function lookupCep() {
-        const cep = cepInput.value.replace(/\D/g, '');
-        if (cep.length !== 8 || cepInput.disabled) return;
-        const ticket = cepGate.begin(cep);
-        const fieldSnapshots = Object.fromEntries([
-            'paciente-logradouro', 'paciente-bairro', 'paciente-cidade', 'paciente-uf'
-        ].map((id) => [id, document.getElementById(id).value]));
-        cepStatus.className = 'form-text text-muted';
-        cepStatus.textContent = 'Consultando CEP...';
-        try {
-            const address = await apiRequest(`/pacientes/cep/${cep}`);
-            if (!cepGate.isCurrent(ticket, cepInput.value.replace(/\D/g, ''))) return;
-            const fields = {
-                'paciente-logradouro': address.logradouro,
-                'paciente-bairro': address.bairro,
-                'paciente-cidade': address.cidade,
-                'paciente-uf': address.uf
-            };
-            Object.entries(fields).forEach(([id, value]) => {
-                const input = document.getElementById(id);
-                if (input.value === fieldSnapshots[id]) input.value = value || '';
-            });
+    const cepFields = {
+        logradouro: 'paciente-logradouro',
+        bairro: 'paciente-bairro',
+        cidade: 'paciente-cidade',
+        uf: 'paciente-uf',
+        numero: 'paciente-numero'
+    };
+    const lookupCep = VitalisCore.createPatientCepLookup({
+        gate: cepGate,
+        readCep: () => cepInput.disabled ? '' : cepInput.value,
+        readFields: () => Object.fromEntries(Object.entries(cepFields).map(([field, id]) => (
+            [field, document.getElementById(id).value]
+        ))),
+        lookup: (cep) => apiRequest(`/pacientes/cep/${cep}`),
+        writeFields: (values) => Object.entries(values).forEach(([field, value]) => {
+            document.getElementById(cepFields[field]).value = value;
+        }),
+        onStatus: (result) => {
+            if (result.type === 'loading') {
+                cepStatus.className = 'form-text text-muted';
+                cepStatus.textContent = 'Consultando CEP...';
+                return;
+            }
+            if (result.type === 'unavailable') {
+                cepStatus.className = 'form-text text-warning';
+                cepStatus.textContent = `${result.error.message} Você pode continuar com o preenchimento manual.`;
+                return;
+            }
             cepStatus.className = 'form-text text-success';
-            cepStatus.textContent = address.logradouro
-                ? 'Endereço localizado. Confira os dados e informe o número.'
-                : 'CEP localizado. Complete o logradouro e o número manualmente.';
+            cepStatus.textContent = result.numberCleared
+                ? 'Endereço diferente localizado. O número anterior foi removido; confira e informe o número correto.'
+                : result.address?.logradouro
+                    ? 'Endereço localizado. Confira os dados e confirme o número.'
+                    : 'CEP localizado. Complete o logradouro e confirme o número manualmente.';
             document.getElementById('paciente-numero').focus();
-        } catch (error) {
-            if (!cepGate.isCurrent(ticket, cepInput.value.replace(/\D/g, ''))) return;
-            cepStatus.className = 'form-text text-warning';
-            cepStatus.textContent = `${error.message} Você pode continuar com o preenchimento manual.`;
         }
-    }
+    });
 
     async function startEdit(id) {
         if (mutationLock.active) return;
