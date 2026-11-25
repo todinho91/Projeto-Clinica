@@ -129,6 +129,129 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
         ]);
         assert.deepEqual([first.statusCode, concurrent.statusCode].sort(), [201, 409]);
 
+        const [actors] = await setup.execute(`
+            INSERT INTO usuarios (nome, email, senha_hash, status, motivo_bloqueio) VALUES
+            ('Profissional A', 'profissional.a.paciente@example.test', ?, 'ativo', 'nenhum'),
+            ('Profissional B', 'profissional.b.paciente@example.test', ?, 'ativo', 'nenhum'),
+            ('Secretaria Norte', 'secretaria.norte.paciente@example.test', ?, 'ativo', 'nenhum'),
+            ('Paciente Titular', 'paciente.integracao@example.test', ?, 'ativo', 'nenhum'),
+            ('Profissional Sul', 'profissional.sul.paciente@example.test', ?, 'ativo', 'nenhum')
+        `, [hash, hash, hash, hash, hash]);
+        const [profA, profB, secretary, patientUser, profSouth] = Array.from(
+            { length: 5 }, (_, index) => Number(actors.insertId) + index
+        );
+        await setup.execute(`
+            INSERT INTO clinica_usuarios (clinica_id, usuario_id, papel, status) VALUES
+            (?, ?, 'profissional', 'ativo'), (?, ?, 'profissional', 'ativo'),
+            (?, ?, 'secretaria', 'ativo'), (?, ?, 'paciente', 'ativo'),
+            (?, ?, 'profissional', 'ativo')
+        `, [northId, profA, northId, profB, northId, secretary, northId, patientUser, southId, profSouth]);
+        const [[linkedPatient]] = await setup.execute(
+            'SELECT id FROM pacientes WHERE clinica_id = ? AND email = ?',
+            [northId, 'paciente.integracao@example.test']
+        );
+        await setup.execute('UPDATE pacientes SET usuario_id = ? WHERE clinica_id = ? AND id = ?',
+            [patientUser, northId, linkedPatient.id]);
+        const [southPatientResult] = await setup.execute(`
+            INSERT INTO pacientes (clinica_id, nome, email, telefone, data_nascimento, status)
+            VALUES (?, 'Paciente Sul', 'paciente.sul@example.test', '41900000000', '1990-01-01', 'ativo')
+        `, [southId]);
+        const southPatientId = Number(southPatientResult.insertId);
+        const [profiles] = await setup.execute(`
+            INSERT INTO profissionais (clinica_id, usuario_id, nome_exibicao, status) VALUES
+            (?, ?, 'Profissional A', 'ativo'), (?, ?, 'Profissional B', 'ativo'),
+            (?, ?, 'Profissional Sul', 'ativo')
+        `, [northId, profA, northId, profB, southId, profSouth]);
+        const [profileRows] = await setup.execute(`
+            SELECT id, clinica_id, usuario_id FROM profissionais
+            WHERE (clinica_id = ? AND usuario_id IN (?, ?)) OR (clinica_id = ? AND usuario_id = ?)
+        `, [northId, profA, profB, southId, profSouth]);
+        const profileA = Number(profileRows.find((row) => Number(row.usuario_id) === profA).id);
+        const profileB = Number(profileRows.find((row) => Number(row.usuario_id) === profB).id);
+        const profileSouth = Number(profileRows.find((row) => Number(row.usuario_id) === profSouth).id);
+        const [specialty] = await setup.execute(
+            "INSERT INTO especialidades (clinica_id, nome, status) VALUES (?, 'Clínica Geral', 'ativa')",
+            [northId]
+        );
+        const [appointments] = await setup.execute(`
+            INSERT INTO consultas (clinica_id, paciente_id, profissional_id, especialidade_id,
+                inicio_em, fim_em, status, criado_por_usuario_id) VALUES
+            (?, ?, ?, ?, '2030-01-01 12:00:00', '2030-01-01 12:30:00', 'realizada', ?),
+            (?, ?, ?, ?, '2030-01-02 12:00:00', '2030-01-02 12:30:00', 'confirmada', ?)
+        `, [northId, linkedPatient.id, profileA, specialty.insertId, northAdmin,
+            northId, linkedPatient.id, profileB, specialty.insertId, northAdmin]);
+        const appointmentA = Number(appointments.insertId);
+        const appointmentB = appointmentA + 1;
+        await setup.execute(`
+            INSERT INTO documentos_clinicos (clinica_id, paciente_id, titulo, storage_key,
+                mime_type, tamanho_bytes, status, enviado_por_usuario_id) VALUES
+            (?, ?, 'Documento A', 'fixture/a.pdf', 'application/pdf', 12, 'ativo', ?),
+            (?, ?, 'Documento B', 'fixture/b.pdf', 'application/pdf', 12, 'ativo', ?),
+            (?, ?, 'Documento Admin', 'fixture/admin.pdf', 'application/pdf', 12, 'ativo', ?)
+        `, [northId, linkedPatient.id, profA, northId, linkedPatient.id, profB,
+            northId, linkedPatient.id, northAdmin]);
+        await setup.execute(`
+            INSERT INTO consultas_historico (clinica_id, consulta_id, versao, acao,
+                status_novo, inicio_novo, fim_novo, alterado_por_usuario_id)
+            VALUES (?, ?, 1, 'agendada', 'realizada', '2030-01-01 12:00:00', '2030-01-01 12:30:00', ?),
+                   (?, ?, 1, 'agendada', 'confirmada', '2030-01-02 12:00:00', '2030-01-02 12:30:00', ?)
+        `, [northId, appointmentA, northAdmin, northId, appointmentB, northAdmin]);
+        const detailsFor = async (clinicId, role, userId, patientId) => {
+            const result = response();
+            await controller.getPacienteDetails({
+                params: { id: String(patientId) }, userId,
+                tenant: { clinicId, role, isPractice: false }
+            }, result);
+            return result;
+        };
+        const professionalAView = await detailsFor(northId, 'profissional', profA, linkedPatient.id);
+        assert.equal(professionalAView.statusCode, 200);
+        assert.deepEqual(professionalAView.body.consultas.map((item) => Number(item.id)), [appointmentA]);
+        assert.deepEqual(professionalAView.body.documentos.map((item) => item.titulo), ['Documento A']);
+        const professionalBView = await detailsFor(northId, 'profissional', profB, linkedPatient.id);
+        assert.equal(professionalBView.statusCode, 200);
+        assert.deepEqual(professionalBView.body.consultas.map((item) => Number(item.id)), [appointmentB]);
+        assert.deepEqual(professionalBView.body.documentos.map((item) => item.titulo), ['Documento B']);
+        await setup.execute("UPDATE profissionais SET status = 'inativo' WHERE clinica_id = ? AND id = ?",
+            [northId, profileA]);
+        assert.equal((await detailsFor(northId, 'profissional', profA, linkedPatient.id)).statusCode, 404,
+            'perfil profissional inativo não autoriza detalhes');
+        await setup.execute("UPDATE profissionais SET status = 'ativo' WHERE clinica_id = ? AND id = ?",
+            [northId, profileA]);
+        await setup.execute("UPDATE clinica_usuarios SET status = 'inativo' WHERE clinica_id = ? AND usuario_id = ?",
+            [northId, profA]);
+        assert.equal((await detailsFor(northId, 'profissional', profA, linkedPatient.id)).statusCode, 404,
+            'vínculo revogado não autoriza detalhes');
+        await setup.execute("UPDATE clinica_usuarios SET status = 'ativo' WHERE clinica_id = ? AND usuario_id = ?",
+            [northId, profA]);
+        await setup.execute("UPDATE consultas SET status = 'cancelada' WHERE clinica_id = ? AND id = ?",
+            [northId, appointmentA]);
+        assert.equal((await detailsFor(northId, 'profissional', profA, linkedPatient.id)).statusCode, 404,
+            'consulta cancelada não autoriza detalhes');
+        await setup.execute("UPDATE consultas SET status = 'realizada' WHERE clinica_id = ? AND id = ?",
+            [northId, appointmentA]);
+        for (const [role, userId] of [['paciente', patientUser], ['secretaria', secretary], ['administrador', northAdmin]]) {
+            const authorizedView = await detailsFor(northId, role, userId, linkedPatient.id);
+            assert.equal(authorizedView.statusCode, 200);
+            assert.equal(authorizedView.body.consultas.length, 2);
+            assert.equal(authorizedView.body.documentos.length, 3);
+        }
+        assert.equal((await detailsFor(southId, 'profissional', profSouth, linkedPatient.id)).statusCode, 404);
+        assert.equal((await detailsFor(northId, 'profissional', profA, southPatientId)).statusCode, 404);
+
+        const historyController = require('../controllers/consultaController');
+        const historyFor = async (userId, appointmentId) => {
+            const result = response();
+            await historyController.getHistory({
+                params: { id: String(appointmentId) }, userId,
+                tenant: { clinicId: northId, role: 'profissional' }
+            }, result);
+            return result;
+        };
+        assert.equal((await historyFor(profA, appointmentA)).statusCode, 200);
+        assert.equal((await historyFor(profA, appointmentB)).statusCode, 404);
+
+
         const duplicateCpf = response();
         await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, {
             nome: 'Outro Nome Mesmo CPF', email: 'outro.cpf@example.test', telefone: '41999990001'
@@ -268,26 +391,36 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
         }), isolatedIncomplete);
         assert.equal(isolatedIncomplete.statusCode, 201, 'exceções iguais são isoladas por clínica');
 
+        const appropriationEmail = 'paciente.administrativo.apropriacao@example.test';
+        const [administrativePatient] = await setup.execute(`
+            INSERT INTO pacientes (clinica_id, usuario_id, nome, email, telefone, data_nascimento, status)
+            VALUES (?, NULL, 'Paciente Administrativo Sintético', ?, NULL, '1988-06-12', 'ativo')
+        `, [northId, appropriationEmail]);
+        assert.ok(Number(administrativePatient.insertId) > 0);
         const publicRegistration = response();
         await authController.register({ body: {
             nome: 'Tentativa de Apropriação',
-            email: 'paciente.integracao@example.test',
+            email: appropriationEmail,
             senha: 'senha-ficticia-forte',
             clinica_slug: 'norte-pacientes-test'
         } }, publicRegistration);
         assert.equal(publicRegistration.statusCode, 409);
         const [[partialIdentity]] = await setup.execute(
             'SELECT COUNT(*) AS total FROM usuarios WHERE email = ?',
-            ['paciente.integracao@example.test']
+            [appropriationEmail]
         );
         const [[partialMembership]] = await setup.execute(`
             SELECT COUNT(*) AS total
             FROM clinica_usuarios cu
             JOIN usuarios u ON u.id = cu.usuario_id
             WHERE cu.clinica_id = ? AND u.email = ?
-        `, [northId, 'paciente.integracao@example.test']);
+        `, [northId, appropriationEmail]);
+        const [[preservedAdministrativePatient]] = await setup.execute(`
+            SELECT usuario_id FROM pacientes WHERE clinica_id = ? AND id = ? AND email = ?
+        `, [northId, administrativePatient.insertId, appropriationEmail]);
         assert.equal(Number(partialIdentity.total), 0);
         assert.equal(Number(partialMembership.total), 0);
+        assert.equal(preservedAdministrativePatient.usuario_id, null);
 
         const search = response();
         await controller.searchForScheduling({ tenant: { clinicId: northId }, query: { q: 'Integração' } }, search);
@@ -337,8 +470,8 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
 });
 
 test('integração destrutiva aceita somente banco descartável exclusivo de pacientes', () => {
-    assert.equal(assertPatientDisposableDatabaseName('vitalis_pacientes_m5_test'), 'vitalis_pacientes_m5_test');
-    for (const unsafe of ['vitalis_m3_validacao', 'vitalis_dev', 'vitalis_backend_test', 'vitalis_pacientes_test_backup']) {
+    assert.equal(assertPatientDisposableDatabaseName('vitalis_pacientes_seguridad_test'), 'vitalis_pacientes_seguridad_test');
+    for (const unsafe of ['vitalis_pacientes_visual_m5_test', 'vitalis_m3_validacao', 'vitalis_dev', 'vitalis_backend_test', 'vitalis_pacientes_test_backup']) {
         assert.throws(() => assertPatientDisposableDatabaseName(unsafe), /Operação recusada/);
     }
 });
@@ -347,11 +480,11 @@ test('integração confirma banco selecionado e MySQL 8 antes da limpeza', async
     const queries = [];
     const connection = { query: async (sql) => {
         queries.push(sql);
-        if (/DATABASE/.test(sql)) return [[{ database_name: 'vitalis_pacientes_m5_test' }]];
+        if (/DATABASE/.test(sql)) return [[{ database_name: 'vitalis_pacientes_seguridad_test' }]];
         return [[{ version: '8.0.40' }]];
     } };
-    const result = await confirmPatientTestEnvironment(connection, 'vitalis_pacientes_m5_test');
-    assert.deepEqual(result, { database: 'vitalis_pacientes_m5_test', version: '8.0.40' });
+    const result = await confirmPatientTestEnvironment(connection, 'vitalis_pacientes_seguridad_test');
+    assert.deepEqual(result, { database: 'vitalis_pacientes_seguridad_test', version: '8.0.40' });
     assert.deepEqual(queries, ['SELECT DATABASE() AS database_name', 'SELECT VERSION() AS version']);
 });
 

@@ -66,7 +66,7 @@ async function confirmAvailabilityTestEnvironment(connection, databaseName) {
 }
 
 function assertPatientDisposableDatabaseName(databaseName) {
-    if (!PATIENT_TEST_DATABASE_PATTERN.test(databaseName)) {
+    if (databaseName === 'vitalis_pacientes_visual_m5_test' || !PATIENT_TEST_DATABASE_PATTERN.test(databaseName)) {
         throw new Error(
             'Operação recusada: TEST_DB_DATABASE deve começar com vitalis_pacientes e terminar com _test.'
         );

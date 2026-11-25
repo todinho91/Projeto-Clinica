@@ -830,8 +830,18 @@ exports.getPacienteDetails = async (req, res) => {
                             JOIN profissionais pr
                               ON pr.clinica_id = c.clinica_id
                              AND pr.id = c.profissional_id
+                             AND pr.status = 'ativo'
+                            JOIN clinica_usuarios cu
+                              ON cu.clinica_id = c.clinica_id
+                             AND cu.usuario_id = pr.usuario_id
+                             AND cu.papel = 'profissional'
+                             AND cu.status = 'ativo'
+                            JOIN usuarios professional_user
+                              ON professional_user.id = pr.usuario_id
+                             AND professional_user.status = 'ativo'
                             WHERE c.clinica_id = p.clinica_id
                               AND c.paciente_id = p.id
+                              AND c.status IN ('agendada', 'confirmada', 'realizada')
                               AND pr.usuario_id = ?
                         )
                     )
@@ -860,8 +870,9 @@ exports.getPacienteDetails = async (req, res) => {
               ON p.clinica_id = c.clinica_id
              AND p.id = c.profissional_id
             WHERE c.clinica_id = ? AND c.paciente_id = ?
+              AND (? <> 'profissional' OR (p.usuario_id = ? AND p.status = 'ativo'))
             ORDER BY c.inicio_em DESC
-        `, [clinicId, patientId]);
+        `, [clinicId, patientId, req.tenant.role, req.userId]);
 
         // A secretária do consultório recebe somente os dados administrativos.
         // A clínica institucional mantém o comportamento já publicado, enquanto
@@ -873,8 +884,9 @@ exports.getPacienteDetails = async (req, res) => {
                 SELECT id, titulo, mime_type, tamanho_bytes, status, criado_em
                 FROM documentos_clinicos
                 WHERE clinica_id = ? AND paciente_id = ?
+                  AND (? <> 'profissional' OR enviado_por_usuario_id = ?)
                 ORDER BY criado_em DESC
-            `, [clinicId, patientId]);
+            `, [clinicId, patientId, req.tenant.role, req.userId]);
         }
 
         return res.status(200).json({
