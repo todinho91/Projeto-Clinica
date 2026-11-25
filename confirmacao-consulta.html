@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <meta name="robots" content="noindex, nofollow, noarchive">
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+    <title>Confirmar consulta — Vitalis</title>
+    <link rel="icon" type="image/png" href="img/icons8-blue-heart-96.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body class="vitalis-confirmation-page">
+    <main class="vitalis-confirmation-shell">
+        <section class="vitalis-confirmation-card" aria-labelledby="confirmation-title">
+            <div class="vitalis-confirmation-brand"><span class="vitalis-brand-mark"><i class="bi bi-heart-pulse-fill"></i></span><strong>Vitalis</strong></div>
+            <p class="vitalis-eyebrow">Confirmação segura</p>
+            <h1 id="confirmation-title">Confirme sua consulta</h1>
+            <div id="confirmation-loading" class="vitalis-confirmation-loading" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span> Verificando o link…</div>
+            <div id="confirmation-details" hidden>
+                <dl class="vitalis-confirmation-details">
+                    <div><dt>Clínica</dt><dd id="confirmation-clinic">—</dd></div>
+                    <div><dt>Data e horário</dt><dd id="confirmation-date">—</dd></div>
+                </dl>
+                <p>Você pretende comparecer a este atendimento?</p>
+                <div class="vitalis-confirmation-actions">
+                    <button class="btn vitalis-primary-button" id="confirmation-accept" type="button"><i class="bi bi-check-circle"></i> Sim, vou comparecer</button>
+                    <button class="btn btn-outline-danger" id="confirmation-decline" type="button"><i class="bi bi-x-circle"></i> Não poderei comparecer</button>
+                </div>
+            </div>
+            <div id="confirmation-status" role="status" aria-live="polite"></div>
+            <p class="vitalis-contact-note">Para cancelar ou reagendar, entre em contato diretamente com a clínica.</p>
+            <p class="vitalis-privacy-note"><i class="bi bi-shield-lock"></i> Este link é individual. A resposta informa apenas sua intenção e não registra atendimento realizado nem falta.</p>
+        </section>
+    </main>
+    <script src="js/vitalis-client.js"></script><script src="js/main.js"></script>
+</body>
+</html>
