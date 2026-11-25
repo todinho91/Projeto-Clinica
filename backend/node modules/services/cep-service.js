@@ -1,6 +1,8 @@
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 2048;
 const RATE_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT = 30;
+const MAX_RATE_KEYS = 10000;
 const cache = new Map();
 const requests = new Map();
 
@@ -11,12 +13,24 @@ function normalizedCep(value) {
 
 function allowRequest(key, now = Date.now()) {
     const current = requests.get(key);
-    if (!current || now - current.startedAt >= RATE_WINDOW_MS) {
+    if (current && now - current.startedAt >= RATE_WINDOW_MS) {
+        requests.delete(key);
+    }
+    if (!requests.has(key)) {
+        if (requests.size >= MAX_RATE_KEYS) {
+            for (const [rateKey, entry] of requests) {
+                if (now - entry.startedAt >= RATE_WINDOW_MS) requests.delete(rateKey);
+            }
+        }
+        // Fail closed instead of evicting active counters and allowing a caller
+        // to reset its own rate limit by filling the in-memory key space.
+        if (requests.size >= MAX_RATE_KEYS) return false;
         requests.set(key, { startedAt: now, count: 1 });
         return true;
     }
-    if (current.count >= RATE_LIMIT) return false;
-    current.count += 1;
+    const active = requests.get(key);
+    if (active.count >= RATE_LIMIT) return false;
+    active.count += 1;
     return true;
 }
 
@@ -31,6 +45,7 @@ async function lookupCep(value, options = {}) {
     const now = options.now ?? Date.now();
     const cached = cache.get(cep);
     if (cached && cached.expiresAt > now) return { kind: 'found', address: cached.address };
+    if (cached) cache.delete(cep);
     if (!allowRequest(String(options.rateKey || 'anonymous'), now)) return { kind: 'limited' };
 
     const abortController = new AbortController();
@@ -56,6 +71,14 @@ async function lookupCep(value, options = {}) {
             uf: text(data?.uf, 2).toUpperCase()
         };
         if (!address.cidade || !/^[A-Z]{2}$/.test(address.uf)) return { kind: 'unavailable' };
+        if (!cache.has(cep) && cache.size >= MAX_CACHE_ENTRIES) {
+            for (const [cachedCep, entry] of cache) {
+                if (entry.expiresAt <= now) cache.delete(cachedCep);
+            }
+        }
+        if (!cache.has(cep) && cache.size >= MAX_CACHE_ENTRIES) {
+            cache.delete(cache.keys().next().value);
+        }
         cache.set(cep, { address, expiresAt: now + CACHE_TTL_MS });
         return { kind: 'found', address };
     } catch {
