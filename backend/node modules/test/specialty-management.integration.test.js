@@ -28,6 +28,7 @@ async function resetTestSchema(connection, expectedDatabase) {
         );
     }
     const tables = [
+        'pacientes_identificacao_administrativa',
         'consultorio_delegacoes', 'consultorio_locais', 'consultorios_profissionais', 'identidades_profissionais',
         'bloqueios_profissional',
         'disponibilidades_profissional',

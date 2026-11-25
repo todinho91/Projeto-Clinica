@@ -7,7 +7,7 @@ const patterns = [
     { name: 'chave de acesso AWS', regex: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
     {
         name: 'segredo configurado em arquivo',
-        regex: /^(?:DB_PASSWORD|JWT_SECRET|SEED_PASSWORD|TEST_DB_PASSWORD)[ \t]*=[ \t]*[^ \t\r\n#<][^\r\n]*$/gm
+        regex: /^(?:DB_PASSWORD|JWT_SECRET|SEED_PASSWORD|TEST_DB_PASSWORD|PATIENT_CPF_ENCRYPTION_KEY|PATIENT_CPF_INDEX_KEY)[ \t]*=[ \t]*[^ \t\r\n#<][^\r\n]*$/gm
     }
 ];
 

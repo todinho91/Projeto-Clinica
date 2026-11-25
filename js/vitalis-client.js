@@ -233,6 +233,90 @@
         return Number.isSafeInteger(loaded) && loaded > 0 && loaded === selected ? loaded : null;
     }
 
+    function onlyDigits(value) {
+        return typeof value === 'string' ? value.replace(/\D/g, '') : '';
+    }
+
+    function isValidCpf(value) {
+        const cpf = onlyDigits(value);
+        if (!/^\d{11}$/.test(cpf) || /^(\d)\1{10}$/.test(cpf)) return false;
+        const verifier = (length) => {
+            let sum = 0;
+            for (let index = 0; index < length; index += 1) {
+                sum += Number(cpf[index]) * (length + 1 - index);
+            }
+            const remainder = (sum * 10) % 11;
+            return remainder === 10 ? 0 : remainder;
+        };
+        return verifier(9) === Number(cpf[9]) && verifier(10) === Number(cpf[10]);
+    }
+
+    function formatCpf(value) {
+        const cpf = onlyDigits(value).slice(0, 11);
+        return cpf.replace(/^(\d{3})(\d)/, '$1.$2')
+            .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
+            .replace(/\.(\d{3})(\d)/, '.$1-$2');
+    }
+
+    function formatCep(value) {
+        const cep = onlyDigits(value).slice(0, 8);
+        return cep.replace(/^(\d{5})(\d)/, '$1-$2');
+    }
+
+    function mergePatientCepAddress(snapshot, current, address) {
+        const fields = ['logradouro', 'bairro', 'cidade', 'uf'];
+        const values = { ...current };
+        if (!address || typeof address !== 'object') {
+            return { values, addressChanged: false, numberCleared: false };
+        }
+
+        const normalizedAddress = Object.fromEntries(fields.map((field) => [
+            field, String(address[field] ?? '')
+        ]));
+        const addressChanged = fields.some((field) => (
+            normalizedAddress[field]
+            && normalizedAddress[field].trim().replace(/\s+/g, ' ').toLocaleLowerCase('pt-BR')
+                !== String(snapshot[field] ?? '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('pt-BR')
+        ));
+        fields.forEach((field) => {
+            if (String(current[field] ?? '') === String(snapshot[field] ?? '')) {
+                values[field] = normalizedAddress[field];
+            }
+        });
+
+        const numberWasUntouched = String(current.numero ?? '') === String(snapshot.numero ?? '');
+        const numberCleared = addressChanged && numberWasUntouched && Boolean(snapshot.numero);
+        if (addressChanged && numberWasUntouched) values.numero = '';
+
+        return { values, addressChanged, numberCleared };
+    }
+
+    function createPatientCepLookup({ gate, readCep, readFields, lookup, writeFields, onStatus }) {
+        if (!gate || typeof gate.begin !== 'function' || typeof gate.isCurrent !== 'function'
+            || typeof readCep !== 'function' || typeof readFields !== 'function'
+            || typeof lookup !== 'function' || typeof writeFields !== 'function') {
+            throw new Error('Configuração inválida para consulta de CEP.');
+        }
+
+        return async function runPatientCepLookup() {
+            const cep = String(readCep() ?? '').replace(/\D/g, '');
+            if (cep.length !== 8) return;
+            const ticket = gate.begin(cep);
+            const snapshot = readFields();
+            onStatus?.({ type: 'loading' });
+            try {
+                const address = await lookup(cep);
+                if (!gate.isCurrent(ticket, String(readCep() ?? '').replace(/\D/g, ''))) return;
+                const merged = mergePatientCepAddress(snapshot, readFields(), address);
+                writeFields(merged.values);
+                onStatus?.({ type: 'success', address, ...merged });
+            } catch (error) {
+                if (!gate.isCurrent(ticket, String(readCep() ?? '').replace(/\D/g, ''))) return;
+                onStatus?.({ type: 'unavailable', error });
+            }
+        };
+    }
+
     function appointmentPayload(localStart, durationMinutes, professionalId, specialtyId) {
         const duration = Number(durationMinutes);
         const professional = Number(professionalId);
@@ -319,11 +403,16 @@
         appointmentPayload,
         clinicEntryDecision,
         createSession,
+        createPatientCepLookup,
         createLatestRequestGate,
         createOperationLock,
         dashboardForRole,
         dashboardAgenda,
         dashboardSummary,
+        formatCep,
+        mergePatientCepAddress,
+        formatCpf,
+        isValidCpf,
         platformAccessState,
         matchingSelectionId,
         isPracticeOwner,

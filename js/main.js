@@ -2772,21 +2772,151 @@ async function setupPatientsPage() {
     const next = document.getElementById('pacientes-proximo');
     const pageLabel = document.getElementById('pacientes-pagina');
     const duplicatePanel = document.getElementById('paciente-duplicidades');
+    const cpfInput = document.getElementById('paciente-cpf');
+    const cpfHelp = document.getElementById('paciente-cpf-help');
+    const cpfExceptionToggle = document.getElementById('paciente-sem-cpf');
+    const cpfException = document.getElementById('paciente-cpf-excecao');
+    const cpfExceptionWrap = document.getElementById('paciente-cpf-excecao-wrap');
+    const cepInput = document.getElementById('paciente-cep');
+    const cepStatus = document.getElementById('paciente-cep-status');
+    const addressExceptionToggle = document.getElementById('paciente-sem-endereco');
+    const addressException = document.getElementById('paciente-endereco-excecao');
+    const addressExceptionWrap = document.getElementById('paciente-endereco-excecao-wrap');
+    const pendingWrap = document.getElementById('paciente-pendente-wrap');
+    const keepPending = document.getElementById('paciente-manter-pendente');
+    const registrationState = document.getElementById('paciente-cadastro-state');
+    const addressFieldIds = [
+        'paciente-cep', 'paciente-logradouro', 'paciente-numero', 'paciente-complemento',
+        'paciente-bairro', 'paciente-cidade', 'paciente-uf'
+    ];
     const loadGate = VitalisCore.createLatestRequestGate();
     const editGate = VitalisCore.createLatestRequestGate();
+    const cepGate = VitalisCore.createLatestRequestGate();
     const mutationLock = VitalisCore.createOperationLock();
     let editingId = null;
     let editLoading = false;
     let approvedDuplicateReview = null;
+    let existingCpf = false;
+    let existingCpfMask = null;
+    let editingRegistrationStatus = null;
+    let cepTimer = null;
     let page = 1;
     let total = 0;
     const limit = 20;
+
+    function setFieldError(id, message = '') {
+        const input = document.getElementById(id);
+        const error = document.getElementById(`${id}-error`);
+        input?.setCustomValidity(message);
+        input?.classList.toggle('is-invalid', Boolean(message));
+        if (error) error.textContent = message;
+    }
+
+    function syncIdentificationControls() {
+        const pending = !pendingWrap.hidden && keepPending.checked;
+        const cpfExcepted = cpfExceptionToggle.checked;
+        cpfExceptionWrap.hidden = !cpfExcepted;
+        cpfInput.disabled = pending || cpfExcepted;
+        cpfInput.required = !pending && !cpfExcepted && !existingCpf;
+        cpfException.disabled = pending || !cpfExcepted;
+        cpfException.required = !pending && cpfExcepted;
+
+        const addressExcepted = addressExceptionToggle.checked;
+        addressExceptionWrap.hidden = !addressExcepted;
+        addressFieldIds.forEach((id) => {
+            const input = document.getElementById(id);
+            input.disabled = pending || addressExcepted;
+            input.required = !pending && !addressExcepted && id !== 'paciente-complemento';
+        });
+        addressException.disabled = pending || !addressExcepted;
+        addressException.required = !pending && addressExcepted;
+        document.getElementById('paciente-nascimento').required = !pending;
+        cpfExceptionToggle.disabled = pending;
+        addressExceptionToggle.disabled = pending;
+    }
+
+    function clearValidation() {
+        form.querySelectorAll('input, select').forEach((control) => {
+            control.setCustomValidity('');
+            control.classList.remove('is-invalid');
+        });
+        form.querySelectorAll('.vitalis-field-error').forEach((element) => {
+            element.textContent = '';
+        });
+    }
+
+    function validatePatientForm() {
+        clearValidation();
+        const pending = !pendingWrap.hidden && keepPending.checked;
+        const name = document.getElementById('paciente-nome');
+        if (name.value.trim().replace(/\s+/g, ' ').length < 2) {
+            setFieldError('paciente-nome', 'Informe o nome completo do paciente.');
+        }
+        const email = document.getElementById('paciente-email');
+        if (email.value && !email.validity.valid) {
+            setFieldError('paciente-email', 'Informe um e-mail válido ou deixe o campo vazio.');
+        }
+        const phone = document.getElementById('paciente-telefone');
+        const phoneDigits = phone.value.replace(/\D/g, '');
+        if (phone.value && (phoneDigits.length < 8 || phoneDigits.length > 15)) {
+            setFieldError('paciente-telefone', 'Informe um telefone válido ou deixe o campo vazio.');
+        }
+        if (document.getElementById('paciente-preferencia-contato').value === 'whatsapp'
+            && !phoneDigits) {
+            setFieldError('paciente-telefone', 'Informe o telefone para autorizar contato por WhatsApp.');
+        }
+        if (!pending) {
+            const birth = document.getElementById('paciente-nascimento');
+            if (!birth.value || !birth.validity.valid) {
+                setFieldError('paciente-nascimento', 'Informe uma data de nascimento válida.');
+            }
+            if (cpfExceptionToggle.checked) {
+                if (!cpfException.value) {
+                    setFieldError('paciente-cpf-excecao', 'Selecione o motivo autorizado da exceção.');
+                }
+            } else if (cpfInput.value) {
+                if (!VitalisCore.isValidCpf(cpfInput.value)) {
+                    setFieldError('paciente-cpf', 'CPF inválido. Confira os onze dígitos.');
+                }
+            } else if (!existingCpf) {
+                setFieldError('paciente-cpf', 'Informe o CPF ou registre uma exceção justificada.');
+            }
+            if (addressExceptionToggle.checked) {
+                if (!addressException.value) {
+                    setFieldError('paciente-endereco-excecao', 'Selecione o motivo autorizado da exceção.');
+                }
+            } else {
+                const requiredAddress = [
+                    ['paciente-cep', 'Informe um CEP com oito dígitos.'],
+                    ['paciente-logradouro', 'Informe o logradouro.'],
+                    ['paciente-numero', 'Informe o número.'],
+                    ['paciente-bairro', 'Informe o bairro.'],
+                    ['paciente-cidade', 'Informe a cidade.'],
+                    ['paciente-uf', 'Informe uma UF válida.']
+                ];
+                requiredAddress.forEach(([id, message]) => {
+                    const value = document.getElementById(id).value.trim();
+                    const valid = id === 'paciente-cep' ? /^\d{5}-?\d{3}$/.test(value)
+                        : id === 'paciente-uf' ? /^[A-Za-z]{2}$/.test(value) : Boolean(value);
+                    if (!valid) setFieldError(id, message);
+                });
+            }
+        }
+        const firstInvalid = form.querySelector('.is-invalid');
+        if (firstInvalid) {
+            firstInvalid.focus();
+            firstInvalid.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return false;
+        }
+        return true;
+    }
 
     function setFormDisabled(disabled) {
         form.setAttribute('aria-busy', String(disabled));
         form.querySelectorAll('input, select, button').forEach((control) => {
             control.disabled = disabled;
         });
+        if (!disabled) syncIdentificationControls();
     }
 
     function setEditActionsDisabled(disabled) {
@@ -2805,16 +2935,30 @@ async function setupPatientsPage() {
     function clearPatientForm() {
         editingId = null;
         approvedDuplicateReview = null;
+        existingCpf = false;
+        existingCpfMask = null;
+        editingRegistrationStatus = null;
+        cepGate.invalidate();
+        clearTimeout(cepTimer);
         duplicatePanel.hidden = true;
         duplicatePanel.replaceChildren();
         form.reset();
+        clearValidation();
+        cpfInput.placeholder = '000.000.000-00';
+        cpfHelp.textContent = 'A validação confirma somente os dígitos; não consulta a situação na Receita Federal.';
+        pendingWrap.hidden = true;
+        keepPending.checked = false;
+        registrationState.hidden = true;
+        registrationState.className = 'vitalis-registration-state';
+        cepStatus.textContent = '';
         document.getElementById('paciente-status').value = 'ativo';
         title.textContent = 'Cadastrar paciente';
         cancel.hidden = true;
+        syncIdentificationControls();
     }
 
     function patientFormPayload() {
-        return {
+        const payload = {
             nome: document.getElementById('paciente-nome').value,
             email: document.getElementById('paciente-email').value,
             telefone: document.getElementById('paciente-telefone').value,
@@ -2825,6 +2969,27 @@ async function setupPatientsPage() {
                 revisao_duplicidade: true, motivo_revisao: approvedDuplicateReview
             } : {})
         };
+        if (!pendingWrap.hidden && keepPending.checked) {
+            payload.manter_cadastro_pendente = true;
+            return payload;
+        }
+        if (cpfExceptionToggle.checked) payload.cpf_excecao = cpfException.value;
+        else if (cpfInput.value) payload.cpf = cpfInput.value;
+        else if (existingCpf) payload.preservar_cpf = true;
+        if (addressExceptionToggle.checked) {
+            payload.endereco_excecao = addressException.value;
+        } else {
+            Object.assign(payload, {
+                cep: cepInput.value,
+                logradouro: document.getElementById('paciente-logradouro').value,
+                numero: document.getElementById('paciente-numero').value,
+                complemento: document.getElementById('paciente-complemento').value,
+                bairro: document.getElementById('paciente-bairro').value,
+                cidade: document.getElementById('paciente-cidade').value,
+                uf: document.getElementById('paciente-uf').value
+            });
+        }
+        return payload;
     }
 
     function showDuplicateCandidates(data) {
@@ -2890,6 +3055,44 @@ async function setupPatientsPage() {
         showMessage(formStatus, '', 'muted');
     }
 
+    const cepFields = {
+        logradouro: 'paciente-logradouro',
+        bairro: 'paciente-bairro',
+        cidade: 'paciente-cidade',
+        uf: 'paciente-uf',
+        numero: 'paciente-numero'
+    };
+    const lookupCep = VitalisCore.createPatientCepLookup({
+        gate: cepGate,
+        readCep: () => cepInput.disabled ? '' : cepInput.value,
+        readFields: () => Object.fromEntries(Object.entries(cepFields).map(([field, id]) => (
+            [field, document.getElementById(id).value]
+        ))),
+        lookup: (cep) => apiRequest(`/pacientes/cep/${cep}`),
+        writeFields: (values) => Object.entries(values).forEach(([field, value]) => {
+            document.getElementById(cepFields[field]).value = value;
+        }),
+        onStatus: (result) => {
+            if (result.type === 'loading') {
+                cepStatus.className = 'form-text text-muted';
+                cepStatus.textContent = 'Consultando CEP...';
+                return;
+            }
+            if (result.type === 'unavailable') {
+                cepStatus.className = 'form-text text-warning';
+                cepStatus.textContent = `${result.error.message} Você pode continuar com o preenchimento manual.`;
+                return;
+            }
+            cepStatus.className = 'form-text text-success';
+            cepStatus.textContent = result.numberCleared
+                ? 'Endereço diferente localizado. O número anterior foi removido; confira e informe o número correto.'
+                : result.address?.logradouro
+                    ? 'Endereço localizado. Confira os dados e confirme o número.'
+                    : 'CEP localizado. Complete o logradouro e confirme o número manualmente.';
+            document.getElementById('paciente-numero').focus();
+        }
+    });
+
     async function startEdit(id) {
         if (mutationLock.active) return;
         const patientId = Number(id);
@@ -2915,6 +3118,38 @@ async function setupPatientsPage() {
             document.getElementById('paciente-nascimento').value = patient.data_nascimento
                 ? String(patient.data_nascimento).slice(0, 10) : '';
             document.getElementById('paciente-status').value = patient.status;
+            editingRegistrationStatus = patient.cadastro_status || 'pendente';
+            existingCpf = patient.cpf_cadastrado === true;
+            existingCpfMask = patient.cpf_mascarado || null;
+            cpfInput.value = '';
+            cpfInput.placeholder = existingCpfMask || '000.000.000-00';
+            cpfHelp.textContent = existingCpf
+                ? `CPF atual protegido: ${existingCpfMask}. Deixe vazio para preservar ou informe outro CPF para substituir.`
+                : 'A validação confirma somente os dígitos; não consulta a situação na Receita Federal.';
+            cpfExceptionToggle.checked = Boolean(patient.cpf_excecao);
+            cpfException.value = patient.cpf_excecao || '';
+            cepInput.value = patient.cep ? VitalisCore.formatCep(patient.cep) : '';
+            document.getElementById('paciente-logradouro').value = patient.logradouro || '';
+            document.getElementById('paciente-numero').value = patient.numero || '';
+            document.getElementById('paciente-complemento').value = patient.complemento || '';
+            document.getElementById('paciente-bairro').value = patient.bairro || '';
+            document.getElementById('paciente-cidade').value = patient.cidade || '';
+            document.getElementById('paciente-uf').value = patient.uf || '';
+            addressExceptionToggle.checked = Boolean(patient.endereco_excecao);
+            addressException.value = patient.endereco_excecao || '';
+            pendingWrap.hidden = editingRegistrationStatus !== 'pendente';
+            keepPending.checked = false;
+            registrationState.hidden = false;
+            registrationState.textContent = {
+                completo: 'Cadastro completo',
+                excecao: 'Cadastro completo por exceção',
+                pendente: 'Cadastro pendente de complementação'
+            }[editingRegistrationStatus] || 'Cadastro pendente de complementação';
+            registrationState.className = `vitalis-registration-state ${
+                editingRegistrationStatus === 'completo' ? 'vitalis-registration-state-complete'
+                    : editingRegistrationStatus === 'excecao' ? 'vitalis-registration-state-exception' : ''
+            }`;
+            syncIdentificationControls();
             cancel.hidden = false;
             showMessage(formStatus, '', 'muted');
             form.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2978,8 +3213,18 @@ async function setupPatientsPage() {
         }
         patients.forEach((patient) => {
             const row = document.createElement('tr');
+            const patientCell = tableCell(patient.nome);
+            patientCell.dataset.label = 'Paciente';
+            patientCell.className = 'vitalis-patient-name';
+            const registration = document.createElement('small');
+            registration.textContent = {
+                completo: 'Cadastro completo',
+                excecao: 'Cadastro completo por exceção',
+                pendente: 'Pendente de complementação'
+            }[patient.cadastro_status] || 'Pendente de complementação';
+            patientCell.append(registration);
+            row.append(patientCell);
             const values = [
-                ['Paciente', patient.nome],
                 ['E-mail', patient.email_mascarado || 'Não informado'],
                 ['Telefone', patient.telefone_mascarado || 'Não informado'],
                 ['Nascimento', patient.ano_nascimento || 'Não informado']
@@ -2987,7 +3232,6 @@ async function setupPatientsPage() {
             values.forEach(([label, value]) => {
                 const cell = tableCell(value);
                 cell.dataset.label = label;
-                if (label === 'Paciente') cell.className = 'vitalis-patient-name';
                 row.append(cell);
             });
             const statusCell = document.createElement('td');
@@ -3053,7 +3297,12 @@ async function setupPatientsPage() {
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
-        if (editLoading || !mutationLock.tryBegin()) return;
+        if (editLoading || !validatePatientForm() || !mutationLock.tryBegin()) {
+            if (!editLoading && !mutationLock.active) {
+                showMessage(formStatus, 'Revise os campos destacados antes de salvar.');
+            }
+            return;
+        }
         editGate.invalidate();
         const targetId = editingId;
         setFormDisabled(true);
@@ -3088,13 +3337,50 @@ async function setupPatientsPage() {
             setEditActionsDisabled(false);
         }
     });
-    ['paciente-nome', 'paciente-email', 'paciente-telefone', 'paciente-nascimento'].forEach((id) => {
+    [
+        'paciente-nome', 'paciente-email', 'paciente-telefone', 'paciente-nascimento',
+        'paciente-cpf', 'paciente-cep', 'paciente-logradouro', 'paciente-numero',
+        'paciente-complemento', 'paciente-bairro', 'paciente-cidade', 'paciente-uf'
+    ].forEach((id) => {
         document.getElementById(id).addEventListener('input', () => {
             approvedDuplicateReview = null;
             duplicatePanel.hidden = true;
             duplicatePanel.replaceChildren();
+            setFieldError(id, '');
         });
     });
+    cpfInput.addEventListener('input', () => {
+        cpfInput.value = VitalisCore.formatCpf(cpfInput.value);
+    });
+    cepInput.addEventListener('input', () => {
+        cepInput.value = VitalisCore.formatCep(cepInput.value);
+        cepGate.invalidate();
+        clearTimeout(cepTimer);
+        const cep = cepInput.value.replace(/\D/g, '');
+        if (cep.length === 8) cepTimer = setTimeout(lookupCep, 250);
+    });
+    document.getElementById('paciente-uf').addEventListener('input', (event) => {
+        event.currentTarget.value = event.currentTarget.value.toUpperCase().replace(/[^A-Z]/g, '');
+    });
+    cpfExceptionToggle.addEventListener('change', () => {
+        setFieldError('paciente-cpf', '');
+        setFieldError('paciente-cpf-excecao', '');
+        syncIdentificationControls();
+    });
+    cpfException.addEventListener('change', () => setFieldError('paciente-cpf-excecao', ''));
+    addressExceptionToggle.addEventListener('change', () => {
+        setFieldError('paciente-endereco-excecao', '');
+        syncIdentificationControls();
+    });
+    addressException.addEventListener('change', () => setFieldError('paciente-endereco-excecao', ''));
+    keepPending.addEventListener('change', syncIdentificationControls);
+    const today = new Date();
+    const earliestBirth = new Date(Date.UTC(
+        today.getUTCFullYear() - 130, today.getUTCMonth(), today.getUTCDate()
+    ));
+    const birthInput = document.getElementById('paciente-nascimento');
+    birthInput.min = earliestBirth.toISOString().slice(0, 10);
+    birthInput.max = today.toISOString().slice(0, 10);
     cancel.addEventListener('click', () => {
         if (mutationLock.active || editLoading) return;
         editGate.invalidate();
@@ -3103,6 +3389,7 @@ async function setupPatientsPage() {
     searchForm.addEventListener('submit', (event) => { event.preventDefault(); page = 1; loadPatients(); });
     previous.addEventListener('click', () => { if (page > 1) { page -= 1; loadPatients(); } });
     next.addEventListener('click', () => { if (page * limit < total) { page += 1; loadPatients(); } });
+    syncIdentificationControls();
     await loadPatients();
 }
 
