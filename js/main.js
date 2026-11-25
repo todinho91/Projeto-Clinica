@@ -1201,6 +1201,9 @@ async function setupEquipePage() {
         try {
             const members = await apiRequest('/equipe');
             list.replaceChildren();
+            const activeAdministratorCount = members.filter((member) =>
+                member.papel === 'administrador' && member.status === 'ativo'
+            ).length;
             if (!members.length) {
                 const row = document.createElement('tr'); const cell = tableCell('Nenhum membro.'); cell.colSpan = 5; row.append(cell); list.append(row); return;
             }
@@ -1307,15 +1310,19 @@ async function setupEquipePage() {
                 if (canManageMember && member.status === 'ativo') {
                     const practiceSecretary = VitalisCore.isPracticeOwner(clinic)
                         && member.papel === 'secretaria';
-                    const actionLabel = practiceSecretary ? 'Desativar acesso' : 'Desativar';
-                    addButton(actionLabel, 'btn-outline-danger', () => {
-                        if (window.confirm(`${actionLabel} de ${member.nome}? As sessões desse vínculo serão encerradas e o histórico será preservado.`)) {
-                            action(
-                                `/equipe/vinculos/${member.id}/status`, 'PATCH', {status:'inativo'},
-                                `Acesso de ${member.nome} desativado. O histórico foi preservado.`
-                            ).catch((error) => showMessage(status, error.message));
-                        }
-                    });
+                    const isLastAdministrator = member.papel === 'administrador'
+                        && member.status === 'ativo' && activeAdministratorCount <= 1;
+                    if (!isLastAdministrator) {
+                        const actionLabel = practiceSecretary ? 'Desativar acesso' : 'Desativar';
+                        addButton(actionLabel, 'btn-outline-danger', () => {
+                            if (window.confirm(`${actionLabel} de ${member.nome}? As sessões desse vínculo serão encerradas e o histórico será preservado.`)) {
+                                action(
+                                    `/equipe/vinculos/${member.id}/status`, 'PATCH', {status:'inativo'},
+                                    `Acesso de ${member.nome} desativado. O histórico foi preservado.`
+                                ).catch((error) => showMessage(status, error.message));
+                            }
+                        });
+                    }
                 }
                 if (canManageMember && VitalisCore.isPracticeOwner(clinic)
                     && member.papel === 'secretaria' && member.status === 'ativo') {
