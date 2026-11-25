@@ -142,3 +142,37 @@ test('proxy de CEP interrompe provedor lento no timeout configurado', async () =
     assert.equal(aborted, true);
     assert.equal(result.kind, 'unavailable');
 });
+
+test('limiter de CEP mantém memória limitada e falha fechado quando cheio', () => {
+    cepService.resetForTests();
+    for (let index = 0; index < 10000; index += 1) {
+        assert.equal(cepService.allowRequest(`operator-${index}`, 1000), true);
+    }
+    assert.equal(cepService.allowRequest('operator-over-capacity', 1000), false);
+    assert.equal(cepService.allowRequest('operator-over-capacity', 61000), true);
+});
+
+test('cache de CEP remove entradas antigas quando atinge o limite', async () => {
+    cepService.resetForTests();
+    let providerCalls = 0;
+    const fetchImpl = async () => {
+        providerCalls += 1;
+        return {
+            ok: true,
+            json: async () => ({ logradouro: 'Rua Teste', bairro: 'Centro', localidade: 'Curitiba', uf: 'PR' })
+        };
+    };
+    for (let index = 0; index < 2049; index += 1) {
+        const cep = String(10000000 + index);
+        const result = await cepService.lookupCep(cep, {
+            rateKey: `cache-operator-${index}`, now: 1000, fetchImpl
+        });
+        assert.equal(result.kind, 'found');
+    }
+    assert.equal(providerCalls, 2049);
+    const first = await cepService.lookupCep('10000000', {
+        rateKey: 'cache-operator-0', now: 1000, fetchImpl
+    });
+    assert.equal(first.kind, 'found');
+    assert.equal(providerCalls, 2050);
+});
