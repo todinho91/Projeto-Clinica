@@ -444,6 +444,52 @@ test('não permite desativar o último administrador ativo', async (t) => {
     assert.equal(executions.some(({sql})=>/UPDATE clinica_usuarios SET status/.test(sql)),false);
 });
 
+test('não permite transferir o papel do último administrador ativo', async (t) => {
+    const executions=[];
+    const conn=connection(async(sql,params)=>{
+        executions.push({sql,params});
+        if (/SELECT id, usuario_id, papel, status FROM clinica_usuarios/.test(sql)) {
+            return [[{id:80,usuario_id:70,papel:'administrador',status:'ativo'}]];
+        }
+        if (/papel='administrador'/.test(sql)) return [[]];
+        return [{affectedRows:1}];
+    });
+    const rollback=t.mock.method(conn,'rollback'); const commit=t.mock.method(conn,'commit');
+    t.mock.method(pool,'getConnection',async()=>conn); const res=response();
+    await controller.updateRole(
+        {params:{id:'80'},body:{papel:'secretaria'},tenant:{clinicId:11,role:'administrador'},userId:70},
+        res
+    );
+    assert.equal(res.statusCode,409);
+    assert.equal(res.body.error,'A clínica deve manter ao menos um administrador ativo.');
+    assert.equal(rollback.mock.callCount(),1);
+    assert.equal(commit.mock.callCount(),0);
+    assert.ok(executions.some(({sql})=>/papel='administrador'[\s\S]*FOR UPDATE/.test(sql)));
+    assert.equal(executions.some(({sql})=>/UPDATE clinica_usuarios SET papel/.test(sql)),false);
+});
+
+test('permite alterar o papel quando outro administrador ativo permanece', async (t) => {
+    const executions=[];
+    const conn=connection(async(sql,params)=>{
+        executions.push({sql,params});
+        if (/SELECT id, usuario_id, papel, status FROM clinica_usuarios/.test(sql)) {
+            return [[{id:80,usuario_id:70,papel:'administrador',status:'ativo'}]];
+        }
+        if (/papel='administrador'/.test(sql)) return [[{id:81}]];
+        return [{affectedRows:1}];
+    });
+    const commit=t.mock.method(conn,'commit'); t.mock.method(pool,'getConnection',async()=>conn);
+    const res=response();
+    await controller.updateRole(
+        {params:{id:'80'},body:{papel:'secretaria'},tenant:{clinicId:11,role:'administrador'},userId:70},
+        res
+    );
+    assert.equal(res.statusCode,200);
+    assert.equal(commit.mock.callCount(),1);
+    assert.ok(executions.some(({sql,params})=>/UPDATE clinica_usuarios[\s\S]*SET papel=/.test(sql)
+        && params[0]==='secretaria'));
+});
+
 test('vínculo pendente não pode ser ativado sem aceite do titular', async (t) => {
     const conn=connection(async(sql)=>{
         if (/SELECT id FROM clinicas/.test(sql)) return [[{id:11}]];
