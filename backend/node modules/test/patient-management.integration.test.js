@@ -255,8 +255,8 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
 });
 
 test('integração destrutiva aceita somente banco descartável exclusivo de pacientes', () => {
-    assert.equal(assertPatientDisposableDatabaseName('vitalis_pacientes_m5_test'), 'vitalis_pacientes_m5_test');
-    for (const unsafe of ['vitalis_m3_validacao', 'vitalis_dev', 'vitalis_backend_test', 'vitalis_pacientes_test_backup']) {
+    assert.equal(assertPatientDisposableDatabaseName('vitalis_pacientes_seguridad_test'), 'vitalis_pacientes_seguridad_test');
+    for (const unsafe of ['vitalis_pacientes_visual_m5_test', 'vitalis_m3_validacao', 'vitalis_dev', 'vitalis_backend_test', 'vitalis_pacientes_test_backup']) {
         assert.throws(() => assertPatientDisposableDatabaseName(unsafe), /Operação recusada/);
     }
 });
@@ -265,11 +265,11 @@ test('integração confirma banco selecionado e MySQL 8 antes da limpeza', async
     const queries = [];
     const connection = { query: async (sql) => {
         queries.push(sql);
-        if (/DATABASE/.test(sql)) return [[{ database_name: 'vitalis_pacientes_m5_test' }]];
+        if (/DATABASE/.test(sql)) return [[{ database_name: 'vitalis_pacientes_seguridad_test' }]];
         return [[{ version: '8.0.40' }]];
     } };
-    const result = await confirmPatientTestEnvironment(connection, 'vitalis_pacientes_m5_test');
-    assert.deepEqual(result, { database: 'vitalis_pacientes_m5_test', version: '8.0.40' });
+    const result = await confirmPatientTestEnvironment(connection, 'vitalis_pacientes_seguridad_test');
+    assert.deepEqual(result, { database: 'vitalis_pacientes_seguridad_test', version: '8.0.40' });
     assert.deepEqual(queries, ['SELECT DATABASE() AS database_name', 'SELECT VERSION() AS version']);
 });
 
