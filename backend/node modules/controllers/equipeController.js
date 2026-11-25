@@ -151,7 +151,7 @@ async function issueInvitation(connection, req, link, email, role) {
 exports.list = async (req, res) => {
     try {
         const [rows] = await pool.execute(`
-            SELECT cu.id, cu.usuario_id, u.nome, u.email, cu.papel, cu.status,
+            SELECT cu.id, cu.usuario_id, u.nome, u.email, u.status AS usuario_status, cu.papel, cu.status,
                    i.id AS convite_id, i.status AS convite_status, i.expira_em, i.criado_em,
                    i.envio_status, i.aceito_em, i.revogado_em,
                    COALESCE(cd.gerenciar_disponibilidade, 0) AS gerenciar_disponibilidade
