@@ -1201,9 +1201,6 @@ async function setupEquipePage() {
         try {
             const members = await apiRequest('/equipe');
             list.replaceChildren();
-            const activeAdministratorCount = members.filter((member) =>
-                member.papel === 'administrador' && member.status === 'ativo'
-            ).length;
             if (!members.length) {
                 const row = document.createElement('tr'); const cell = tableCell('Nenhum membro.'); cell.colSpan = 5; row.append(cell); list.append(row); return;
             }
@@ -1220,7 +1217,9 @@ async function setupEquipePage() {
                 person.append(personName, email);
 
                 const roleCell = setCellLabel(tableCell(roleLabels[member.papel] || member.papel), 'Papel');
-                if (clinic.papel === 'administrador' && member.status !== 'convite_pendente') {
+                const isLastActiveAdministrator = VitalisCore.isLastActiveAdministrator(member, members);
+                if (clinic.papel === 'administrador' && member.status !== 'convite_pendente'
+                    && !isLastActiveAdministrator) {
                     const select = document.createElement('select');
                     select.className = 'form-select form-select-sm vitalis-team-role-select';
                     select.setAttribute('aria-label', `Papel de ${member.nome}`);
@@ -1232,6 +1231,15 @@ async function setupEquipePage() {
                     });
                     select.addEventListener('change', () => {
                         const nextRole = select.value;
+                        if (VitalisCore.isLastActiveAdministrator(member, members)) {
+                            showMessage(
+                                status,
+                                'Mantenha outro administrador ativo antes de transferir este papel. A equipe será atualizada.',
+                                'warning'
+                            );
+                            load();
+                            return;
+                        }
                         if (!window.confirm(`Alterar o papel de ${member.nome} para ${roleLabels[nextRole]}?`)) {
                             select.value = member.papel;
                             return;
@@ -1239,9 +1247,30 @@ async function setupEquipePage() {
                         action(
                             `/equipe/vinculos/${member.id}/papel`, 'PATCH', { papel: nextRole },
                             `Papel de ${member.nome} atualizado.`
-                        ).catch((error) => { showMessage(status, error.message); load(); });
+                        ).catch((error) => {
+                            const lastAdministratorConflict = error.message
+                                .includes('A clínica deve manter ao menos um administrador ativo.');
+                            showMessage(
+                                status,
+                                lastAdministratorConflict
+                                    ? 'Outro administrador ativo é necessário. A equipe foi atualizada antes de nova tentativa.'
+                                    : error.message,
+                                lastAdministratorConflict ? 'warning' : 'danger'
+                            );
+                            load();
+                        });
                     });
                     roleCell.replaceChildren(select);
+                } else if (isLastActiveAdministrator) {
+                    const roleReadOnly = document.createElement('div');
+                    roleReadOnly.className = 'vitalis-team-role-readonly';
+                    roleReadOnly.textContent = roleLabels[member.papel] || member.papel;
+                    const roleNote = document.createElement('small');
+                    roleNote.className = 'vitalis-team-role-lock-note';
+                    roleNote.textContent = 'Mantenha outro administrador ativo antes de transferir este papel.';
+                    const rolePresentation = document.createElement('div');
+                    rolePresentation.append(roleReadOnly, roleNote);
+                    roleCell.replaceChildren(rolePresentation);
                 }
                 const deliveryLabel = {
                     not_requested: 'Envio pendente',
@@ -1311,8 +1340,7 @@ async function setupEquipePage() {
                 if (canManageMember && member.status === 'ativo') {
                     const practiceSecretary = VitalisCore.isPracticeOwner(clinic)
                         && member.papel === 'secretaria';
-                    const isLastAdministrator = member.papel === 'administrador'
-                        && member.status === 'ativo' && activeAdministratorCount <= 1;
+                    const isLastAdministrator = VitalisCore.isLastActiveAdministrator(member, members);
                     if (!isLastAdministrator) {
                         const actionLabel = practiceSecretary ? 'Desativar acesso' : 'Desativar';
                         addButton(actionLabel, 'btn-outline-danger', () => {
