@@ -850,7 +850,9 @@ exports.getHistory = async (req, res) => {
             JOIN consultas c ON c.clinica_id = h.clinica_id AND c.id = h.consulta_id
             JOIN profissionais p ON p.clinica_id = c.clinica_id AND p.id = c.profissional_id
             WHERE h.clinica_id = ? AND h.consulta_id = ?
-            AND (? IN ('administrador', 'secretaria') OR (? = 'profissional' AND p.usuario_id = ?))
+            AND (? IN ('administrador', 'secretaria') OR (
+                ? = 'profissional' AND p.usuario_id = ? AND p.status = 'ativo'
+            ))
             ORDER BY h.versao, h.id`,
         [req.tenant.clinicId, appointmentId, req.tenant.role, req.tenant.role, req.userId]);
         if (!rows.length) return res.status(404).json({ error: 'Histórico da consulta não encontrado.' });

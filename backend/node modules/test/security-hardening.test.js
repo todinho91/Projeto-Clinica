@@ -50,6 +50,10 @@ test('CORS aceita somente origens configuradas', async (t) => {
 
     const anonymousUploadRead = await fetch(`http://127.0.0.1:${port}/uploads/arquivo-clinico.pdf`);
     assert.equal(anonymousUploadRead.status, 404);
+    for (const route of ['/documentos', '/documentos/1', '/exames', '/exames/1/download']) {
+        const response = await fetch(`http://127.0.0.1:${port}${route}`);
+        assert.equal(response.status, 404, `${route} não deve expor leitura/download sem rota autorizada`);
+    }
 });
 
 test('configuração recusa curinga de CORS antes de iniciar o servidor', () => {

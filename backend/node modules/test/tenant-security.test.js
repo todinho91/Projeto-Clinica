@@ -238,10 +238,14 @@ test('paciente de outra clínica não pode ser consultado', async (t) => {
     ]);
     assert.equal(res.statusCode, 404);
 });
-test('profissional só consulta paciente vinculado à própria agenda', async (t) => {
-    t.mock.method(pool, 'execute', async (sql, params) => {
+test('profissional sem atendimento elegível não consulta detalhes do paciente', async (t) => {
+    const execute = t.mock.method(pool, 'execute', async (sql, params) => {
         assert.match(sql, /FROM consultas c/);
         assert.match(sql, /pr\.usuario_id = \?/);
+        assert.match(sql, /c\.status IN \('agendada', 'confirmada', 'realizada'\)/);
+        assert.match(sql, /pr\.status = 'ativo'/);
+        assert.match(sql, /cu\.status = 'ativo'/);
+        assert.match(sql, /professional_user\.status = 'ativo'/);
         assert.deepEqual(params, [
             11, 55, 'profissional', 'profissional', 7, 'profissional', 7
         ]);
@@ -256,4 +260,74 @@ test('profissional só consulta paciente vinculado à própria agenda', async (t
     }, res);
 
     assert.equal(res.statusCode, 404);
+    assert.equal(execute.mock.callCount(), 1);
+});
+
+test('profissional autorizado recebe somente consultas próprias e documentos enviados por ele', async (t) => {
+    const calls = [];
+    t.mock.method(pool, 'execute', async (sql, params) => {
+        calls.push({ sql, params });
+        if (/SELECT p\.id, p\.nome/.test(sql)) return [[{ id: 55, nome: 'Paciente', status: 'ativo' }]];
+        if (/FROM consultas c/.test(sql)) return [[{ id: 91, nome_profissional: 'Dra. A' }]];
+        if (/FROM documentos_clinicos/.test(sql)) return [[{ id: 112, titulo: 'Documento da Dra. A' }]];
+        throw new Error('consulta inesperada');
+    });
+    const res = response();
+
+    await getPacienteDetails({
+        params: { id: '55' }, userId: 7,
+        tenant: { clinicId: 11, role: 'profissional', isPractice: false }
+    }, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body.consultas, [{ id: 91, nome_profissional: 'Dra. A' }]);
+    assert.deepEqual(res.body.documentos, [{ id: 112, titulo: 'Documento da Dra. A' }]);
+    const appointments = calls.find(({ sql }) => /SELECT\s+c\.id, c\.inicio_em/.test(sql));
+    assert.match(appointments.sql, /p\.usuario_id = \? AND p\.status = 'ativo'/);
+    assert.deepEqual(appointments.params, [11, 55, 'profissional', 7]);
+    const documents = calls.find(({ sql }) => /FROM documentos_clinicos/.test(sql));
+    assert.match(documents.sql, /enviado_por_usuario_id = \?/);
+    assert.deepEqual(documents.params, [11, 55, 'profissional', 7]);
+});
+
+test('paciente titular, secretaria e administrador mantêm acesso institucional dentro do tenant', async (t) => {
+    const calls = [];
+    t.mock.method(pool, 'execute', async (sql, params) => {
+        calls.push({ sql, params });
+        if (/SELECT p\.id, p\.nome/.test(sql)) return [[{ id: 55, nome: 'Paciente', status: 'ativo' }]];
+        if (/FROM consultas c/.test(sql)) return [[{ id: 91 }, { id: 92 }]];
+        if (/FROM documentos_clinicos/.test(sql)) return [[{ id: 112 }, { id: 113 }]];
+        throw new Error('consulta inesperada');
+    });
+    for (const [role, userId] of [['paciente', 31], ['secretaria', 32], ['administrador', 33]]) {
+        const before = calls.length;
+        const res = response();
+        await getPacienteDetails({
+            params: { id: '55' }, userId,
+            tenant: { clinicId: 11, role, isPractice: false }
+        }, res);
+        assert.equal(res.statusCode, 200);
+        assert.equal(res.body.consultas.length, 2);
+        assert.equal(res.body.documentos.length, 2);
+        assert.deepEqual(calls.slice(before).map(({ params }) => params.slice(0, 2)), [[11, 55], [11, 55], [11, 55]]);
+    }
+    assert.match(calls.find(({ sql }) => /SELECT p\.id, p\.nome/.test(sql)).sql, /\? = 'paciente' AND p\.usuario_id = \?/);
+});
+
+test('secretaria de consultório mantém acesso administrativo sem metadados de documentos', async (t) => {
+    const calls = [];
+    t.mock.method(pool, 'execute', async (sql, params) => {
+        calls.push({ sql, params });
+        if (/SELECT p\.id, p\.nome/.test(sql)) return [[{ id: 55, nome: 'Paciente' }]];
+        if (/FROM consultas c/.test(sql)) return [[{ id: 91 }]];
+        throw new Error('secretaria do consultório não deve consultar documentos');
+    });
+    const res = response();
+    await getPacienteDetails({
+        params: { id: '55' }, userId: 32,
+        tenant: { clinicId: 11, role: 'secretaria', isPractice: true }
+    }, res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body.documentos, []);
+    assert.equal(calls.some(({ sql }) => /FROM documentos_clinicos/.test(sql)), false);
 });
