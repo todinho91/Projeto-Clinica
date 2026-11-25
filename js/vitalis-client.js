@@ -51,6 +51,20 @@
         return clinic?.tipo_contexto === 'consultorio' && clinic?.titular === true;
     }
 
+    function isLastActiveAdministrator(member, members) {
+        if (member?.papel !== 'administrador' || member?.status !== 'ativo'
+            || (member?.usuario_status != null && member.usuario_status !== 'ativo')
+            || !Array.isArray(members)) {
+            return false;
+        }
+        const activeAdministrators = members.filter((candidate) => (
+            candidate?.papel === 'administrador'
+            && candidate?.status === 'ativo'
+            && (candidate?.usuario_status === 'ativo' || candidate?.usuario_status == null)
+        ));
+        return activeAdministrators.length <= 1;
+    }
+
     function dashboardForRole(role, clinic = null) {
         if (role === 'profissional' && isPracticeOwner(clinic)) return 'consultorio.html';
         return {
@@ -313,6 +327,7 @@
         platformAccessState,
         matchingSelectionId,
         isPracticeOwner,
+        isLastActiveAdministrator,
         workspaceCapabilities,
         workspaceNavigation,
         workspaceSwitchState,
