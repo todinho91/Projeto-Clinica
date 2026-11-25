@@ -310,26 +310,36 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
         }), isolatedIncomplete);
         assert.equal(isolatedIncomplete.statusCode, 201, 'nome incompleto igual é isolado por clínica');
 
+        const appropriationEmail = 'paciente.administrativo.apropriacao@example.test';
+        const [administrativePatient] = await setup.execute(`
+            INSERT INTO pacientes (clinica_id, usuario_id, nome, email, telefone, data_nascimento, status)
+            VALUES (?, NULL, 'Paciente Administrativo Sintético', ?, NULL, '1988-06-12', 'ativo')
+        `, [northId, appropriationEmail]);
+        assert.ok(Number(administrativePatient.insertId) > 0);
         const publicRegistration = response();
         await authController.register({ body: {
             nome: 'Tentativa de Apropriação',
-            email: 'paciente.integracao@example.test',
+            email: appropriationEmail,
             senha: 'senha-ficticia-forte',
             clinica_slug: 'norte-pacientes-test'
         } }, publicRegistration);
         assert.equal(publicRegistration.statusCode, 409);
         const [[partialIdentity]] = await setup.execute(
             'SELECT COUNT(*) AS total FROM usuarios WHERE email = ?',
-            ['paciente.integracao@example.test']
+            [appropriationEmail]
         );
         const [[partialMembership]] = await setup.execute(`
             SELECT COUNT(*) AS total
             FROM clinica_usuarios cu
             JOIN usuarios u ON u.id = cu.usuario_id
             WHERE cu.clinica_id = ? AND u.email = ?
-        `, [northId, 'paciente.integracao@example.test']);
+        `, [northId, appropriationEmail]);
+        const [[preservedAdministrativePatient]] = await setup.execute(`
+            SELECT usuario_id FROM pacientes WHERE clinica_id = ? AND id = ? AND email = ?
+        `, [northId, administrativePatient.insertId, appropriationEmail]);
         assert.equal(Number(partialIdentity.total), 0);
         assert.equal(Number(partialMembership.total), 0);
+        assert.equal(preservedAdministrativePatient.usuario_id, null);
 
         const search = response();
         await controller.searchForScheduling({ tenant: { clinicId: northId }, query: { q: 'Integração' } }, search);
