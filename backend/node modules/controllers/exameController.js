@@ -42,8 +42,18 @@ exports.uploadExame = async (req, res) => {
                             JOIN profissionais pr
                               ON pr.clinica_id = c.clinica_id
                              AND pr.id = c.profissional_id
+                             AND pr.status = 'ativo'
+                            JOIN clinica_usuarios cu
+                              ON cu.clinica_id = c.clinica_id
+                             AND cu.usuario_id = pr.usuario_id
+                             AND cu.papel = 'profissional'
+                             AND cu.status = 'ativo'
+                            JOIN usuarios professional_user
+                              ON professional_user.id = pr.usuario_id
+                             AND professional_user.status = 'ativo'
                             WHERE c.clinica_id = p.clinica_id
                               AND c.paciente_id = p.id
+                              AND c.status IN ('agendada', 'confirmada', 'realizada')
                               AND pr.usuario_id = ?
                         )
                     )
