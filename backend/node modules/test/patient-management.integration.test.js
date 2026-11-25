@@ -94,12 +94,24 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
         const controller = require('../controllers/pacienteController');
         const authController = require('../controllers/authController');
 
+        const first = response();
+        const concurrent = response();
+        await Promise.all([
+            controller.createPatient(patientRequest(
+                northId, northAdmin, northMembershipVersion
+            ), first),
+            controller.createPatient(patientRequest(
+                northId, northAdmin, northMembershipVersion
+            ), concurrent)
+        ]);
+        assert.deepEqual([first.statusCode, concurrent.statusCode].sort(), [201, 409]);
+
         const [actors] = await setup.execute(`
             INSERT INTO usuarios (nome, email, senha_hash, status, motivo_bloqueio) VALUES
             ('Profissional A', 'profissional.a.paciente@example.test', ?, 'ativo', 'nenhum'),
             ('Profissional B', 'profissional.b.paciente@example.test', ?, 'ativo', 'nenhum'),
             ('Secretaria Norte', 'secretaria.norte.paciente@example.test', ?, 'ativo', 'nenhum'),
-            ('Paciente Titular', 'titular.paciente@example.test', ?, 'ativo', 'nenhum'),
+            ('Paciente Titular', 'paciente.integracao@example.test', ?, 'ativo', 'nenhum'),
             ('Profissional Sul', 'profissional.sul.paciente@example.test', ?, 'ativo', 'nenhum')
         `, [hash, hash, hash, hash, hash]);
         const [profA, profB, secretary, patientUser, profSouth] = Array.from(
@@ -177,6 +189,24 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
         assert.equal(professionalBView.statusCode, 200);
         assert.deepEqual(professionalBView.body.consultas.map((item) => Number(item.id)), [appointmentB]);
         assert.deepEqual(professionalBView.body.documentos.map((item) => item.titulo), ['Documento B']);
+        await setup.execute("UPDATE profissionais SET status = 'inativo' WHERE clinica_id = ? AND id = ?",
+            [northId, profileA]);
+        assert.equal((await detailsFor(northId, 'profissional', profA, linkedPatient.id)).statusCode, 404,
+            'perfil profissional inativo não autoriza detalhes');
+        await setup.execute("UPDATE profissionais SET status = 'ativo' WHERE clinica_id = ? AND id = ?",
+            [northId, profileA]);
+        await setup.execute("UPDATE clinica_usuarios SET status = 'inativo' WHERE clinica_id = ? AND usuario_id = ?",
+            [northId, profA]);
+        assert.equal((await detailsFor(northId, 'profissional', profA, linkedPatient.id)).statusCode, 404,
+            'vínculo revogado não autoriza detalhes');
+        await setup.execute("UPDATE clinica_usuarios SET status = 'ativo' WHERE clinica_id = ? AND usuario_id = ?",
+            [northId, profA]);
+        await setup.execute("UPDATE consultas SET status = 'cancelada' WHERE clinica_id = ? AND id = ?",
+            [northId, appointmentA]);
+        assert.equal((await detailsFor(northId, 'profissional', profA, linkedPatient.id)).statusCode, 404,
+            'consulta cancelada não autoriza detalhes');
+        await setup.execute("UPDATE consultas SET status = 'realizada' WHERE clinica_id = ? AND id = ?",
+            [northId, appointmentA]);
         for (const [role, userId] of [['paciente', patientUser], ['secretaria', secretary], ['administrador', northAdmin]]) {
             const authorizedView = await detailsFor(northId, role, userId, linkedPatient.id);
             assert.equal(authorizedView.statusCode, 200);
@@ -198,17 +228,6 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
         assert.equal((await historyFor(profA, appointmentA)).statusCode, 200);
         assert.equal((await historyFor(profA, appointmentB)).statusCode, 404);
 
-        const first = response();
-        const concurrent = response();
-        await Promise.all([
-            controller.createPatient(patientRequest(
-                northId, northAdmin, northMembershipVersion
-            ), first),
-            controller.createPatient(patientRequest(
-                northId, northAdmin, northMembershipVersion
-            ), concurrent)
-        ]);
-        assert.deepEqual([first.statusCode, concurrent.statusCode].sort(), [201, 409]);
 
         const incompleteFirst = response(); const incompleteConcurrent = response();
         const incomplete = patientRequest(northId, northAdmin, northMembershipVersion, {
