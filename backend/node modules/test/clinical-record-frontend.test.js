@@ -26,3 +26,21 @@ test('interface sem armazenamento clínico persistente ou HTML dinâmico',()=>{
     assert.match(html,/autocomplete="off"/);assert.match(html,/viewport/);
     assert.match(html,/Content-Security-Policy/);assert.doesNotMatch(html,/<script[^>]+src="https?:/);
 });
+
+test('conflito preserva texto local e exige revisão explícita antes de retomar',()=>{
+    const js=readFileSync(path.join(base,'js/prontuario-experimental.js'),'utf8');
+    const html=readFileSync(path.join(base,'prontuario-experimental.html'),'utf8');
+    assert.match(js,/if\(e\.status===409\)\{conflict\(\);\}/);
+    assert.match(js,/conflictLatest=latest\.registro/);
+    assert.match(js,/record=\{\.\.\.record,\.\.\.conflictLatest\}/);
+    assert.match(html,/id="revisar-conflito"/);
+    assert.match(html,/id="descartar-local"/);
+});
+test('mascara a tela, revalida no retorno e limita espera de rede',()=>{
+    const js=readFileSync(path.join(base,'js/prontuario-experimental.js'),'utf8');
+    assert.match(js,/masked=true;page\.hidden=true/);
+    assert.match(js,/if\(doc\.hidden\)mask\(\);else verify\(\)/);
+    assert.match(js,/setInterval\(verify,5000\)/);
+    assert.match(js,/AbortSignal\.timeout\(8000\)/);
+    assert.match(js,/win\.top!==win\.self/);
+});

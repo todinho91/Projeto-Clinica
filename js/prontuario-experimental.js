@@ -28,6 +28,10 @@
     function mount(win){
         const doc=win.document, el=id=>doc.getElementById(id), entry=el('prontuario-experimental-link');
         const page=el('workspace'); if(!page&&!entry)return;
+        if(win.top!==win.self){
+            if(page){page.hidden=true;el('status').textContent='Acesso em quadro incorporado bloqueado.';el('recarregar').disabled=true;}
+            return;
+        }
         const session=win.VitalisCore.createSession(win.sessionStorage);
         const validContext=()=>loopback(win.location.hostname)&&['http:','https:'].includes(win.location.protocol)
             &&session.activeClinic?.papel==='profissional'&&session.clinicToken&&session.identityToken;
@@ -39,7 +43,7 @@
             if(!validContext()||context()!==initial||!gate.current(ticket))throw Error('Contexto alterado.');
             const headers={Authorization:'Bearer '+session.clinicToken};
             if(body!==undefined)headers['Content-Type']='application/json';
-            const response=await win.fetch(base+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body),signal:ticket.signal,cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer'});
+            const response=await win.fetch(base+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.any([ticket.signal,AbortSignal.timeout(8000)]),cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer'});
             if(!gate.current(ticket)||context()!==initial||!validContext())throw Error('Contexto alterado.');
             if(!response.ok){const error=Error('Operação não concluída.');error.status=response.status;throw error;}
             const result=await response.json();
@@ -56,33 +60,45 @@
         }
         const status=msg=>{el('status').textContent=msg;};
         let appointments=[],selected=null,record=null,editable=false,dirty=false,busy=false,conflicted=false,versionPage=1,historyPage=1;
+        let conflictLatest=null,masked=false,loaded=false;
         function clearRecord(){
-            record=null;editable=false;dirty=false;conflicted=false;versionPage=1;historyPage=1;
+            record=null;editable=false;dirty=false;conflicted=false;conflictLatest=null;versionPage=1;historyPage=1;
             for(const field of [...fields,'motivo','texto'])el(field).value='';
             for(const id of ['estado','paciente'])el(id).textContent='';
             for(const id of ['versoes','historico'])el(id).replaceChildren();
-            for(const id of ['editor','adendo','criar','mais-versoes','mais-historico'])el(id).hidden=true;
+            for(const id of ['editor','adendo','criar','mais-versoes','mais-historico','conflito'])el(id).hidden=true;
         }
         function clearAll(message){
-            gate.clear();clearRecord();selected=null;appointments=[];busy=false;
+            gate.clear();clearRecord();selected=null;appointments=[];busy=false;loaded=false;masked=false;
             el('consulta').replaceChildren(new win.Option('Selecione uma consulta',''));
             page.hidden=true;el('contexto').textContent='';el('recarregar').disabled=false;status(message);
         }
         function controls(){
-            const draft=record?.estado==='rascunho'&&editable&&!conflicted;
+            const draft=record?.estado==='rascunho'&&editable;
+            const addendum=record?.estado==='finalizado'&&editable;
             el('criar').hidden=Boolean(record)||!selected||!editable||conflicted;
             el('editor').hidden=!draft;
-            el('adendo').hidden=record?.estado!=='finalizado'||!editable||conflicted;
-            for(const id of ['criar','salvar','descartar','adicionar','mais-versoes','mais-historico','consulta','recarregar'])el(id).disabled=busy;
-            el('finalizar').disabled=busy||dirty||!draft;
-            for(const id of [...fields,'motivo','texto'])el(id).disabled=busy;
+            el('adendo').hidden=!addendum;
+            el('conflito').hidden=!conflicted;
+            el('reaplicar').disabled=busy||!conflictLatest;
+            el('revisar-conflito').disabled=busy||!selected;
+            el('descartar-local').disabled=busy;
+            for(const id of ['criar','salvar','descartar','adicionar'])el(id).disabled=busy||conflicted||masked;
+            for(const id of ['mais-versoes','mais-historico','consulta','recarregar'])el(id).disabled=busy||masked;
+            el('finalizar').disabled=busy||dirty||!draft||conflicted||masked;
+            for(const id of [...fields,'motivo','texto'])el(id).readOnly=busy||conflicted||masked;
+        }
+        function conflict(){
+            conflicted=true;conflictLatest=null;
+            status('Conflito detectado. Texto local preservado em memória; revise a versão do servidor antes de continuar. Nenhum reenvio automático.');
+            controls();
         }
         function error(ticket,e){
             if(!gate.current(ticket))return;
             if(e.status===401||e.status===403||e.status===404||e.status===503||e.status>=500||!e.status){
                 clearAll(e.status===503?'Prontuário indisponível: ambiente sintético não habilitado.':'Acesso ou registro indisponível. Conteúdo removido da tela.');return;
             }
-            if(e.status===409){conflicted=true;dirty=false;for(const field of [...fields,'motivo','texto'])el(field).value='';el('versoes').replaceChildren();status('Conflito de versão ou consulta. Atualize a agenda e reabra o atendimento; nada será reenviado automaticamente.');}
+            if(e.status===409){conflict();}
             else status(e.status===422?'Registro incompleto. Verifique evolução, conduta e identificação profissional.':'Dados inválidos. Revise os campos.');
         }
         function addText(parent,tag,text){const node=doc.createElement(tag);node.textContent=String(text??'');parent.append(node);return node;}
@@ -108,7 +124,7 @@
                 const button=addText(el('historico'),'button','Atendimento '+String(item.atendimento_inicio_em??'')+' · '+item.estado+' · v'+item.versao_atual);
                 button.type='button';button.className='secondary';
                 button.addEventListener('click',()=>{
-                    if(busy)return;
+                    if(busy||masked||conflicted)return;
                     if(dirty&&!win.confirm('Descartar alterações não salvas da tela?'))return;
                     const found=appointments.find(a=>String(a.id)===String(item.consulta_id));
                     if(found){el('consulta').value=String(found.id);openAppointment(found);}
@@ -152,11 +168,11 @@
                 appointments=rows.filter(a=>validId(a.id)&&validId(a.paciente_id)&&eligible(a));
                 for(const a of appointments)el('consulta').append(new win.Option(String(a.inicio_local||'')+' · '+a.nome_paciente,String(a.id)));
                 el('contexto').textContent=session.activeClinic.nome||'Contexto profissional';
-                page.hidden=false;status(appointments.length?'Selecione um atendimento.':'Nenhum atendimento elegível.');
+                loaded=true;page.hidden=masked||doc.hidden;status(appointments.length?'Selecione um atendimento.':'Nenhum atendimento elegível.');
             }catch(e){error(ticket,e);}finally{if(gate.current(ticket))el('recarregar').disabled=false;}
         }
         async function mutate(action){
-            if(busy||conflicted||!editable||!selected)return;
+            if(busy||masked||doc.hidden||conflicted||!editable||!selected)return;
             let path,method='POST',body;
             try{
                 if(action==='criar'&&!record){path='/consultas/'+selected.id;body={conteudo:{}};}
@@ -176,28 +192,84 @@
             }catch(e){error(ticket,e);}finally{if(gate.current(ticket)){busy=false;controls();}}
         }
         el('consulta').addEventListener('change',()=>{
-            if(dirty&&!win.confirm('Descartar alterações não salvas da tela?')){el('consulta').value=String(selected?.id||'');return;}
+            if(masked||((dirty||conflicted)&&!win.confirm('Descartar alterações não salvas da tela?'))){el('consulta').value=String(selected?.id||'');return;}
             const row=appointments.find(a=>String(a.id)===el('consulta').value);
             if(row)openAppointment(row);else{gate.clear();clearRecord();selected=null;busy=false;controls();}
         });
         for(const f of [...fields,'motivo','texto'])el(f).addEventListener('input',()=>{dirty=true;controls();});
         for(const id of ['criar','salvar','finalizar','descartar','adicionar'])el(id).addEventListener('click',()=>mutate(id));
         for(const [id,fn] of [['mais-versoes',versions],['mais-historico',history]])el(id).addEventListener('click',async()=>{
-            if(busy)return;const ticket=gate.begin();busy=true;controls();
+            if(busy||masked)return;const ticket=gate.begin();busy=true;controls();
             try{await fn(ticket,true);}catch(e){error(ticket,e);}finally{if(gate.current(ticket)){busy=false;controls();}}
         });
         for(const id of ['editor','adendo'])el(id).addEventListener('submit',event=>event.preventDefault());
-        el('recarregar').addEventListener('click',()=>{if(!dirty||win.confirm('Descartar alterações não salvas da tela?'))load();});
+        el('recarregar').addEventListener('click',()=>{if((!dirty&&!conflicted)||win.confirm('Descartar alterações não salvas da tela?'))load();});
+        el('descartar-local').addEventListener('click',()=>{
+            if(!busy&&selected&&win.confirm('Descartar somente o texto local não salvo e carregar o servidor?'))openAppointment(selected);
+        });
+        el('revisar-conflito').addEventListener('click',async()=>{
+            if(busy||masked||!conflicted||!selected)return;
+            const ticket=gate.begin();busy=true;conflictLatest=null;controls();
+            try{
+                const latest=await request(ticket,'/prontuarios/consultas/'+selected.id);
+                if(!record||!latest.registro||String(latest.registro.id)!==String(record.id)||
+                    latest.registro.estado!==record.estado||!latest.editavel){
+                    status('O estado do atendimento mudou. Texto local mantido apenas para revisão; descarte local explícito para recarregar.');
+                    return;
+                }
+                versionPage=1;await versions(ticket);
+                conflictLatest=latest.registro;
+                status('Histórico atualizado. Compare o texto local com a versão do servidor abaixo. Só confirme a retomada se tiver conciliado as diferenças.');
+            }catch(e){error(ticket,e);}finally{if(gate.current(ticket)){busy=false;controls();}}
+        });
+        el('reaplicar').addEventListener('click',()=>{
+            if(busy||masked||!conflicted||!conflictLatest||!record)return;
+            if(!win.confirm('Retomar edição com seu texto local sobre a versão revisada? Revise as diferenças antes de salvar.'))return;
+            record={...record,...conflictLatest};conflictLatest=null;conflicted=false;dirty=true;
+            el('estado').textContent='Situação: '+record.estado+' · versão '+record.versao_atual;
+            status('Edição retomada. Texto local ainda não salvo. Revise e salve explicitamente.');controls();
+        });
         const hide=()=>clearAll('Tela clínica limpa. Verifique novamente o acesso.');
         win.addEventListener('pagehide',hide);win.addEventListener('storage',hide);
-        doc.addEventListener('visibilitychange',()=>{if(doc.hidden)hide();});
-        win.setInterval(async()=>{
-            if(page.hidden||busy)return;
+        win.addEventListener('beforeunload',event=>{
+            if(dirty||conflicted){event.preventDefault();event.returnValue='';}
+        });
+        function mask(){
+            if(!loaded)return;
+            masked=true;page.hidden=true;el('contexto').textContent='';
+            status('Conteúdo oculto por privacidade. Revalidação necessária.');controls();
+        }
+        async function verify(){
+            if(!loaded||busy||doc.hidden)return;
             if(context()!==initial||!validContext()){hide();return;}
             const ticket=gate.begin();busy=true;controls();
-            try{const result=await request(ticket,'/prontuarios/capacidade');if(result.experimental!==true)hide();}
-            catch(e){error(ticket,e);}finally{if(gate.current(ticket)){busy=false;controls();}}
-        },30000);
+            try{
+                const result=await request(ticket,'/prontuarios/capacidade');
+                if(result.experimental!==true){hide();return;}
+                if(selected){
+                    const latest=await request(ticket,'/prontuarios/consultas/'+selected.id);
+                    if(record&&String(record.consulta_id)!==String(selected.id)){
+                        await request(ticket,'/prontuarios/'+record.id);
+                    }else if((record&&(!latest.registro||String(latest.registro.id)!==String(record.id)||
+                        Number(latest.registro.versao_atual)!==Number(record.versao_atual)||latest.registro.estado!==record.estado))||
+                        (!record&&latest.registro)||editable!==Boolean(latest.editavel)){
+                        if(!conflicted||conflictLatest&&Number(conflictLatest.versao_atual)!==Number(latest.registro?.versao_atual))conflict();
+                    }
+                }
+                if(gate.current(ticket)&&!doc.hidden){
+                    if(masked&&!conflicted)status('Acesso revalidado. Edição em memória preservada.');
+                    masked=false;page.hidden=false;el('contexto').textContent=session.activeClinic.nome||'Contexto profissional';
+                }
+            }catch(e){
+                // A failed visibility check must not reveal a previously masked record.
+                if(e.status===409&&!masked)conflict();
+                else error(ticket,e);
+                if(masked&&gate.current(ticket))clearAll('Não foi possível revalidar o acesso. Conteúdo removido da tela.');
+            }finally{if(gate.current(ticket)){busy=false;controls();}}
+        }
+        doc.addEventListener('visibilitychange',()=>{if(doc.hidden)mask();else verify();});
+        win.addEventListener('focus',()=>{if(masked)verify();});
+        win.setInterval(verify,5000);
         load();
     }
     return {mount,clinicalPayload,eligible,contextGate,loopback};

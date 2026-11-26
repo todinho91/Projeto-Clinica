@@ -12,6 +12,11 @@ const migrationsDir = path.join(__dirname, '..', '..', 'database', 'migrations')
 const migrationName = '016_versioned_clinical_records.sql';
 
 test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e revogação', { skip: !enabled }, async () => {
+    const browserEnabled=process.env.CLINICAL_RECORD_BROWSER_TEST==='1';
+    if(browserEnabled){
+        assert.equal(process.env.GITHUB_ACTIONS,'true','browser fixture exclusiva do CI');
+        assert.equal(process.env.CI,'true');
+    }
     const config = loadDatabaseConfig(process.env, 'TEST_DB_');
     // No DROP or reset: exact dedicated CI name AND an empty schema before any write.
     assert.equal(config.database, 'vitalis_prontuarios_ci_test');
@@ -114,7 +119,8 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
         const express = require('express'), jwt = require('jsonwebtoken');
         pool = require('../config/database');
         const app = express(); app.use(express.json()); app.use('/api',require('../routes'));
-        server = await new Promise(resolve => { const s = app.listen(0,'127.0.0.1',()=>resolve(s)); });
+        if(browserEnabled)require('../support/clinical-browser-fixture').mountStatic(app);
+        server = await new Promise((resolve,reject) => { const s = app.listen(browserEnabled?3000:0,'127.0.0.1',()=>resolve(s)); s.once('error',reject); });
         const url = 'http://127.0.0.1:'+server.address().port+'/api/prontuarios';
         const token = (uid, clinic, version) => jwt.sign({sub:String(uid),token_type:'clinic',clinic_id:clinic,membership_version:version},secret,{algorithm:'HS256',expiresIn:'10m'});
         const ta = token(doctor,a,va), tb = token(doctor,b,vb), to = token(doctor,own,vo), tx = token(other,a,vOther);
@@ -127,6 +133,15 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
         }
         assert.equal((await request(ta,'GET','/1')).status,503);
         require('../support/clinical-record-crypto').enableSyntheticFixture();
+        if(browserEnabled){
+            const password=randomBytes(24).toString('hex');
+            const hash=await require('bcryptjs').hash(password,10);
+            await setup.execute('UPDATE usuarios SET senha_hash=? WHERE id IN (?,?)',[hash,doctor,secretary]);
+            await require('../support/clinical-browser-fixture').runBrowser({
+                setup,doctor,secretary,clinicA:a,clinicB:b,ap,apB,apOther,discardAp,password
+            });
+            return;
+        }
         assert.deepEqual((await request(ta,'GET','/capacidade')).body,{experimental:true});
         assert.equal((await request(ta,'GET','/consultas/'+ap)).body.registro,null);
         assert.equal((await request(tb,'GET','/consultas/'+ap)).status,404);

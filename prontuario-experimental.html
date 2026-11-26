@@ -10,7 +10,7 @@
 <body><header class="top"><a href="dashboard-medico.html">Vitalis · Voltar aos atendimentos</a><strong id="contexto"></strong></header>
 <main>
 <p class="eyebrow">ÁREA PROFISSIONAL · HOMOLOGAÇÃO SINTÉTICA</p><h1>Atendimento clínico</h1>
-<p class="notice">Experimental. Não utilize dados reais. O prontuário não conclui a consulta na agenda e não representa assinatura digital.</p>
+<p class="notice">Experimental. Não utilize dados reais. Salve antes de sair: a edição local não sobrevive ao encerramento, troca de contexto ou falha de autorização. O prontuário não conclui a consulta na agenda e não representa assinatura digital.</p>
 <p id="status" role="status" aria-live="polite">Verificando acesso…</p>
 <button id="recarregar" type="button">Verificar acesso e atualizar agenda</button>
 <section id="workspace" hidden>
@@ -33,6 +33,7 @@
 <div class="actions"><button id="salvar" type="button">Salvar rascunho</button><button id="finalizar" type="button">Finalizar registro salvo</button><button id="descartar" type="button" class="secondary">Descartar rascunho</button></div>
 </form>
 <form id="adendo" autocomplete="off" hidden><h3>Adicionar adendo</h3><label for="motivo">Motivo</label><textarea id="motivo" rows="2" maxlength="1000" autocomplete="off" spellcheck="false"></textarea><label for="texto">Texto do adendo</label><textarea id="texto" rows="4" maxlength="8000" autocomplete="off" spellcheck="false"></textarea><button id="adicionar" type="button">Registrar adendo</button></form>
+<section id="conflito" class="notice" aria-labelledby="conflito-titulo" hidden><h3 id="conflito-titulo">Conflito de edição</h3><p>O texto local permanece nos campos, em memória. Revise o histórico do servidor antes de retomar a edição. Nenhum texto será enviado automaticamente.</p><div class="actions"><button id="revisar-conflito" type="button">Revisar versão do servidor</button><button id="reaplicar" type="button" disabled>Retomar edição com texto local</button><button id="descartar-local" type="button" class="secondary">Descartar texto local</button></div></section>
 <div id="versoes"></div><button id="mais-versoes" type="button" hidden>Mais versões</button>
 </section><section class="panel" aria-labelledby="hist-titulo"><h2 id="hist-titulo">Histórico próprio do paciente</h2><p>Somente registros autorizados neste contexto.</p><div id="historico"></div><button id="mais-historico" type="button" hidden>Mais atendimentos</button></section>
 </div></section>

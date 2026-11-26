@@ -4,6 +4,11 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "js/prontuario-experimental.js"
+      - "js/vitalis-client.js"
+      - "css/prontuario-experimental.css"
+      - "prontuario-experimental.html"
+      - "dashboard-medico.html"
       - ".github/workflows/backend-ci.yml"
   push:
     branches: [master]
@@ -149,3 +154,53 @@ jobs:
           node -e 'const m=require("mysql2/promise"); (async()=>{const c=await m.createConnection({host:"127.0.0.1",user:process.env.TEST_DB_USER,password:process.env.TEST_DB_PASSWORD,database:process.env.TEST_DB_DATABASE}); try{const [[r]]=await c.query("SELECT DATABASE() AS db, (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE()) AS total"); if(!["vitalis_agendamento_record_ci_test","vitalis_profissionais_record_ci_test"].includes(r.db)||Number(r.total)!==0)throw Error("Nonempty or unauthorized CI schema");}finally{await c.end();}})().catch(()=>process.exit(1))'
       - name: Run dedicated regression
         run: env "${{ matrix.flag }}=1" node --test "test/${{ matrix.suite }}.integration.test.js"
+
+  clinical-browser-homologation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: vitalis-ci-root-password
+          MYSQL_DATABASE: vitalis_prontuarios_ci_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD}"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    defaults:
+      run:
+        working-directory: "backend/node modules"
+    env:
+      CLINICAL_RECORD_INTEGRATION_TEST: '1'
+      CLINICAL_RECORD_BROWSER_TEST: '1'
+      TEST_DB_HOST: 127.0.0.1
+      TEST_DB_PORT: '3306'
+      TEST_DB_USER: root
+      TEST_DB_PASSWORD: vitalis-ci-root-password
+      TEST_DB_DATABASE: vitalis_prontuarios_ci_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: "backend/node modules/package-lock.json"
+      - run: npm ci
+      - name: Install isolated Chromium test dependency
+        run: |
+          npm install --prefix "$RUNNER_TEMP/vitalis-browser" --no-save --package-lock=false playwright@1.56.1
+          "$RUNNER_TEMP/vitalis-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Browser synthetic E2E against real MySQL API
+        run: |
+          CLINICAL_PLAYWRIGHT_MODULE="$RUNNER_TEMP/vitalis-browser/node_modules/playwright" node --test test/clinical-record.integration.test.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vitalis-clinical-synthetic-blank-forms
+          path: ${{ runner.temp }}/vitalis-clinical-visual/*.png
+          if-no-files-found: ignore
+          retention-days: 7
