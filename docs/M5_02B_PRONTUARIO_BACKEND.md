@@ -18,3 +18,7 @@ Acesso somente ao profissional responsável ativo, na clínica do token, com ses
 - A migration adiciona índice a consultas; DDL MySQL pode fazer commit implícito. Em falha parcial, não reexecutar às cegas: conferir information_schema e schema_migrations, restaurar ou reconciliar com autorização. Não aplicar em base existente sem backup/restauração validados e janela própria.
 - CI dedicado exige schema vazio com nome exato vitalis_prontuarios_ci_test, MySQL 8 local, sem reset destrutivo. Testa upgrade de 015 com fixtures, checksums, versão concorrente, roles, isolamento e rollback. Suites antigas continuam sob seus próprios guards; não executar em bancos visuais/operacionais.
 - Esta etapa não aprova dados reais nem encerra M5. Revisar logs de CI, testes omitidos e casos de concorrência revogação/cancelamento, política de compartilhamento, e homologação visual nas etapas seguintes.
+
+## Complemento M5-02B.1/B.2
+
+Este documento descreve a entrega inicial 016. A migration 017 e a ADR-004 complementam e substituem a descrição de armazenamento JSON e de habilitação do backend: o conteúdo e autoria passam a envelope cifrado e o acesso é exclusivo do schema sintético de CI. A flag isolada não habilita a API. Ver docs/adr/ADR-004-protecao-criptografica-prontuarios.md para limites e requisitos pendentes. Nenhum ambiente persistente deve receber a migration sem autorização específica.

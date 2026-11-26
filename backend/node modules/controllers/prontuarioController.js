@@ -1,5 +1,6 @@
 const { randomUUID } = require('node:crypto');
 const pool = require('../config/database');
+const { syntheticEnabled, TEST_SCHEMA, encryptVersion, decryptVersion } = require('../support/clinical-record-crypto');
 const { positiveId, onlyKeys, recordContent, addendumContent, eligible, canRead,
     nextState, completeForFinalization } = require('../support/clinical-record');
 
@@ -78,11 +79,13 @@ async function record(connection, ctx, id) {
 
 async function currentVersion(connection, ctx, row) {
     const version = await first(connection,
-        "SELECT versao, versao_anterior, tipo, autor_usuario_id, autor_snapshot, schema_version, conteudo, criado_em " +
-        "FROM prontuario_versoes WHERE clinica_id = ? AND registro_id = ? AND versao = ?",
+        "SELECT v.versao, v.versao_anterior, v.tipo, v.autor_usuario_id, v.schema_version, v.criado_em, " +
+        "e.chave_id, e.conteudo_cifrado, e.iv, e.auth_tag, e.aad_version " +
+        "FROM prontuario_versoes v LEFT JOIN prontuario_envelopes e ON e.clinica_id=v.clinica_id AND e.registro_id=v.registro_id AND e.versao=v.versao " +
+        "WHERE v.clinica_id = ? AND v.registro_id = ? AND v.versao = ?",
         [ctx.clinicId, row.id, row.versao_atual]);
     if (!version) reject(500, 'RECORD_INTEGRITY', 'Registro indisponível.');
-    return version;
+    return decodeVersion(connection, ctx, row, version);
 }
 
 async function audit(connection, ctx, action, entity, id, version) {
@@ -92,24 +95,52 @@ async function audit(connection, ctx, action, entity, id, version) {
             JSON.stringify(version == null ? { resultado: 'permitido' } : { resultado: 'permitido', versao: version })]);
 }
 
-async function append(connection, ctx, id, version, type, content) {
+function versionContext(ctx,row) {
+    return {clinica_id:ctx.clinicId,paciente_id:row.paciente_id,consulta_id:row.consulta_id,
+        profissional_id:ctx.professionalId,registro_id:row.id};
+}
+async function decodeVersion(connection,ctx,row,version) {
+    try { return await decryptVersion(connection,versionContext(ctx,row),version); }
+    catch { reject(500,'RECORD_INTEGRITY','Registro indisponível.'); }
+}
+async function append(connection, ctx, row, version, type, content) {
+    const previous = version === 1 ? null : version - 1;
     await connection.execute(
         "INSERT INTO prontuario_versoes (clinica_id, registro_id, versao, versao_anterior, tipo, autor_usuario_id, " +
-        "autor_snapshot, schema_version, conteudo, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, UTC_TIMESTAMP(6))",
-        [ctx.clinicId, id, version, version === 1 ? null : version - 1, type, ctx.userId,
-            JSON.stringify(ctx.author), JSON.stringify(content)]);
+        "schema_version, criado_em) VALUES (?, ?, ?, ?, ?, ?, 1, UTC_TIMESTAMP(6))",
+        [ctx.clinicId, row.id, version, previous, type, ctx.userId]);
+    await encryptVersion(connection,{...versionContext(ctx,row),versao:version,versao_anterior:previous,
+        tipo:type,autor_usuario_id:ctx.userId,schema_version:1},{conteudo:content,autor_snapshot:ctx.author});
 }
+async function persistDenial(connection,code) {
+    try {
+        await connection.execute('INSERT INTO prontuario_negativas (codigo) VALUES (?)',[code]);
+    } catch { console.warn('[prontuario] security_event_unavailable'); }
+}
+exports.recordRoleDenial = async (req,res,next) => {
+    if (!syntheticEnabled() || req.tenant?.role === 'profissional') return next();
+    let connection;
+    try {
+        connection = await pool.getConnection();
+        const selected = await first(connection,'SELECT DATABASE() AS db',[]);
+        if (selected?.db === TEST_SCHEMA) await persistDenial(connection,'RECORD_FORBIDDEN');
+    } catch { console.warn('[prontuario] security_event_unavailable'); }
+    finally { connection?.release(); }
+    return res.status(403).json({code:'RECORD_FORBIDDEN',error:'Acesso clínico não autorizado.'});
+};
 
 function endpoint(operation) {
     return async (req, res) => {
         // Experimental backend: disabled by default until controlled synthetic validation.
-        if (process.env.VITALIS_CLINICAL_RECORDS_ENABLED !== '1') {
+        if (!syntheticEnabled()) {
             return res.status(503).json({ code: 'RECORD_DISABLED', error: 'Prontuário indisponível neste ambiente.' });
         }
         let connection;
         try {
             if (req.tenant?.role !== 'profissional') forbidden();
             connection = await pool.getConnection();
+            const selected = await first(connection,'SELECT DATABASE() AS db',[]);
+            if (selected?.db !== TEST_SCHEMA) forbidden();
             await connection.beginTransaction();
             const ctx = await clinicalContext(connection, req);
             const result = await operation(connection, ctx, req);
@@ -119,7 +150,15 @@ function endpoint(operation) {
             if (connection) await connection.rollback().catch(() => {});
             if (error instanceof RecordError) {
                 // No untrusted IDs, clinical payloads or identifying data in denied-access logs.
-                if ([403, 404].includes(error.status)) console.warn('[prontuario] acesso_negado', error.code);
+                if (['RECORD_FORBIDDEN','RECORD_NOT_FOUND','RECORD_INTEGRITY'].includes(error.code)) {
+                    // Record the event after rollback; never store the requested target or payload.
+                    if (connection) {
+                        try {
+                            const selected = await first(connection,'SELECT DATABASE() AS db',[]);
+                            if (selected?.db === TEST_SCHEMA) await persistDenial(connection,error.code);
+                        } catch { console.warn('[prontuario] security_event_unavailable'); }
+                    }
+                }
                 return res.status(error.status).json({ code: error.code, error: error.message });
             }
             if (['ER_DUP_ENTRY', 'ER_LOCK_DEADLOCK', 'ER_LOCK_WAIT_TIMEOUT'].includes(error?.code)) {
@@ -156,7 +195,7 @@ exports.create = endpoint(async (connection, ctx, req) => {
         "SELECT clinica_id, paciente_id, id, profissional_id, ?, 'rascunho', 1, inicio_em, UTC_TIMESTAMP(6) " +
         "FROM consultas WHERE clinica_id = ? AND id = ? AND profissional_id = ?",
         [ctx.userId, ctx.clinicId, id, ctx.professionalId]);
-    await append(connection, ctx, insert.insertId, 1, 'rascunho', content);
+    await append(connection, ctx, {id:insert.insertId,paciente_id:appt.paciente_id,consulta_id:id}, 1, 'rascunho', content);
     await audit(connection, ctx, 'prontuario_criado', 'prontuario', insert.insertId, 1);
     return { status: 201, body: { id: Number(insert.insertId), estado: 'rascunho', versao: 1 } };
 });
@@ -199,11 +238,15 @@ exports.versions = endpoint(async (connection, ctx, req) => {
     const { row, appt } = await record(connection, ctx, id);
     if (!canRead(row.estado, appt.status, appt.iniciado)) missing();
     const [rows] = await connection.execute(
-        "SELECT versao, versao_anterior, tipo, autor_usuario_id, autor_snapshot, schema_version, conteudo, criado_em " +
-        "FROM prontuario_versoes WHERE clinica_id = ? AND registro_id = ? ORDER BY versao DESC LIMIT ? OFFSET ?",
+        "SELECT v.versao, v.versao_anterior, v.tipo, v.autor_usuario_id, v.schema_version, v.criado_em, " +
+        "e.chave_id, e.conteudo_cifrado, e.iv, e.auth_tag, e.aad_version " +
+        "FROM prontuario_versoes v LEFT JOIN prontuario_envelopes e ON e.clinica_id=v.clinica_id AND e.registro_id=v.registro_id AND e.versao=v.versao " +
+        "WHERE v.clinica_id = ? AND v.registro_id = ? ORDER BY v.versao DESC LIMIT ? OFFSET ?",
         [ctx.clinicId, id, p.limit + 1, p.offset]);
+    const items = [];
+    for (const version of rows.slice(0,p.limit)) items.push(await decodeVersion(connection,ctx,row,version));
     await audit(connection, ctx, 'prontuario_historico_lido', 'prontuario', id, row.versao_atual);
-    return { body: { itens: rows.slice(0, p.limit), pagina: p.number, tem_proxima: rows.length > p.limit } };
+    return { body: { itens: items, pagina: p.number, tem_proxima: rows.length > p.limit } };
 });
 
 function mutation(action) {
@@ -225,7 +268,7 @@ function mutation(action) {
             reject(422, 'RECORD_INCOMPLETE', 'Informe evolução, conduta e identificação profissional antes de finalizar.');
         }
         const next = expected + 1;
-        await append(connection, ctx, id, next, action, content);
+        await append(connection, ctx, row, next, action, content);
         const [updated] = await connection.execute(
             "UPDATE prontuario_registros SET estado = ?, versao_atual = ? WHERE clinica_id = ? AND id = ? " +
             "AND autor_usuario_id = ? AND versao_atual = ?",

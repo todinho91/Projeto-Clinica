@@ -82,19 +82,19 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
         }
         const beforeCounts = await counts();
         const upgrade = await runMigrations({ connection: setup, migrationsDir, logger: { info() {} } });
-        assert.deepEqual(upgrade.applied,[migrationName]);
+        assert.deepEqual(upgrade.applied,[migrationName,'017_clinical_record_encryption.sql']);
         assert.equal(upgrade.skipped.length,15);
         assert.deepEqual(await counts(),beforeCounts);
         const [after] = await setup.query('SELECT version,checksum FROM schema_migrations ORDER BY version');
         assert.deepEqual(after.slice(0,15),before);
         const repeated = await runMigrations({ connection: setup, migrationsDir, logger: { info() {} } });
         assert.equal(repeated.applied.length,0);
-        assert.equal(repeated.skipped.length,16);
+        assert.equal(repeated.skipped.length,17);
 
         const secret = randomBytes(32).toString('hex');
         Object.assign(process.env,{ DB_HOST:config.host, DB_PORT:String(config.port), DB_USER:config.user,
             DB_PASSWORD:config.password, DB_DATABASE:config.database, JWT_SECRET:secret,
-            VITALIS_CLINICAL_RECORDS_ENABLED:'1', MAIL_PROVIDER:'disabled',
+            VITALIS_CLINICAL_RECORDS_ENABLED:'1', NODE_ENV:'test', CLINICAL_FIXTURE_KEK:randomBytes(32).toString('base64'), MAIL_PROVIDER:'disabled',
             PATIENT_CPF_KEY_ID:'clinical-ci', PATIENT_CPF_ENCRYPTION_KEY:randomBytes(32).toString('base64'),
             PATIENT_CPF_INDEX_KEY:randomBytes(32).toString('base64') });
         const express = require('express'), jwt = require('jsonwebtoken');
@@ -123,10 +123,31 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
         process.env.VITALIS_CLINICAL_RECORDS_ENABLED='0';
         assert.equal((await request(ta,'POST','/consultas/'+ap,clinical)).status,503);
         process.env.VITALIS_CLINICAL_RECORDS_ENABLED='1';
+        process.env.NODE_ENV='production';
+        assert.equal((await request(ta,'POST','/consultas/'+ap,clinical)).status,503);
+        process.env.NODE_ENV='test';
         const created = await Promise.all([request(ta,'POST','/consultas/'+ap,clinical),request(ta,'POST','/consultas/'+ap,clinical)]);
         assert.deepEqual(created.map(x=>x.status).sort(),[201,409]);
         const id = created.find(x=>x.status===201).body.id;
         assert.equal((await request(ta,'GET','/'+id)).body.versao_atual.conteudo.queixa,clinical.conteudo.queixa);
+        const [[plainColumns]] = await setup.execute('SELECT autor_snapshot,conteudo FROM prontuario_versoes WHERE clinica_id=? AND registro_id=? AND versao=1',[a,id]);
+        assert.deepEqual(plainColumns,{autor_snapshot:null,conteudo:null});
+        await assert.rejects(setup.execute("UPDATE prontuario_versoes SET conteudo=JSON_OBJECT('x','fixture') WHERE clinica_id=? AND registro_id=? AND versao=1",[a,id]),error=>error.code==='ER_CHECK_CONSTRAINT_VIOLATED');
+        const [[firstEnvelope]] = await setup.execute('SELECT chave_id,conteudo_cifrado,iv,auth_tag FROM prontuario_envelopes WHERE clinica_id=? AND registro_id=? AND versao=1',[a,id]);
+        assert.equal(firstEnvelope.iv.length,12);
+        assert.equal(firstEnvelope.auth_tag.length,16);
+        assert.equal(firstEnvelope.conteudo_cifrado.includes(Buffer.from(clinical.conteudo.queixa)),false);
+        assert.equal(firstEnvelope.conteudo_cifrado.includes(Buffer.from('Médico Fictício')),false);
+        const changedTag=Buffer.from(firstEnvelope.auth_tag); changedTag[0]^=1;
+        await setup.execute('UPDATE prontuario_envelopes SET auth_tag=? WHERE clinica_id=? AND registro_id=? AND versao=1',[changedTag,a,id]);
+        assert.equal((await request(ta,'GET','/'+id)).status,500);
+        await setup.execute('UPDATE prontuario_envelopes SET auth_tag=? WHERE clinica_id=? AND registro_id=? AND versao=1',[firstEnvelope.auth_tag,a,id]);
+        const originalKek=process.env.CLINICAL_FIXTURE_KEK;
+        process.env.CLINICAL_FIXTURE_KEK=randomBytes(32).toString('base64');
+        assert.equal((await request(ta,'GET','/'+id)).status,500);
+        process.env.CLINICAL_FIXTURE_KEK=originalKek;
+        assert.equal((await request(ta,'GET','/'+id)).status,200);
+        await assert.rejects(setup.execute('UPDATE prontuario_registros SET autor_usuario_id=? WHERE clinica_id=? AND id=?',[other,a,id]),error=>error.code==='ER_ROW_IS_REFERENCED_2'||error.code==='ER_NO_REFERENCED_ROW_2');
         assert.equal((await request(tx,'GET','/'+id)).status,404);
         assert.equal((await request(tb,'GET','/'+id+'/versoes')).status,404);
         assert.equal((await request(tb,'GET','/pacientes/'+patientA)).status,404);
@@ -139,6 +160,8 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
         assert.equal((await request(ta,'PATCH','/'+id+'/rascunho',{versao:3,...clinical})).status,409);
         assert.equal((await request(ta,'POST','/'+id+'/descartar-rascunho',{versao:3})).status,409);
         await setup.execute("UPDATE profissionais SET nome_exibicao = 'Nome Novo Fictício' WHERE clinica_id = ? AND id = ?",[a,pa]);
+        // Rotate only the fixture DEK; the next append creates a new random key.
+        await setup.execute('UPDATE prontuario_chaves SET ativa=NULL WHERE clinica_id=? AND ativa=1',[a]);
         const addendum = await request(ta,'POST','/'+id+'/adendos',{versao:3,conteudo:{texto:'Adendo fictício',motivo:'Correção fictícia'}});
         assert.equal(addendum.status,200);
         const history = await request(ta,'GET','/'+id+'/versoes');
@@ -147,6 +170,12 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
         assert.equal(history.body.itens[1].conteudo.queixa,clinical.conteudo.queixa);
         assert.equal(history.body.itens[1].autor_snapshot.nome_exibicao,'Médico Fictício');
         assert.equal(history.body.itens[0].autor_snapshot.nome_exibicao,'Nome Novo Fictício');
+        const [encryptedVersions] = await setup.execute('SELECT versao,chave_id,iv FROM prontuario_envelopes WHERE clinica_id=? AND registro_id=? ORDER BY versao',[a,id]);
+        assert.equal(encryptedVersions.length,4);
+        assert.equal(encryptedVersions[0].chave_id,encryptedVersions[2].chave_id);
+        assert.notEqual(encryptedVersions[2].chave_id,encryptedVersions[3].chave_id);
+        assert.equal(new Set(encryptedVersions.map(v=>v.iv.toString('hex'))).size,4);
+        assert.equal(Object.hasOwn(history.body.itens[0],'conteudo_cifrado'),false);
         assert.equal((await request(ta,'GET','/'+id+'/versoes?limite=1')).body.tem_proxima,true);
         const [[unchangedAppointment]] = await setup.execute('SELECT status FROM consultas WHERE id=?',[ap]);
         assert.equal(unchangedAppointment.status,'realizada');
@@ -154,6 +183,10 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
         assert.equal((await request(tb,'POST','/consultas/'+apB,clinical)).status,201);
         assert.equal((await request(to,'POST','/consultas/'+apOwn,clinical)).status,201);
         assert.equal((await request(to,'GET','/'+id)).status,404);
+        const [activeKeys] = await setup.query('SELECT clinica_id,chave_id,dek_protegida FROM prontuario_chaves WHERE ativa=1');
+        assert.equal(activeKeys.length,3);
+        assert.equal(new Set(activeKeys.map(k=>k.chave_id)).size,3);
+        assert.equal(new Set(activeKeys.map(k=>k.dek_protegida.toString('hex'))).size,3);
         assert.equal((await request(tx,'POST','/consultas/'+apOther,clinical)).status,201);
         assert.equal((await request(ta,'GET','/pacientes/'+patientA)).body.itens.length,1);
         await assert.rejects(setup.execute('UPDATE consultas SET profissional_id=? WHERE id=?',[px,ap]), error=>error.code==='ER_ROW_IS_REFERENCED_2');
@@ -164,8 +197,15 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
         assert.equal((await request(ta,'GET','/'+discard.body.id+'/versoes')).body.itens.length,2);
         const draft = await request(ta,'POST','/consultas/'+cancelDraftAp,clinical);
         assert.equal(draft.status,201);
-        await setup.execute("UPDATE consultas SET status='cancelada' WHERE id=?",[cancelDraftAp]);
-        assert.equal((await request(ta,'POST','/'+draft.body.id+'/finalizar',{versao:1})).status,409);
+        await setup.beginTransaction();
+        let cancellationResult;
+        try {
+            await setup.execute("UPDATE consultas SET status='cancelada' WHERE id=?",[cancelDraftAp]);
+            cancellationResult=request(ta,'POST','/'+draft.body.id+'/finalizar',{versao:1});
+            await new Promise(resolve=>setTimeout(resolve,100));
+            await setup.commit();
+        } catch (error) { await setup.rollback(); throw error; }
+        assert.equal((await cancellationResult).status,409);
         assert.equal((await request(ta,'GET','/'+draft.body.id)).status,404);
 
         // A trigger guarantees failure even with prior successful audit rows. Only disposable CI DB.
@@ -180,8 +220,20 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
         assert.equal(Number(versions.total),4);
         const [[logs]] = await setup.query("SELECT COUNT(*) AS total FROM auditoria WHERE CAST(metadados AS CHAR) LIKE '%FICTICIO_CONTEUDO_PRIVADO%'");
         assert.equal(Number(logs.total),0);
-        await setup.execute("UPDATE clinica_usuarios SET status='inativo',sessao_versao=sessao_versao+1 WHERE clinica_id=? AND usuario_id=?",[a,doctor]);
+        await setup.beginTransaction();
+        let revokedWrite;
+        try {
+            await setup.execute("UPDATE clinica_usuarios SET status='inativo',sessao_versao=sessao_versao+1 WHERE clinica_id=? AND usuario_id=?",[a,doctor]);
+            revokedWrite=request(ta,'POST','/'+id+'/adendos',{versao:4,conteudo:{texto:'Não gravar',motivo:'Revogação'}});
+            await new Promise(resolve=>setTimeout(resolve,100));
+            await setup.commit();
+        } catch (error) { await setup.rollback(); throw error; }
+        assert.equal((await revokedWrite).status,403);
         assert.equal((await request(ta,'GET','/'+id)).status,403);
+        const [[stillPreserved]] = await setup.execute('SELECT versao_atual FROM prontuario_registros WHERE id=?',[id]);
+        assert.equal(Number(stillPreserved.versao_atual),4);
+        const [denials]=await setup.query('SELECT codigo,COUNT(*) AS total FROM prontuario_negativas GROUP BY codigo');
+        for(const code of ['RECORD_FORBIDDEN','RECORD_NOT_FOUND','RECORD_INTEGRITY']) assert.ok(denials.some(row=>row.codigo===code && Number(row.total)>0));
         assert.equal((await request(tb,'GET','/pacientes/'+patientB)).status,200);
         await setup.execute("UPDATE identidades_profissionais SET status_verificacao='suspensa' WHERE usuario_id=?",[doctor]);
         assert.equal((await request(to,'GET','/pacientes/'+patientOwn)).status,403);

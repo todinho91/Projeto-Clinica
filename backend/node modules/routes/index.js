@@ -86,6 +86,7 @@ router.post(
 );
 
 router.use(tenantContext);
+router.use('/prontuarios', prontuarioController.recordRoleDenial);
 
 router.get('/prontuarios/pacientes/:pacienteId', authorize('profissional'), prontuarioController.timeline);
 router.post('/prontuarios/consultas/:consultaId', authorize('profissional'), prontuarioController.create);
