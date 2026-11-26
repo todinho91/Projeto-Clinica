@@ -388,10 +388,14 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
         const thirdContact = response();
         await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, contactC), thirdContact);
         assert.equal(thirdContact.statusCode, 201);
+        const [[cpfBeforeSharedEdit]] = await setup.execute(
+            'SELECT cpf_cifrado, cpf_iv, cpf_auth_tag, cpf_busca_hash, cpf_final, cpf_chave_id FROM pacientes_identificacao_administrativa WHERE clinica_id = ? AND paciente_id = ?',
+            [northId, thirdContact.body.id]
+        );
         const editShared = response();
         await controller.updatePatient({
             ...patientRequest(northId, northAdmin, northMembershipVersion, {
-                ...contactC, email: familyEmail, cpf: '', ...review
+                ...contactC, email: familyEmail, cpf: '', preservar_cpf: true, ...review
             }),
             params: { id: String(thirdContact.body.id) }
         }, editShared);
@@ -401,6 +405,12 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
         );
         assert.equal(editedContact.email, familyEmail);
         assert.equal(editedContact.usuario_id, null);
+        const [[cpfAfterSharedEdit]] = await setup.execute(
+            'SELECT cpf_cifrado, cpf_iv, cpf_auth_tag, cpf_busca_hash, cpf_final, cpf_chave_id FROM pacientes_identificacao_administrativa WHERE clinica_id = ? AND paciente_id = ?',
+            [northId, thirdContact.body.id]
+        );
+        assert.ok(cpfBeforeSharedEdit && cpfAfterSharedEdit, 'identificação protegida deve existir');
+        assert.deepEqual(cpfAfterSharedEdit, cpfBeforeSharedEdit, 'alteração de contato não deve substituir o CPF protegido');
 
         const isolatedContact = response();
         await controller.createPatient(patientRequest(southId, southAdmin, southMembershipVersion, contactA), isolatedContact);
