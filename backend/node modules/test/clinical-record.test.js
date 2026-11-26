@@ -43,7 +43,7 @@ test('rotas clínicas têm autorização específica e cache desabilitado', () =
     assert.match(routes, /router\.use\('\/prontuarios',[\s\S]*?'Cache-Control': 'no-store/);
     const controller = readFileSync(path.join(__dirname, '..', 'controllers', 'prontuarioController.js'), 'utf8');
     assert.doesNotMatch(controller, /UPDATE prontuario_versoes|DELETE FROM prontuario_/i);
-    assert.match(controller, /if \(!syntheticEnabled\(\)\)/);
+    assert.match(controller, /if \(!fixtureEnabled\(\)\)/);
 });
 test('migration 016 preserva histórico e amarra consulta, paciente e profissional ao tenant', () => {
     const sql = readFileSync(path.join(__dirname, '..', '..', 'database', 'migrations', '016_versioned_clinical_records.sql'), 'utf8');

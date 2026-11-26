@@ -36,3 +36,8 @@ test('provedor sintético exige combinação explícita de ambiente e banco desc
     assert.equal(syntheticEnabled({...env,NODE_ENV:'production'}),false);
     assert.equal(syntheticEnabled({...env,DB_DATABASE:'vitalis_m3_validacao'}),false);
 });
+
+test('variáveis de ambiente sozinhas não autorizam o provedor de fixture',()=>{
+    const {fixtureEnabled}=require('../support/clinical-record-crypto');
+    assert.equal(fixtureEnabled(),false);
+});

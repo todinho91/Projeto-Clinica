@@ -81,15 +81,29 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
             return row;
         }
         const beforeCounts = await counts();
+        // Synthetic only: install 016, simulate a committed first DDL of 017, verify refusal.
+        await fs.copyFile(path.join(migrationsDir,migrationName),path.join(temp,migrationName));
+        const sixteen=await runMigrations({connection:setup,migrationsDir:temp,logger:{info(){}}});
+        assert.deepEqual(sixteen.applied,[migrationName]);
+        const [pre017]=await setup.query('SELECT version,checksum FROM schema_migrations ORDER BY version');
+        await setup.query('ALTER TABLE prontuario_versoes MODIFY autor_snapshot JSON NULL, MODIFY conteudo JSON NULL, ADD CONSTRAINT chk_prontuario_sem_texto_puro CHECK (autor_snapshot IS NULL AND conteudo IS NULL)');
+        await assert.rejects(runMigrations({connection:setup,migrationsDir,logger:{info(){}}}),/MIGRATION_017_PARTIAL/);
+        const [partialLedger]=await setup.query('SELECT version,checksum FROM schema_migrations ORDER BY version');
+        assert.deepEqual(partialLedger,pre017);
+        assert.deepEqual(await counts(),beforeCounts);
+        // Reverse only the deliberately injected DDL in this empty synthetic table.
+        const [[empty]]=await setup.query('SELECT COUNT(*) AS total FROM prontuario_versoes');
+        assert.equal(Number(empty.total),0);
+        await setup.query('ALTER TABLE prontuario_versoes DROP CHECK chk_prontuario_sem_texto_puro, MODIFY autor_snapshot JSON NOT NULL, MODIFY conteudo JSON NOT NULL');
         const upgrade = await runMigrations({ connection: setup, migrationsDir, logger: { info() {} } });
-        assert.deepEqual(upgrade.applied,[migrationName,'017_clinical_record_encryption.sql']);
-        assert.equal(upgrade.skipped.length,15);
+        assert.deepEqual(upgrade.applied,['017_clinical_record_encryption.sql','018_clinical_crypto_events.sql']);
+        assert.equal(upgrade.skipped.length,16);
         assert.deepEqual(await counts(),beforeCounts);
         const [after] = await setup.query('SELECT version,checksum FROM schema_migrations ORDER BY version');
         assert.deepEqual(after.slice(0,15),before);
         const repeated = await runMigrations({ connection: setup, migrationsDir, logger: { info() {} } });
         assert.equal(repeated.applied.length,0);
-        assert.equal(repeated.skipped.length,17);
+        assert.equal(repeated.skipped.length,18);
 
         const secret = randomBytes(32).toString('hex');
         Object.assign(process.env,{ DB_HOST:config.host, DB_PORT:String(config.port), DB_USER:config.user,
@@ -111,6 +125,8 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
             assert.match(response.headers.get('cache-control') || '',/no-store/);
             return {status:response.status,body:await response.json()};
         }
+        assert.equal((await request(ta,'GET','/1')).status,503);
+        require('../support/clinical-record-crypto').enableSyntheticFixture();
         const clinical = { conteudo:{queixa:'FICTICIO_CONTEUDO_PRIVADO',evolucao:'Evolução de teste',conduta:'Conduta de teste'} };
         assert.equal((await request(null,'GET','/1')).status,401);
         for (const t of [token(admin,a,vAdmin),token(secretary,a,vSecretary),token(patientUser,a,vPatient),token(operator,a,1)]) {
@@ -120,6 +136,17 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
         assert.equal((await request(tx,'POST','/consultas/'+ap,clinical)).status,404);
         for(const id of [cancelled,future,noShow]) assert.equal((await request(ta,'POST','/consultas/'+id,clinical)).status,409);
         assert.equal((await request(ta,'POST','/consultas/'+ap,{...clinical,clinica_id:b})).status,400);
+        // New record creation with an invalid fixture KEK must roll back and log a distinct event.
+        const savedFixtureKek=process.env.CLINICAL_FIXTURE_KEK;
+        process.env.CLINICAL_FIXTURE_KEK='invalid-fixture';
+        const keyFailure=await request(ta,'POST','/consultas/'+ap,clinical);
+        assert.equal(keyFailure.status,500);
+        assert.equal(keyFailure.body.code,'RECORD_KEY_FAILURE');
+        process.env.CLINICAL_FIXTURE_KEK=savedFixtureKek;
+        const [[noRecord]]=await setup.execute('SELECT COUNT(*) AS total FROM prontuario_registros WHERE clinica_id=? AND consulta_id=?',[a,ap]);
+        assert.equal(Number(noRecord.total),0);
+        const [[keyEvent]]=await setup.query("SELECT COUNT(*) AS total FROM prontuario_negativas WHERE codigo='RECORD_KEY_FAILURE'");
+        assert.equal(Number(keyEvent.total),1);
         process.env.VITALIS_CLINICAL_RECORDS_ENABLED='0';
         assert.equal((await request(ta,'POST','/consultas/'+ap,clinical)).status,503);
         process.env.VITALIS_CLINICAL_RECORDS_ENABLED='1';

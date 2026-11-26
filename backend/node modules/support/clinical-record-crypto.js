@@ -10,7 +10,16 @@ function syntheticEnabled(env = process.env) {
         env.DB_DATABASE === TEST_SCHEMA &&
         ['127.0.0.1', 'localhost'].includes(env.DB_HOST);
 }
+let fixtureAuthorized = false;
+function fixtureEnabled() { return fixtureAuthorized && syntheticEnabled(); }
+function enableSyntheticFixture() {
+    if (!process.env.NODE_TEST_CONTEXT || !syntheticEnabled()) fail();
+    fixtureAuthorized = true;
+}
 function fail() { throw new Error('RECORD_CRYPTO_FAILURE'); }
+class CryptoWriteError extends Error {
+    constructor(code) { super(code); this.code = code; }
+}
 function keyValid(key) { return Buffer.isBuffer(key) && key.length === 32; }
 function canonicalId(value) {
     if (typeof value === 'number' && !Number.isSafeInteger(value)) fail();
@@ -54,7 +63,7 @@ function open(envelope, key, aad) {
     finally { partial?.fill(0); final?.fill(0); }
 }
 function fixtureKek() {
-    if (!syntheticEnabled()) fail();
+    if (!fixtureEnabled()) fail();
     const encoded = process.env.CLINICAL_FIXTURE_KEK;
     if (typeof encoded !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(encoded)) fail();
     const key = Buffer.from(encoded,'base64');
@@ -87,11 +96,16 @@ async function activeKey(connection, clinic) {
     finally { kek.fill(0); }
 }
 async function encryptVersion(connection, row, payload) {
-    const {id,key} = await activeKey(connection,row.clinica_id);
+    let active;
+    try { active = await activeKey(connection,row.clinica_id); }
+    catch { throw new CryptoWriteError('RECORD_KEY_FAILURE'); }
+    const {id,key} = active;
     let bytes;
     try {
         bytes = Buffer.from(JSON.stringify(payload));
-        const envelope = seal(bytes,key,recordAad(row,id));
+        let envelope;
+        try { envelope = seal(bytes,key,recordAad(row,id)); }
+        catch { throw new CryptoWriteError('RECORD_ENCRYPT_FAILURE'); }
         await connection.execute('INSERT INTO prontuario_envelopes (clinica_id,registro_id,versao,chave_id,conteudo_cifrado,iv,auth_tag,aad_version) VALUES (?,?,?,?,?,?,?,1)',
             [row.clinica_id,row.registro_id,row.versao,id,envelope.ciphertext,envelope.iv,envelope.tag]);
     } finally { bytes?.fill(0); key.fill(0); }
@@ -111,4 +125,4 @@ async function decryptVersion(connection, context, row) {
     } catch { fail(); }
     finally { bytes?.fill(0); key.fill(0); }
 }
-module.exports = {syntheticEnabled,TEST_SCHEMA,recordAad,seal,open,encryptVersion,decryptVersion};
+module.exports = {syntheticEnabled,fixtureEnabled,enableSyntheticFixture,CryptoWriteError,TEST_SCHEMA,recordAad,seal,open,encryptVersion,decryptVersion};

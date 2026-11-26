@@ -1,6 +1,6 @@
 const { randomUUID } = require('node:crypto');
 const pool = require('../config/database');
-const { syntheticEnabled, TEST_SCHEMA, encryptVersion, decryptVersion } = require('../support/clinical-record-crypto');
+const { fixtureEnabled, CryptoWriteError, TEST_SCHEMA, encryptVersion, decryptVersion } = require('../support/clinical-record-crypto');
 const { positiveId, onlyKeys, recordContent, addendumContent, eligible, canRead,
     nextState, completeForFinalization } = require('../support/clinical-record');
 
@@ -118,7 +118,7 @@ async function persistDenial(connection,code) {
     } catch { console.warn('[prontuario] security_event_unavailable'); }
 }
 exports.recordRoleDenial = async (req,res,next) => {
-    if (!syntheticEnabled() || req.tenant?.role === 'profissional') return next();
+    if (!fixtureEnabled() || req.tenant?.role === 'profissional') return next();
     let connection;
     try {
         connection = await pool.getConnection();
@@ -132,7 +132,7 @@ exports.recordRoleDenial = async (req,res,next) => {
 function endpoint(operation) {
     return async (req, res) => {
         // Experimental backend: disabled by default until controlled synthetic validation.
-        if (!syntheticEnabled()) {
+        if (!fixtureEnabled()) {
             return res.status(503).json({ code: 'RECORD_DISABLED', error: 'Prontuário indisponível neste ambiente.' });
         }
         let connection;
@@ -148,6 +148,16 @@ function endpoint(operation) {
             return res.status(result.status ?? 200).json(result.body);
         } catch (error) {
             if (connection) await connection.rollback().catch(() => {});
+            if (error instanceof CryptoWriteError) {
+                // A failed write has already rolled back. Do not include key, payload or target.
+                if (connection) {
+                    try {
+                        const selected = await first(connection,'SELECT DATABASE() AS db',[]);
+                        if (selected?.db === TEST_SCHEMA) await persistDenial(connection,error.code);
+                    } catch { console.warn('[prontuario] security_event_unavailable'); }
+                }
+                return res.status(500).json({code:error.code,error:'Registro indisponível.'});
+            }
             if (error instanceof RecordError) {
                 // No untrusted IDs, clinical payloads or identifying data in denied-access logs.
                 if (['RECORD_FORBIDDEN','RECORD_NOT_FOUND','RECORD_INTEGRITY'].includes(error.code)) {
