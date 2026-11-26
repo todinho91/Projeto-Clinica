@@ -12,6 +12,8 @@ test('prontuário limita payload e elegibilidade',()=>{
     assert.equal(core.eligible({status:'agendada',pode_concluir:false}),false);
     assert.equal(core.eligible({status:'realizada'}),true);
     assert.equal(core.loopback('example.test'),false);
+    assert.equal(core.localDate('2026-11-26 14:35:00'),'26/11/2026 às 14:35');
+    assert.equal(core.localDate('valor inválido'),'—');
 });
 test('troca de contexto invalida e aborta requisições antigas',()=>{
     const gate=core.contextGate(),old=gate.begin(),current=gate.begin();
@@ -25,6 +27,8 @@ test('interface sem armazenamento clínico persistente ou HTML dinâmico',()=>{
     assert.match(js,/cache:'no-store'/);assert.match(js,/e\.status===409/);
     assert.match(html,/autocomplete="off"/);assert.match(html,/viewport/);
     assert.match(html,/Content-Security-Policy/);assert.doesNotMatch(html,/<script[^>]+src="https?:/);
+    assert.match(html,/css\/dashboard\.css/);
+    for(const id of ['clinic-name','profissional','especialidade','data-atendimento','contexto-clinica','abrir-menu','fechar-menu'])assert.match(html,new RegExp(`id="${id}"`));
 });
 
 test('conflito preserva texto local e exige revisão explícita antes de retomar',()=>{

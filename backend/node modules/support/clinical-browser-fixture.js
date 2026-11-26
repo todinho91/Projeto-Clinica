@@ -8,7 +8,7 @@ const clinicalPage='/prontuario-experimental.html';
 const CSP="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; form-action 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 function mountStatic(app){
     // Whitelist only the files required for the clinical screen, never expose the repo or uploads.
-    for(const file of ['prontuario-experimental.html','css/prontuario-experimental.css','js/prontuario-experimental.js','js/vitalis-client.js']){
+    for(const file of ['prontuario-experimental.html','css/dashboard.css','css/prontuario-experimental.css','js/prontuario-experimental.js','js/vitalis-client.js']){
         app.get('/'+file,(req,res)=>{
             res.set({'Content-Security-Policy':CSP,'X-Frame-Options':'DENY','X-Content-Type-Options':'nosniff',
                 'Cache-Control':'no-store, private, max-age=0','Referrer-Policy':'no-referrer'});
@@ -86,6 +86,17 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,ap,apB,apOther
             page.on('console',m=>{if(m.text().includes(marker))consoleLeak=true;});
             page.on('dialog',d=>d.accept());
             await waitStatus(page,'Selecione um atendimento');
+            if(viewport.width<=991){
+                await page.locator('#abrir-menu').click();
+                assert.equal(await page.locator('#abrir-menu').getAttribute('aria-expanded'),'true');
+                await page.locator('#fechar-menu').click();
+                assert.equal(await page.locator('#abrir-menu').getAttribute('aria-expanded'),'false');
+                assert.equal(await page.evaluate(()=>document.activeElement?.id),'abrir-menu');
+                await page.locator('#abrir-menu').click();
+                await page.keyboard.press('Escape');
+                assert.equal(await page.locator('#abrir-menu').getAttribute('aria-expanded'),'false');
+                assert.equal(await page.locator('#vitalis-sidebar').evaluate(node=>node.inert),true);
+            }
             assert.equal(await page.locator('#consulta option[value="'+foreign+'"]').count(),0);
             assert.equal(await page.locator('#consulta option[value="'+apOther+'"]').count(),0);
             const denied=await c.request.get(origin+'/api/prontuarios/consultas/'+foreign,{headers:auth});
@@ -93,6 +104,10 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,ap,apB,apOther
             await page.locator('#consulta').selectOption(String(appointment));
             await waitStatus(page,'Atendimento carregado');
             assert.match(await page.locator('#paciente').textContent(),/Paciente Fictício/);
+            assert.notEqual((await page.locator('#profissional').textContent()).trim(),'—');
+            assert.match((await page.locator('#data-atendimento').textContent()).trim(),/\d{2}\/\d{2}\/\d{4} às \d{2}:\d{2} \(/);
+            assert.notEqual((await page.locator('#contexto-clinica').textContent()).trim(),'—');
+            assert.equal((await page.locator('#clinic-name').textContent()).trim(),session.clinic.clinica.nome);
             await click(page,'criar');await waitVersion(page,1);
             await waitEnabled(page,'salvar');await checkLayout(page);
             // Blank form screenshots: no clinical narratives, only fixtures.
@@ -148,6 +163,7 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,ap,apB,apOther
             await click(page,'adicionar');await waitVersion(page,6);
             assert.match(await page.locator('#versoes').textContent(),/Finalizado/);
             assert.match(await page.locator('#versoes').textContent(),/Adendo sintético/);
+            await page.screenshot({path:path.join(artifacts,label+'-historico-sintetico.png'),fullPage:true});
             const [[appointmentState]]=await setup.execute('SELECT status FROM consultas WHERE id=?',[appointment]);
             assert.equal(appointmentState.status,'realizada');
             await noNarrativeInStorage(page,marker);await checkLayout(page);
