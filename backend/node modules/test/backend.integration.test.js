@@ -27,6 +27,7 @@ function response() {
 
 async function resetTestSchema(connection) {
     const tables = [
+        'prontuario_versoes', 'prontuario_registros',
         'pacientes_identificacao_administrativa',
         'consultorio_delegacoes', 'consultorio_locais', 'consultorios_profissionais', 'identidades_profissionais',
         'bloqueios_profissional',
@@ -49,6 +50,7 @@ test('backend seleciona tenant e bloqueia paciente de outra clínica no MySQL 8'
     skip: !enabled
 }, async () => {
     const config = loadDatabaseConfig(process.env, 'TEST_DB_');
+    assert.ok(!['vitalis_pacientes_visual_m5_test', 'vitalis_prontuarios_ci_test'].includes(config.database), 'Banco visual ou exclusivo de outro teste não pode ser resetado.');
     if (!/^vitalis_[a-z0-9_]*_test$/.test(config.database)) {
         throw new Error('TEST_DB_DATABASE deve começar com vitalis_ e terminar com _test.');
     }

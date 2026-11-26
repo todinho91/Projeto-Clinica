@@ -24,6 +24,7 @@ function response() {
 async function resetSchema(connection, database) {
     await confirmAppointmentTestEnvironment(connection, database);
     const tables = [
+        'prontuario_versoes', 'prontuario_registros',
         'pacientes_identificacao_administrativa',
         'consultorio_delegacoes', 'consultorio_locais', 'consultorios_profissionais', 'identidades_profissionais',
         'auditoria_plataforma', 'convites_clinica', 'confirmacoes_consulta_eventos',

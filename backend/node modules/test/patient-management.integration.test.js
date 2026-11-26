@@ -47,6 +47,7 @@ function patientRequest(clinicId, userId, membershipVersion, overrides = {}) {
 async function resetSchema(connection, database) {
     await confirmPatientTestEnvironment(connection, database);
     const tables = [
+        'prontuario_versoes', 'prontuario_registros',
         'pacientes_identificacao_administrativa',
         'consultorio_delegacoes', 'consultorio_locais', 'consultorios_profissionais', 'identidades_profissionais',
         'auditoria_plataforma', 'convites_clinica', 'bloqueios_profissional',

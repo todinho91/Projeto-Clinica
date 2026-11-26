@@ -66,3 +66,38 @@ jobs:
           cache-dependency-path: "backend/node modules/package-lock.json"
       - run: npm ci
       - run: npm run test:patients:integration
+
+  clinical-record-mysql-integration:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: vitalis-ci-root-password
+          MYSQL_DATABASE: vitalis_prontuarios_ci_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD}"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    defaults:
+      run:
+        working-directory: "backend/node modules"
+    env:
+      CLINICAL_RECORD_INTEGRATION_TEST: '1'
+      TEST_DB_HOST: 127.0.0.1
+      TEST_DB_PORT: '3306'
+      TEST_DB_USER: root
+      TEST_DB_PASSWORD: vitalis-ci-root-password
+      TEST_DB_DATABASE: vitalis_prontuarios_ci_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: "backend/node modules/package-lock.json"
+      - run: npm ci
+      - run: node --test test/clinical-record.integration.test.js
