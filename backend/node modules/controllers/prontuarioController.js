@@ -189,6 +189,20 @@ function page(query) {
     return { number, limit, offset: (number - 1) * limit };
 }
 
+exports.capability = endpoint(async () => ({body:{experimental:true}}));
+
+exports.byAppointment = endpoint(async (connection,ctx,req) => {
+    const id=positiveId(req.params.consultaId); if(!id) invalid();
+    const appt=await appointment(connection,ctx,id);
+    const row=await first(connection,
+        "SELECT id,estado,versao_atual FROM prontuario_registros WHERE clinica_id=? AND consulta_id=? AND profissional_id=? AND autor_usuario_id=? FOR UPDATE",
+        [ctx.clinicId,id,ctx.professionalId,ctx.userId]);
+    if (!row && !eligible(appt.status,appt.iniciado)) conflict();
+    if (row && !canRead(row.estado,appt.status,appt.iniciado)) missing();
+    await audit(connection,ctx,'prontuario_consulta_lida','consulta',id,null);
+    return {body:{registro:row,editavel:eligible(appt.status,appt.iniciado)}};
+});
+
 exports.create = endpoint(async (connection, ctx, req) => {
     const id = positiveId(req.params.consultaId);
     if (!id || !onlyKeys(req.body ?? {}, ['conteudo'])) invalid();

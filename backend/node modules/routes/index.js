@@ -88,6 +88,8 @@ router.post(
 router.use(tenantContext);
 router.use('/prontuarios', prontuarioController.recordRoleDenial);
 
+router.get('/prontuarios/capacidade', authorize('profissional'), prontuarioController.capability);
+router.get('/prontuarios/consultas/:consultaId', authorize('profissional'), prontuarioController.byAppointment);
 router.get('/prontuarios/pacientes/:pacienteId', authorize('profissional'), prontuarioController.timeline);
 router.post('/prontuarios/consultas/:consultaId', authorize('profissional'), prontuarioController.create);
 router.get('/prontuarios/:id', authorize('profissional'), prontuarioController.detail);

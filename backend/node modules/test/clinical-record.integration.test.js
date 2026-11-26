@@ -127,6 +127,10 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
         }
         assert.equal((await request(ta,'GET','/1')).status,503);
         require('../support/clinical-record-crypto').enableSyntheticFixture();
+        assert.deepEqual((await request(ta,'GET','/capacidade')).body,{experimental:true});
+        assert.equal((await request(ta,'GET','/consultas/'+ap)).body.registro,null);
+        assert.equal((await request(tb,'GET','/consultas/'+ap)).status,404);
+        assert.equal((await request(tx,'GET','/consultas/'+ap)).status,404);
         const clinical = { conteudo:{queixa:'FICTICIO_CONTEUDO_PRIVADO',evolucao:'Evolução de teste',conduta:'Conduta de teste'} };
         assert.equal((await request(null,'GET','/1')).status,401);
         for (const t of [token(admin,a,vAdmin),token(secretary,a,vSecretary),token(patientUser,a,vPatient),token(operator,a,1)]) {
@@ -156,6 +160,7 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
         const created = await Promise.all([request(ta,'POST','/consultas/'+ap,clinical),request(ta,'POST','/consultas/'+ap,clinical)]);
         assert.deepEqual(created.map(x=>x.status).sort(),[201,409]);
         const id = created.find(x=>x.status===201).body.id;
+        assert.equal(Number((await request(ta,'GET','/consultas/'+ap)).body.registro.id),id);
         assert.equal((await request(ta,'GET','/'+id)).body.versao_atual.conteudo.queixa,clinical.conteudo.queixa);
         const [[plainColumns]] = await setup.execute('SELECT autor_snapshot,conteudo FROM prontuario_versoes WHERE clinica_id=? AND registro_id=? AND versao=1',[a,id]);
         assert.deepEqual(plainColumns,{autor_snapshot:null,conteudo:null});
