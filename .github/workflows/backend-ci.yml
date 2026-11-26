@@ -156,7 +156,8 @@ jobs:
         run: env "${{ matrix.flag }}=1" node --test "test/${{ matrix.suite }}.integration.test.js"
 
   clinical-browser-homologation:
-    runs-on: ubuntu-latest
+    # Playwright 1.56.1 requires a supported runner OS; ubuntu-latest may move.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       mysql:
