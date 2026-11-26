@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const authController = require('../controllers/authController');
 const consultaController = require('../controllers/consultaController');
+const prontuarioController = require('../controllers/prontuarioController');
 const exameController = require('../controllers/exameController');
 const especialidadeController = require('../controllers/especialidadeController');
 const medicoController = require('../controllers/medicoController');
@@ -55,6 +56,10 @@ router.post(
     confirmacaoConsultaController.respondPublic
 );
 
+router.use('/prontuarios', (req, res, next) => {
+    res.set({ 'Cache-Control': 'no-store, private, max-age=0', Pragma: 'no-cache', 'Referrer-Policy': 'no-referrer' });
+    next();
+});
 router.use(authenticate);
 router.get('/auth/clinics', identityOnly, authController.listClinics);
 router.post('/auth/select-clinic', identityOnly, authController.selectClinic);
@@ -81,6 +86,16 @@ router.post(
 );
 
 router.use(tenantContext);
+router.use('/prontuarios', prontuarioController.recordRoleDenial);
+
+router.get('/prontuarios/pacientes/:pacienteId', authorize('profissional'), prontuarioController.timeline);
+router.post('/prontuarios/consultas/:consultaId', authorize('profissional'), prontuarioController.create);
+router.get('/prontuarios/:id', authorize('profissional'), prontuarioController.detail);
+router.get('/prontuarios/:id/versoes', authorize('profissional'), prontuarioController.versions);
+router.patch('/prontuarios/:id/rascunho', authorize('profissional'), prontuarioController.saveDraft);
+router.post('/prontuarios/:id/finalizar', authorize('profissional'), prontuarioController.finalize);
+router.post('/prontuarios/:id/adendos', authorize('profissional'), prontuarioController.addendum);
+router.post('/prontuarios/:id/descartar-rascunho', authorize('profissional'), prontuarioController.discard);
 
 router.get('/consultorio/contexto', authorize('profissional'), consultorioController.context);
 router.post('/consultorio/locais', authorize('profissional'), consultorioController.createLocation);

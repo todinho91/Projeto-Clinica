@@ -30,6 +30,8 @@ async function resetTestSchema(connection, expectedDatabase) {
     }
 
     const tables = [
+        'prontuario_envelopes', 'prontuario_chaves', 'prontuario_negativas',
+        'prontuario_versoes', 'prontuario_registros',
         'pacientes_identificacao_administrativa',
         'consultorio_delegacoes', 'consultorio_locais', 'consultorios_profissionais', 'identidades_profissionais',
         'bloqueios_profissional',

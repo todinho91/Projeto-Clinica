@@ -11,6 +11,8 @@ const migrationsDir = path.join(__dirname, '..', '..', 'database', 'migrations')
 
 async function resetTestSchema(connection) {
     const tables = [
+        'prontuario_envelopes', 'prontuario_chaves', 'prontuario_negativas',
+        'prontuario_versoes', 'prontuario_registros',
         'pacientes_identificacao_administrativa',
         'consultorio_delegacoes', 'consultorio_locais', 'consultorios_profissionais', 'identidades_profissionais',
         'auditoria_plataforma',
@@ -45,6 +47,7 @@ test('MySQL 8 aplica migrations, repete seed e bloqueia referência entre clíni
     skip: !enabled
 }, async () => {
     const config = loadDatabaseConfig(process.env, 'TEST_DB_');
+    assert.ok(!['vitalis_pacientes_visual_m5_test', 'vitalis_prontuarios_ci_test'].includes(config.database), 'Banco visual ou exclusivo de outro teste não pode ser resetado.');
     if (!/^vitalis_[a-z0-9_]*_test$/.test(config.database)) {
         throw new Error('TEST_DB_DATABASE deve começar com vitalis_ e terminar com _test.');
     }
@@ -54,8 +57,8 @@ test('MySQL 8 aplica migrations, repete seed e bloqueia referência entre clíni
         await resetTestSchema(connection);
         const firstMigration = await runMigrations({ connection, migrationsDir, logger: { info() {} } });
         const secondMigration = await runMigrations({ connection, migrationsDir, logger: { info() {} } });
-        assert.equal(firstMigration.applied.length, 15);
-        assert.equal(secondMigration.skipped.length, 15);
+        assert.equal(firstMigration.applied.length, 18);
+        assert.equal(secondMigration.skipped.length, 18);
 
         const password = readSeedPassword();
         const rounds = readBcryptRounds();

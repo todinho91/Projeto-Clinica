@@ -56,6 +56,28 @@ async function releaseLock(connection) {
     await connection.execute('SELECT RELEASE_LOCK(?) AS released', [LOCK_NAME]);
 }
 
+// Refuse replay of a partially committed 017; never reconcile or delete automatically.
+async function assertClean017(connection) {
+    const [rows] = await connection.query(`
+        SELECT
+        (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE()
+         AND TABLE_NAME IN ('prontuario_chaves','prontuario_envelopes','prontuario_negativas')) AS tables_present,
+        (SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=DATABASE()
+         AND CONSTRAINT_NAME IN ('chk_prontuario_sem_texto_puro','fk_prontuario_profissional_autor')) AS constraints_present,
+        (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE()
+         AND TABLE_NAME='profissionais' AND INDEX_NAME='uk_profissionais_prontuario_autor') AS indexes_present,
+        (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE()
+         AND TABLE_NAME='prontuario_versoes' AND COLUMN_NAME IN ('conteudo','autor_snapshot') AND IS_NULLABLE='NO') AS original_columns
+    `);
+    const row=rows[0];
+    if (!row || Number(row.tables_present)!==0 || Number(row.constraints_present)!==0 ||
+        Number(row.indexes_present)!==0 || Number(row.original_columns)!==2) {
+        throw new Error('MIGRATION_017_PARTIAL: restaure snapshot pré-017 em schema isolado e valide; não repita DDL.');
+    }
+    const [versions]=await connection.query('SELECT 1 FROM prontuario_versoes LIMIT 1');
+    if (versions.length) throw new Error('MIGRATION_017_LEGACY: versões existentes exigem conversão autorizada.');
+}
+
 async function runMigrations({ connection, migrationsDir, logger = console }) {
     await ensureMigrationTable(connection);
     await acquireLock(connection);
@@ -81,6 +103,7 @@ async function runMigrations({ connection, migrationsDir, logger = console }) {
                 continue;
             }
 
+            if (migration.version === '017_clinical_record_encryption.sql') await assertClean017(connection);
             await connection.query(migration.sql);
             await connection.execute(
                 'INSERT INTO schema_migrations (version, checksum) VALUES (?, ?)',

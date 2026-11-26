@@ -835,6 +835,7 @@ exports.reschedule = async (req, res) => {
     } catch (error) {
         if (connection) await connection.rollback().catch(() => {});
         if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Horário indisponível para este profissional.' });
+        if (error.code === 'ER_ROW_IS_REFERENCED_2') return res.status(409).json({ error: 'O profissional de uma consulta com registro clínico não pode ser substituído.' });
         logFailure('reschedule', error);
         return res.status(500).json({ error: 'Erro ao reagendar consulta.' });
     } finally { connection?.release(); }
