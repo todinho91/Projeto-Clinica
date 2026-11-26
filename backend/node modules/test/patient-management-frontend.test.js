@@ -35,7 +35,7 @@ test('cadastro rotineiro exige identificação e mantém contato como preferênc
     ]) {
         assert.match(page, new RegExp(`id="${id}"[^>]*required`), `${id} deve ser obrigatório`);
     }
-    assert.match(page, /id="paciente-email"[^>]*\(opcional\)|E-mail <span[^>]*>\(opcional\)/);
+    assert.match(page, /id="paciente-email"[^>]*\(opcional\)|E-mail de contato <span[^>]*>\(opcional\)/);
     assert.match(page, /id="paciente-telefone"[^>]*type="tel"/);
     assert.match(page, /id="paciente-preferencia-contato"/);
     assert.match(page, /id="paciente-sem-cpf"/);

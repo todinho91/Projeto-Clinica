@@ -49,6 +49,14 @@ Não registre os valores em documentação, Git, shell compartilhado ou logs. A 
 rotação, retenção e recuperação está definida na
 `docs/adr/ADR-002-identificacao-clinica-paciente.md`.
 
+## Migration 015 — e-mail de contato compartilhado
+
+A migration 015 troca o índice único de e-mail administrativo por índice de busca não único,
+sem modificar a migration 008 ou os registros existentes. E-mails compartilhados exigem
+revisão auditada; CPF por clínica e e-mail de login permanecem únicos. O cadastro público
+continua conservador até a verificação de titularidade (#33). Consulte
+`docs/M5_DUPLICIDADE_PACIENTES.md` para aplicação e reversão seguras.
+
 ## Validação MySQL 8 em banco descartável
 
 Nunca execute esta integração em `vitalis_m3_validacao`, `vitalis_dev` ou bancos de demonstração. Crie um banco vazio e exclusivo cujo nome comece com `vitalis_pacientes` e termine com `_test`, por exemplo `vitalis_pacientes_m5_test`.

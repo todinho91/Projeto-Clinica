@@ -209,3 +209,13 @@ test('documentação bloqueia vinculação automática até verificação de tit
     assert.match(documentation, /issues\/33/);
     assert.match(documentation, /não informam se os dados correspondem a uma identidade global ou a um perfil clínico/);
 });
+
+
+test('migration 015 altera apenas o índice de contato sem remover unicidade de login ou CPF', async () => {
+    const sql = await fs.readFile(path.join(migrationsDir, '015_patient_shared_contact_email.sql'), 'utf8');
+    assert.match(sql, /ALTER TABLE pacientes\s+DROP INDEX uk_pacientes_email,\s+ADD KEY idx_pacientes_email \(clinica_id, email\);/);
+    assert.doesNotMatch(sql, /DROP TABLE|DROP COLUMN|TRUNCATE|DELETE FROM|UPDATE pacientes|INSERT INTO pacientes|ALTER TABLE usuarios/i);
+    const all = await schemaSql();
+    assert.match(all, /UNIQUE KEY uk_usuarios_email \(email\)/);
+    assert.match(all, /UNIQUE KEY uk_paciente_cpf_tenant \(clinica_id, cpf_busca_hash\)/);
+});

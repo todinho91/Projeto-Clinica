@@ -1,6 +1,6 @@
 # M5 — Prevenção reforçada de pacientes duplicados
 
-Esta entrega trata a issue #62 sem alterar migrations, prontuários ou consultas existentes.
+Esta entrega trata a issue #62, complementada pela migration 015 de contato compartilhado, sem alterar registros, prontuários ou consultas existentes.
 O sistema nunca funde pacientes automaticamente e nunca pesquisa registros fora da clínica
 ativa.
 
@@ -9,7 +9,8 @@ ativa.
 - nome é normalizado por espaços, caixa e acentuação para localizar candidatos;
 - e-mail, telefone e nome com nascimento ajudam a classificar possíveis duplicidades;
 - nome igual sem e-mail, telefone ou nascimento é bloqueado até que existam dados adicionais;
-- e-mail igual, nome com nascimento igual ou nome e telefone iguais são bloqueios fortes;
+- CPF igual no tenant, nome com nascimento igual ou nome e telefone iguais são bloqueios fortes;
+- e-mail de contato igual isoladamente exige revisão, mas não impede pessoas distintas;
 - homônimos com dados distintos e contatos compartilhados exigem revisão explícita por um
   administrador ou pela secretaria;
 - a revisão registra somente um motivo controlado na auditoria, sem copiar dados pessoais;
@@ -28,10 +29,20 @@ Homônimos bloqueados nesse fluxo devem ser revisados pela equipe autorizada da 
 
 ## Compatibilidade com a migration 008
 
-A chave `UNIQUE (clinica_id, email)` foi preservada. Portanto, um e-mail não pode ser
-compartilhado por dois pacientes da mesma clínica, mesmo após revisão. Como famílias podem
-compartilhar e-mail, essa limitação precisa de uma decisão de produto e migração específica
-antes de ser alterada; a PR da issue #62 não remove essa proteção de forma preventiva.
+A migration 008 permanece intacta, inclusive seu checksum. A migration 015 substitui
+somente `uk_pacientes_email` por `idx_pacientes_email (clinica_id, email)`, não único.
+Não modifica dados nem referências. A unicidade de `usuarios.email`, de `pacientes (clinica_id,
+usuario_id)` e do índice protegido de CPF por clínica permanece inalterada.
+O cadastro administrativo exige revisão auditada para contatos coincidentes e não cria nem
+vincula contas. O cadastro público continua bloqueando conflitos de nome/e-mail com resposta
+neutra até existir verificação de titularidade (#33). Compartilhar contato não concede acesso
+ao portal de outro paciente; representação legal é fluxo futuro separado.
+
+Aplicação: somente após backup/restauração verificados, teste MySQL descartável e autorização
+específica. Executar em janela de manutenção, sem escritores concorrentes nem versões antigas
+do backend. A reversão para índice único pode falhar se já existirem contatos compartilhados;
+não apagar nem mesclar pacientes para reverter. Avaliar contagens sem expor endereços de e-mail,
+preservar IDs e vínculos e restaurar backup validado em schema separado se necessário.
 
 Nenhuma chave única por nome foi criada, porque pessoas homônimas são válidas. Também não há
 mesclagem automática: uma futura função de fusão deve ser separada, autorizada, transacional,
