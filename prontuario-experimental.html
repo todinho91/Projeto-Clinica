@@ -1,40 +1,84 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src http://127.0.0.1:3000 http://localhost:3000; form-action 'none'; object-src 'none'; base-uri 'none'">
 <title>Prontuário experimental — Vitalis</title>
+<link rel="icon" type="image/png" href="img/icons8-blue-heart-96.png">
+<link rel="stylesheet" href="css/dashboard.css">
 <link rel="stylesheet" href="css/prontuario-experimental.css">
 </head>
-<body><header class="top"><a href="dashboard-medico.html">Vitalis · Voltar aos atendimentos</a><strong id="contexto"></strong></header>
-<main>
-<p class="eyebrow">ÁREA PROFISSIONAL · HOMOLOGAÇÃO SINTÉTICA</p><h1>Atendimento clínico</h1>
-<p class="notice">Experimental. Não utilize dados reais. Salve antes de sair: a edição local não sobrevive ao encerramento, troca de contexto ou falha de autorização. O prontuário não conclui a consulta na agenda e não representa assinatura digital.</p>
-<p id="status" role="status" aria-live="polite">Verificando acesso…</p>
-<button id="recarregar" type="button">Verificar acesso e atualizar agenda</button>
-<section id="workspace" hidden>
-<label for="consulta">Atendimento</label><select id="consulta"><option value="">Selecione uma consulta</option></select>
-<p id="paciente"></p>
-<div class="layout">
-<section class="panel" aria-labelledby="registro-titulo">
-<h2 id="registro-titulo">Registro clínico</h2><p id="estado"></p>
-<button id="criar" type="button" hidden>Iniciar rascunho</button>
-<form id="editor" autocomplete="off" hidden>
-<label for="queixa">Queixa principal</label><textarea id="queixa" name="queixa" rows="3" maxlength="8000" autocomplete="off" spellcheck="false"></textarea>
-<label for="anamnese">Anamnese</label><textarea id="anamnese" name="anamnese" rows="3" maxlength="8000" autocomplete="off" spellcheck="false"></textarea>
-<label for="antecedentes">Antecedentes</label><textarea id="antecedentes" name="antecedentes" rows="3" maxlength="8000" autocomplete="off" spellcheck="false"></textarea>
-<label for="alergias">Alergias (não informado ≠ ausência)</label><textarea id="alergias" name="alergias" rows="3" maxlength="8000" autocomplete="off" spellcheck="false"></textarea>
-<label for="medicamentos">Medicamentos em uso</label><textarea id="medicamentos" name="medicamentos" rows="3" maxlength="8000" autocomplete="off" spellcheck="false"></textarea>
-<label for="avaliacao">Avaliação clínica</label><textarea id="avaliacao" name="avaliacao" rows="3" maxlength="8000" autocomplete="off" spellcheck="false"></textarea>
-<label for="evolucao">Evolução</label><textarea id="evolucao" name="evolucao" rows="3" maxlength="8000" autocomplete="off" spellcheck="false"></textarea>
-<label for="diagnostico">Diagnóstico</label><textarea id="diagnostico" name="diagnostico" rows="3" maxlength="8000" autocomplete="off" spellcheck="false"></textarea>
-<label for="conduta">Conduta e plano terapêutico</label><textarea id="conduta" name="conduta" rows="3" maxlength="8000" autocomplete="off" spellcheck="false"></textarea>
-<div class="actions"><button id="salvar" type="button">Salvar rascunho</button><button id="finalizar" type="button">Finalizar registro salvo</button><button id="descartar" type="button" class="secondary">Descartar rascunho</button></div>
-</form>
-<form id="adendo" autocomplete="off" hidden><h3>Adicionar adendo</h3><label for="motivo">Motivo</label><textarea id="motivo" rows="2" maxlength="1000" autocomplete="off" spellcheck="false"></textarea><label for="texto">Texto do adendo</label><textarea id="texto" rows="4" maxlength="8000" autocomplete="off" spellcheck="false"></textarea><button id="adicionar" type="button">Registrar adendo</button></form>
-<section id="conflito" class="notice" aria-labelledby="conflito-titulo" hidden><h3 id="conflito-titulo">Conflito de edição</h3><p>O texto local permanece nos campos, em memória. Revise o histórico do servidor antes de retomar a edição. Nenhum texto será enviado automaticamente.</p><div class="actions"><button id="revisar-conflito" type="button">Revisar versão do servidor</button><button id="reaplicar" type="button" disabled>Retomar edição com texto local</button><button id="descartar-local" type="button" class="secondary">Descartar texto local</button></div></section>
-<div id="versoes"></div><button id="mais-versoes" type="button" hidden>Mais versões</button>
-</section><section class="panel" aria-labelledby="hist-titulo"><h2 id="hist-titulo">Histórico próprio do paciente</h2><p>Somente registros autorizados neste contexto.</p><div id="historico"></div><button id="mais-historico" type="button" hidden>Mais atendimentos</button></section>
-</div></section>
-</main><script src="js/vitalis-client.js"></script><script src="js/prontuario-experimental.js"></script></body></html>
+<body class="vitalis-dashboard-body vitalis-professional-page vitalis-clinical-page">
+<aside class="vitalis-sidebar" id="vitalis-sidebar" aria-labelledby="sidebar-title" data-open="false">
+    <div class="clinical-sidebar-heading"><h2 id="sidebar-title">Menu profissional</h2><button id="fechar-menu" type="button" aria-label="Fechar navegação">Fechar</button></div>
+    <a class="vitalis-brand" href="dashboard-medico.html" aria-label="Vitalis — painel profissional">
+        <span class="vitalis-brand-mark" aria-hidden="true">V</span><span><strong>Vitalis</strong><small>Gestão em saúde</small></span>
+    </a>
+    <div class="vitalis-clinic-card"><span>Contexto ativo</span><strong id="clinic-name">Clínica</strong><small id="clinic-kind">Área profissional</small></div>
+    <nav class="vitalis-nav" aria-label="Navegação profissional">
+        <a href="dashboard-medico.html"><span aria-hidden="true">◷</span> Minha agenda</a>
+        <a href="dashboard-medico.html#minhas-consultas"><span aria-hidden="true">▤</span> Atendimentos</a>
+        <a class="active" href="prontuario-experimental.html" aria-current="page"><span aria-hidden="true">▣</span> Prontuários</a>
+        <a href="disponibilidade.html"><span aria-hidden="true">◫</span> Disponibilidade</a>
+        <a href="calendario.html"><span aria-hidden="true">▦</span> Calendário</a>
+    </nav>
+    <div class="vitalis-sidebar-footer"><a id="trocar-clinica" href="select-clinic.html" hidden>Trocar contexto</a><button id="logout-button" type="button">Sair da conta</button></div>
+</aside>
+<div class="vitalis-dashboard-content">
+    <header class="vitalis-topbar">
+        <button class="clinical-menu-toggle" id="abrir-menu" type="button" aria-controls="vitalis-sidebar" aria-expanded="false">Menu</button>
+        <div class="vitalis-topbar-title"><span>Área profissional · prontuário</span><strong id="contexto">Verificando contexto</strong></div>
+        <span class="clinical-environment-badge">Homologação sintética</span>
+    </header>
+    <main class="vitalis-main clinical-main">
+        <section class="vitalis-welcome" aria-labelledby="page-title">
+            <div><p class="vitalis-eyebrow">Atendimento clínico</p><h1 id="page-title">Prontuário do paciente</h1><p>Registro restrito ao profissional responsável pelo atendimento.</p></div>
+            <button id="recarregar" class="clinical-button secondary" type="button">Revalidar acesso</button>
+        </section>
+        <p class="clinical-synthetic-notice">Ambiente experimental. Não utilize dados reais. Salve o rascunho antes de sair. A tela não conclui a consulta na agenda nem representa assinatura digital.</p>
+        <div id="status" class="clinical-status" role="status" aria-live="polite">Verificando acesso…</div>
+        <section id="workspace" hidden>
+            <section class="vitalis-panel clinical-context-panel" aria-labelledby="attendance-title">
+                <div class="clinical-context-title"><div><p class="vitalis-eyebrow">Atendimento autorizado</p><h2 id="attendance-title">Identificação do atendimento</h2></div><span id="estado" class="clinical-state"></span></div>
+                <div class="clinical-context-grid">
+                    <div class="clinical-context-primary"><label for="consulta">Paciente e horário</label><select id="consulta"><option value="">Selecione uma consulta</option></select><p id="paciente" class="clinical-patient-summary"></p></div>
+                    <div><span class="clinical-meta-label">Profissional responsável</span><strong id="profissional">—</strong></div>
+                    <div><span class="clinical-meta-label">Especialidade</span><strong id="especialidade">—</strong></div>
+                    <div><span class="clinical-meta-label">Data e hora</span><strong id="data-atendimento">—</strong></div>
+                    <div><span class="clinical-meta-label">Clínica ou consultório</span><strong id="contexto-clinica">—</strong></div>
+                </div>
+            </section>
+            <div class="clinical-workspace-grid">
+                <section class="vitalis-panel clinical-editor-panel" aria-labelledby="registro-titulo">
+                    <div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Registro versionado</p><h2 id="registro-titulo">Evolução clínica</h2></div><span class="clinical-lock-note">Acesso clínico restrito</span></div>
+                    <button id="criar" class="clinical-button primary" type="button" hidden>Iniciar rascunho</button>
+                    <form id="editor" autocomplete="off" hidden>
+                        <fieldset class="clinical-section"><legend>História e contexto</legend><div class="clinical-field-grid">
+                            <div><label for="queixa">Queixa principal</label><textarea id="queixa" name="queixa" rows="3" maxlength="8000" autocomplete="off" spellcheck="false"></textarea></div>
+                            <div><label for="anamnese">Anamnese</label><textarea id="anamnese" name="anamnese" rows="3" maxlength="8000" autocomplete="off" spellcheck="false"></textarea></div>
+                            <div><label for="antecedentes">Antecedentes pessoais e familiares</label><textarea id="antecedentes" name="antecedentes" rows="3" maxlength="8000" autocomplete="off" spellcheck="false"></textarea></div>
+                            <div><label for="alergias">Alergias <span class="clinical-hint">(não informado não significa ausência)</span></label><textarea id="alergias" name="alergias" rows="3" maxlength="8000" autocomplete="off" spellcheck="false"></textarea></div>
+                            <div><label for="medicamentos">Medicamentos em uso</label><textarea id="medicamentos" name="medicamentos" rows="3" maxlength="8000" autocomplete="off" spellcheck="false"></textarea></div>
+                        </div></fieldset>
+                        <fieldset class="clinical-section"><legend>Avaliação e plano</legend><div class="clinical-field-grid">
+                            <div><label for="avaliacao">Avaliação clínica</label><textarea id="avaliacao" name="avaliacao" rows="3" maxlength="8000" autocomplete="off" spellcheck="false"></textarea></div>
+                            <div><label for="diagnostico">Diagnóstico, quando aplicável</label><textarea id="diagnostico" name="diagnostico" rows="3" maxlength="8000" autocomplete="off" spellcheck="false"></textarea></div>
+                            <div><label for="evolucao">Evolução</label><textarea id="evolucao" name="evolucao" rows="4" maxlength="8000" autocomplete="off" spellcheck="false"></textarea></div>
+                            <div><label for="conduta">Conduta e plano terapêutico</label><textarea id="conduta" name="conduta" rows="4" maxlength="8000" autocomplete="off" spellcheck="false"></textarea></div>
+                        </div></fieldset>
+                        <div class="clinical-actions" aria-label="Ações do rascunho"><button id="salvar" class="clinical-button primary" type="button">Salvar rascunho</button><button id="finalizar" class="clinical-button success" type="button">Finalizar registro salvo</button><button id="descartar" class="clinical-button secondary" type="button">Descartar rascunho</button></div>
+                    </form>
+                    <form id="adendo" class="clinical-section clinical-addendum" autocomplete="off" hidden><h3>Adicionar adendo</h3><label for="motivo">Motivo</label><textarea id="motivo" rows="2" maxlength="1000" autocomplete="off" spellcheck="false"></textarea><label for="texto">Texto do adendo</label><textarea id="texto" rows="4" maxlength="8000" autocomplete="off" spellcheck="false"></textarea><button id="adicionar" class="clinical-button primary" type="button">Registrar adendo</button></form>
+                    <section id="conflito" class="clinical-conflict" aria-labelledby="conflito-titulo" hidden><h3 id="conflito-titulo">Conflito de edição</h3><p>O texto local permanece apenas nesta tela. Revise a versão salva antes de retomar. Nada será reenviado automaticamente.</p><div class="clinical-actions"><button id="revisar-conflito" class="clinical-button secondary" type="button">Revisar versão do servidor</button><button id="reaplicar" class="clinical-button primary" type="button" disabled>Retomar edição com texto local</button><button id="descartar-local" class="clinical-button secondary" type="button">Descartar texto local</button></div></section>
+                    <section class="clinical-history-block" aria-labelledby="versions-title"><div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Trilha do atendimento</p><h2 id="versions-title">Versões e adendos</h2></div></div><div id="versoes" class="clinical-version-list"></div><button id="mais-versoes" class="clinical-button secondary" type="button" hidden>Mais versões</button></section>
+                </section>
+                <aside class="vitalis-panel clinical-timeline-panel" aria-labelledby="hist-titulo"><div class="vitalis-panel-header"><div><p class="vitalis-eyebrow">Histórico autorizado</p><h2 id="hist-titulo">Linha do tempo</h2></div></div><p class="clinical-timeline-note">Exibe somente registros permitidos para este profissional e contexto.</p><div id="historico" class="clinical-timeline"></div><button id="mais-historico" class="clinical-button secondary" type="button" hidden>Mais atendimentos</button></aside>
+            </div>
+        </section>
+    </main>
+</div>
+<script src="js/vitalis-client.js"></script><script src="js/prontuario-experimental.js"></script>
+</body>
+</html>
