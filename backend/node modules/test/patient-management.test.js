@@ -153,6 +153,40 @@ test('duplicidade na clínica aborta sem inserir', async (t) => {
     assert.equal(executions.some((sql) => /INSERT INTO pacientes/.test(sql)), false);
 });
 
+test('e-mail familiar isolado exige revisão e não vincula conta global', async (t) => {
+    const writes = [];
+    const db = connection(async (sql, params) => {
+        if (/SELECT id FROM clinicas/.test(sql)) return [[{ id: 11 }]];
+        if (/SELECT cu\.id/.test(sql)) return [[{ id: 2 }]];
+        if (/FROM pacientes p/.test(sql)) {
+            assert.equal(params[0], 11);
+            return [[{ id: 5, nome: 'Responsável Familiar', email: 'maria@example.test',
+                telefone: null, data_nascimento: '1970-01-10', status: 'ativo' }]];
+        }
+        writes.push({ sql, params });
+        return [{ insertId: 45, affectedRows: 1 }];
+    });
+    t.mock.method(pool, 'getConnection', async () => db);
+    const body = { telefone: '' };
+    const rejected = response();
+    await controller.createPatient(request({ body }), rejected);
+    assert.equal(rejected.statusCode, 409);
+    assert.equal(rejected.body.code, 'PATIENT_REVIEW_REQUIRED');
+    assert.equal(rejected.body.revisao_permitida, true);
+    assert.equal(writes.length, 0);
+    const allowed = response();
+    await controller.createPatient(request({ body: {
+        ...body, revisao_duplicidade: true, motivo_revisao: 'contato_compartilhado'
+    } }), allowed);
+    assert.equal(allowed.statusCode, 201);
+    const insert = writes.find(({ sql }) => /INSERT INTO pacientes \(/.test(sql));
+    assert.match(insert.sql, /VALUES \(\?, NULL/);
+    assert.ok(writes.every(({ sql }) => !/INSERT INTO usuarios|INSERT INTO clinica_usuarios/.test(sql)));
+    const audit = writes.find(({ sql }) => /INSERT INTO auditoria/.test(sql));
+    assert.match(audit.params.at(-1), /"motivo_revisao":"contato_compartilhado"/);
+    assert.doesNotMatch(audit.params.at(-1), /maria@example\.test/);
+});
+
 test('nome canônico trata espaços, caixa e acentuação sem fundir prontuários', () => {
     assert.equal(controller.canonicalName('  João   da SILVA '), 'joao da silva');
     const candidates = [{ id: 5, bloqueante: false, nome: 'Maria Silva' }];

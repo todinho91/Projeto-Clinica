@@ -196,15 +196,15 @@ async function potentialPatients(connection, clinicId, payload, ignoredId = 0, i
         WHERE p.clinica_id = ? AND p.id <> ?
           AND (
                 LOWER(REGEXP_REPLACE(TRIM(p.nome), '[[:space:]]+', ' ')) = LOWER(?)
-             OR (? IS NOT NULL AND p.email = ?)
-             OR (? IS NOT NULL AND p.telefone = ?)
+             OR (? IS NOT NULL AND (p.email = ? OR TRIM(p.email) = ?))
+             OR (? IS NOT NULL AND REGEXP_REPLACE(p.telefone, '[^0-9]', '') = ?)
              OR (? IS NOT NULL AND pia.cpf_busca_hash = ?)
           )
         ORDER BY p.id
         FOR UPDATE
     `, [
         clinicId, ignoredId, payload.name,
-        payload.email, payload.email, payload.phone, payload.phone,
+        payload.email, payload.email, payload.email, payload.phone, payload.phone,
         cpfHash, cpfHash
     ]);
     const inputName = canonicalName(payload.name);
@@ -212,8 +212,8 @@ async function potentialPatients(connection, clinicId, payload, ignoredId = 0, i
         const storedBirthDate = row.data_nascimento instanceof Date
             ? row.data_nascimento.toISOString().slice(0, 10) : row.data_nascimento;
         const nameMatch = canonicalName(row.nome) === inputName;
-        const emailMatch = Boolean(payload.email && row.email === payload.email);
-        const phoneMatch = Boolean(payload.phone && String(row.telefone || '') === payload.phone);
+        // A shared contact is a candidate, not a unique patient identity.
+        const phoneMatch = Boolean(payload.phone && normalizedPhone(row.telefone) === payload.phone);
         const cpfMatch = Boolean(cpfHash && Buffer.isBuffer(row.cpf_busca_hash)
             && row.cpf_busca_hash.equals(cpfHash));
         const birthNameMatch = Boolean(nameMatch && payload.birthDate
@@ -223,7 +223,7 @@ async function potentialPatients(connection, clinicId, payload, ignoredId = 0, i
             id: Number(row.id), nome: row.nome, status: row.status,
             ano_nascimento: storedBirthDate ? Number(String(storedBirthDate).slice(0, 4)) : null,
             email_mascarado: maskEmail(row.email), telefone_mascarado: maskPhone(row.telefone),
-            bloqueante: cpfMatch || emailMatch || birthNameMatch
+            bloqueante: cpfMatch || birthNameMatch
                 || (nameMatch && phoneMatch) || incompleteNameMatch
         };
     });

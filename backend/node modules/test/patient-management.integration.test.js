@@ -346,6 +346,101 @@ test('MySQL 8 valida cadastro, concorrência, duplicidade, rollback e isolamento
         }), familyReviewed);
         assert.equal(familyReviewed.statusCode, 201);
 
+        const familyEmail = 'familia.compartilhada@example.test';
+        const contactA = {
+            nome: 'Responsável Contato Email', email: familyEmail, telefone: '',
+            data_nascimento: '1978-06-10', cpf: testCpf(223456780)
+        };
+        const contactB = {
+            nome: 'Dependente Contato Email', email: ' FAMILIA.COMPARTILHADA@example.test ',
+            telefone: '', data_nascimento: '2012-09-20', cpf: testCpf(223456781)
+        };
+        const firstContact = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, contactA), firstContact);
+        assert.equal(firstContact.statusCode, 201);
+        const emailReview = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, contactB), emailReview);
+        assert.equal(emailReview.statusCode, 409);
+        assert.equal(emailReview.body.code, 'PATIENT_REVIEW_REQUIRED');
+        assert.equal(emailReview.body.revisao_permitida, true);
+        const review = { revisao_duplicidade: true, motivo_revisao: 'contato_compartilhado' };
+        const sharedEmail = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, { ...contactB, ...review }), sharedEmail);
+        assert.equal(sharedEmail.statusCode, 201);
+        const [familyRows] = await setup.execute(
+            'SELECT id, usuario_id FROM pacientes WHERE clinica_id = ? AND email = ? ORDER BY id', [northId, familyEmail]
+        );
+        assert.equal(familyRows.length, 2);
+        assert.ok(familyRows.every(row => row.usuario_id === null));
+        assert.notEqual(firstContact.body.id, sharedEmail.body.id);
+
+        const repeatedCpfReviewed = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, {
+            ...contactB, ...review, nome: 'Outro Nome Mesmo CPF Compartilhado'
+        }), repeatedCpfReviewed);
+        assert.equal(repeatedCpfReviewed.statusCode, 409);
+        assert.equal(repeatedCpfReviewed.body.code, 'PATIENT_DUPLICATE');
+
+        const contactC = {
+            nome: 'Terceiro Contato Email', email: 'terceiro.contato@example.test', telefone: '',
+            data_nascimento: '2015-02-10', cpf: testCpf(223456782)
+        };
+        const thirdContact = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, contactC), thirdContact);
+        assert.equal(thirdContact.statusCode, 201);
+        const [[cpfBeforeSharedEdit]] = await setup.execute(
+            'SELECT cpf_cifrado, cpf_iv, cpf_auth_tag, cpf_busca_hash, cpf_final, cpf_chave_id FROM pacientes_identificacao_administrativa WHERE clinica_id = ? AND paciente_id = ?',
+            [northId, thirdContact.body.id]
+        );
+        const editShared = response();
+        await controller.updatePatient({
+            ...patientRequest(northId, northAdmin, northMembershipVersion, {
+                ...contactC, email: familyEmail, cpf: '', preservar_cpf: true, ...review
+            }),
+            params: { id: String(thirdContact.body.id) }
+        }, editShared);
+        assert.equal(editShared.statusCode, 200);
+        const [[editedContact]] = await setup.execute(
+            'SELECT email, usuario_id FROM pacientes WHERE clinica_id = ? AND id = ?', [northId, thirdContact.body.id]
+        );
+        assert.equal(editedContact.email, familyEmail);
+        assert.equal(editedContact.usuario_id, null);
+        const [[cpfAfterSharedEdit]] = await setup.execute(
+            'SELECT cpf_cifrado, cpf_iv, cpf_auth_tag, cpf_busca_hash, cpf_final, cpf_chave_id FROM pacientes_identificacao_administrativa WHERE clinica_id = ? AND paciente_id = ?',
+            [northId, thirdContact.body.id]
+        );
+        assert.ok(cpfBeforeSharedEdit && cpfAfterSharedEdit, 'identificação protegida deve existir');
+        assert.deepEqual(cpfAfterSharedEdit, cpfBeforeSharedEdit, 'alteração de contato não deve substituir o CPF protegido');
+
+        const isolatedContact = response();
+        await controller.createPatient(patientRequest(southId, southAdmin, southMembershipVersion, contactA), isolatedContact);
+        assert.equal(isolatedContact.statusCode, 201);
+
+        const publicSharedContact = response();
+        await authController.register({ body: {
+            nome: 'Tentativa de Cadastro com Contato Familiar', email: familyEmail,
+            senha: 'senha-ficticia-forte', clinica_slug: 'norte-pacientes-test'
+        } }, publicSharedContact);
+        assert.equal(publicSharedContact.statusCode, 409);
+        const [[sharedLoginCount]] = await setup.execute('SELECT COUNT(*) AS total FROM usuarios WHERE email = ?', [familyEmail]);
+        assert.equal(Number(sharedLoginCount.total), 0);
+
+        const noCpf = {
+            nome: 'Paciente Exceção Concorrente', email: '', telefone: '',
+            data_nascimento: '1992-01-15', cpf: '', cpf_excecao: 'nao_possui'
+        };
+        const noCpfFirst = response();
+        const noCpfSecond = response();
+        await Promise.all([
+            controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, noCpf), noCpfFirst),
+            controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, noCpf), noCpfSecond)
+        ]);
+        assert.deepEqual([noCpfFirst.statusCode, noCpfSecond.statusCode].sort(), [201, 409]);
+        const noCpfReviewed = response();
+        await controller.createPatient(patientRequest(northId, northAdmin, northMembershipVersion, { ...noCpf, ...review }), noCpfReviewed);
+        assert.equal(noCpfReviewed.statusCode, 409);
+        assert.equal(noCpfReviewed.body.code, 'PATIENT_DUPLICATE');
+
         const candidateValues = []; const candidateParams = [];
         for (let index = 0; index < 11; index += 1) {
             candidateValues.push("(?, NULL, 'Candidato Limite', NULL, ?, ?, 'ativo')");
