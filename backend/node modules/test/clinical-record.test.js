@@ -38,7 +38,7 @@ test('rotas clínicas têm autorização específica e cache desabilitado', () =
     const routes = readFileSync(path.join(__dirname, '..', 'routes', 'index.js'), 'utf8');
     assert.ok(routes.indexOf("router.use(tenantContext)") < routes.indexOf("router.get('/prontuarios/pacientes/"));
     const endpoints = routes.split('\n').filter(line => /router\.(get|post|patch)\('\/prontuarios\//.test(line));
-    assert.equal(endpoints.length, 8);
+    assert.equal(endpoints.length, 10);
     assert.ok(endpoints.every(line => line.includes("authorize('profissional')")));
     assert.match(routes, /router\.use\('\/prontuarios',[\s\S]*?'Cache-Control': 'no-store/);
     const controller = readFileSync(path.join(__dirname, '..', 'controllers', 'prontuarioController.js'), 'utf8');
