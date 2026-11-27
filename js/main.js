@@ -577,6 +577,57 @@ async function setupPracticePage() {
     const list = document.getElementById('practice-locations');
     const status = document.getElementById('practice-status');
     const form = document.getElementById('practice-location-form');
+    const locationCep = document.getElementById('location-postal-code');
+    const cepStatus = document.getElementById('location-cep-status');
+    const cepGate = VitalisCore.createLatestRequestGate();
+    let cepTimer = null;
+    let editingLocationId = null;
+    function resetLocationForm() {
+        editingLocationId = null;
+        form.reset();
+        document.getElementById('practice-location-form-title').textContent = 'Novo local';
+        document.getElementById('practice-location-submit').textContent = 'Adicionar local';
+        document.getElementById('cancel-location-edit').hidden = true;
+        cepGate.invalidate(); clearTimeout(cepTimer); cepStatus.textContent = '';
+    }
+    function startLocationEdit(location) {
+        editingLocationId = location.id;
+        document.getElementById('practice-location-form-title').textContent = 'Editar local';
+        document.getElementById('practice-location-submit').textContent = 'Salvar alterações';
+        document.getElementById('cancel-location-edit').hidden = false;
+        document.getElementById('location-name').value = location.nome;
+        document.getElementById('location-address').value = location.endereco_linha;
+        document.getElementById('location-city').value = location.cidade;
+        document.getElementById('location-state').value = location.uf;
+        locationCep.value = VitalisCore.formatCep(location.cep || '');
+        form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        document.getElementById('location-name').focus();
+    }
+    async function lookupLocationCep() {
+        const digits = locationCep.value.replace(/\D/g, '');
+        if (digits.length !== 8) return;
+        const ticket = cepGate.begin(digits);
+        const read = () => ({
+            endereco_linha: document.getElementById('location-address').value,
+            cidade: document.getElementById('location-city').value,
+            uf: document.getElementById('location-state').value
+        });
+        const snapshot = read();
+        cepStatus.textContent = 'Consultando CEP…';
+        try {
+            const address = await apiRequest(`/pacientes/cep/${digits}`);
+            if (!cepGate.isCurrent(ticket, locationCep.value.replace(/\D/g, ''))) return;
+            const merged = VitalisCore.mergePracticeCepAddress(snapshot, read(), address);
+            document.getElementById('location-address').value = merged.endereco_linha;
+            document.getElementById('location-city').value = merged.cidade;
+            document.getElementById('location-state').value = merged.uf;
+            cepStatus.textContent = 'Endereço preenchido pelo CEP. Confira os dados antes de salvar.';
+        } catch (error) {
+            if (cepGate.isCurrent(ticket, locationCep.value.replace(/\D/g, ''))) {
+                cepStatus.textContent = `${error.message} Você pode preencher o endereço manualmente.`;
+            }
+        }
+    }
     const metricsStatus = document.getElementById('practice-metrics-status');
     async function loadMetrics(context) {
         try {
@@ -631,15 +682,22 @@ async function setupPracticePage() {
                         await load();
                     } catch (error) { showMessage(status, error.message); }
                 });
-                card.append(details, button); list.append(card);
+                const edit = document.createElement('button'); edit.type = 'button';
+                edit.className = 'btn btn-sm btn-outline-primary'; edit.textContent = 'Editar';
+                edit.setAttribute('aria-label', `Editar local ${location.nome}`);
+                edit.addEventListener('click', () => startLocationEdit(location));
+                const actions = document.createElement('div'); actions.className = 'vitalis-practice-location-actions';
+                actions.append(edit, button);
+                card.append(details, actions); list.append(card);
             });
         } catch (error) { showMessage(status, error.message); }
     }
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         try {
-            const data = await apiRequest('/consultorio/locais', {
-                method: 'POST', body: JSON.stringify({
+            const data = await apiRequest(editingLocationId
+                ? `/consultorio/locais/${editingLocationId}` : '/consultorio/locais', {
+                method: editingLocationId ? 'PUT' : 'POST', body: JSON.stringify({
                     nome: document.getElementById('location-name').value,
                     endereco_linha: document.getElementById('location-address').value,
                     cidade: document.getElementById('location-city').value,
@@ -647,8 +705,14 @@ async function setupPracticePage() {
                     cep: document.getElementById('location-postal-code').value
                 })
             });
-            form.reset(); showMessage(status, data.message, 'success'); await load();
+            resetLocationForm(); showMessage(status, data.message, 'success'); await load();
         } catch (error) { showMessage(status, error.message); }
+    });
+    document.getElementById('cancel-location-edit').addEventListener('click', resetLocationForm);
+    locationCep.addEventListener('input', () => {
+        locationCep.value = VitalisCore.formatCep(locationCep.value);
+        cepGate.invalidate(); clearTimeout(cepTimer); cepStatus.textContent = '';
+        if (locationCep.value.replace(/\D/g, '').length === 8) cepTimer = setTimeout(lookupLocationCep, 250);
     });
     await load();
 }

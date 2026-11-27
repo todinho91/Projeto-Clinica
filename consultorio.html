@@ -44,14 +44,14 @@
       </section>
       <div class="vitalis-practice-grid">
         <section class="vitalis-panel"><div class="vitalis-panel-header"><h2>Locais de atendimento</h2><span>Espaços físicos do consultório</span></div><div id="practice-locations" class="vitalis-practice-locations"></div></section>
-        <section class="vitalis-panel"><div class="vitalis-panel-header"><h2>Novo local</h2><span>Não cria outra clínica</span></div>
+        <section class="vitalis-panel"><div class="vitalis-panel-header"><h2 id="practice-location-form-title">Novo local</h2><span>Não cria outra clínica</span></div>
           <form id="practice-location-form"><div class="row g-3">
             <div class="col-12"><label class="form-label" for="location-name">Nome</label><input class="form-control" id="location-name" maxlength="120" required></div>
             <div class="col-12"><label class="form-label" for="location-address">Endereço</label><input class="form-control" id="location-address" maxlength="200" required></div>
             <div class="col-7"><label class="form-label" for="location-city">Cidade</label><input class="form-control" id="location-city" maxlength="120" required></div>
             <div class="col-5"><label class="form-label" for="location-state">UF</label><input class="form-control text-uppercase" id="location-state" maxlength="2" pattern="[A-Za-z]{2}" required></div>
-            <div class="col-12"><label class="form-label" for="location-postal-code">CEP (opcional)</label><input class="form-control" id="location-postal-code" inputmode="numeric" maxlength="9"></div>
-            <div class="col-12 d-grid"><button class="btn vitalis-primary-button" type="submit">Adicionar local</button></div>
+            <div class="col-12"><label class="form-label" for="location-postal-code">CEP (opcional)</label><input class="form-control" id="location-postal-code" inputmode="numeric" maxlength="9" autocomplete="postal-code"><div id="location-cep-status" class="form-text" role="status" aria-live="polite"></div></div>
+            <div class="col-12 d-flex gap-2 flex-wrap"><button id="practice-location-submit" class="btn vitalis-primary-button flex-grow-1" type="submit">Adicionar local</button><button id="cancel-location-edit" class="btn btn-outline-secondary" type="button" hidden>Cancelar edição</button></div>
           </div></form><div id="practice-status" class="mt-3" role="status" aria-live="polite"></div>
         </section>
       </div>

@@ -171,6 +171,7 @@ html { scroll-behavior: smooth; }
 .vitalis-practice-location strong, .vitalis-practice-location span { display: block; overflow-wrap: anywhere; }
 .vitalis-practice-location strong { color: var(--vitalis-navy); }
 .vitalis-practice-location span { margin-top: .2rem; color: var(--vitalis-muted); font-size: .8rem; }
+.vitalis-practice-location-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: .5rem; }
 
 /* M4-01: disponibilidade e bloqueios */
 .vitalis-availability-context { display: grid; grid-template-columns: minmax(240px, 1fr) auto; gap: 1rem; align-items: end; margin-bottom: 1rem; }
@@ -610,6 +611,7 @@ html, body.vitalis-dashboard-body {
     .vitalis-practice-page .vitalis-main { padding: .75rem; }
     .vitalis-practice-page .vitalis-panel { padding: .9rem; }
     .vitalis-practice-location { align-items: stretch; flex-direction: column; }
+    .vitalis-practice-location-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .vitalis-practice-location .btn { width: 100%; }
 }
 

@@ -294,6 +294,22 @@
         return { values, addressChanged, numberCleared };
     }
 
+    function mergePracticeCepAddress(snapshot, current, address) {
+        const values = { ...current };
+        if (!address || typeof address !== 'object') return values;
+        const line = [address.logradouro, address.bairro].filter((part) => typeof part === 'string' && part.trim())
+            .join(', ');
+        const candidates = {
+            endereco_linha: line,
+            cidade: String(address.cidade ?? ''),
+            uf: String(address.uf ?? '').toUpperCase()
+        };
+        for (const [field, value] of Object.entries(candidates)) {
+            if (value && String(current[field] ?? '') === String(snapshot[field] ?? '')) values[field] = value;
+        }
+        return values;
+    }
+
     function createPatientCepLookup({ gate, readCep, readFields, lookup, writeFields, onStatus }) {
         if (!gate || typeof gate.begin !== 'function' || typeof gate.isCurrent !== 'function'
             || typeof readCep !== 'function' || typeof readFields !== 'function'
@@ -436,6 +452,7 @@
         practiceDashboardSummary,
         formatCep,
         mergePatientCepAddress,
+        mergePracticeCepAddress,
         formatCpf,
         isValidCpf,
         platformAccessState,

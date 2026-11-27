@@ -336,6 +336,53 @@ exports.createLocation = async (req, res) => {
     } finally { connection?.release(); }
 };
 
+exports.updateLocation = async (req, res) => {
+    const locationId = positiveId(req.params.id);
+    const payload = locationPayload(req.body);
+    if (!locationId || !payload) return res.status(400).json({ error: 'Dados do local de atendimento inválidos.' });
+    const clinicId = req.tenant.clinicId;
+    let connection;
+    try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        if (!await ownerContext(connection, clinicId, req.userId, true)) {
+            await connection.rollback();
+            return res.status(403).json({ error: 'Acesso restrito ao titular do consultório.' });
+        }
+        const [rows] = await connection.execute(`
+            SELECT id, nome, endereco_linha, cidade, uf, cep, status
+            FROM consultorio_locais WHERE clinica_id = ? AND id = ? FOR UPDATE
+        `, [clinicId, locationId]);
+        if (!rows.length) {
+            await connection.rollback();
+            return res.status(404).json({ error: 'Local não encontrado no consultório ativo.' });
+        }
+        await connection.execute(`
+            UPDATE consultorio_locais SET nome = ?, endereco_linha = ?, cidade = ?, uf = ?, cep = ?
+            WHERE clinica_id = ? AND id = ?
+        `, [payload.name, payload.address, payload.city, payload.state, payload.postalCode,
+            clinicId, locationId]);
+        await connection.execute(`
+            INSERT INTO auditoria (clinica_id, usuario_id, acao, entidade_tipo, entidade_id, metadados)
+            VALUES (?, ?, 'local_atendimento_atualizado', 'consultorio_local', ?, ?)
+        `, [clinicId, req.userId, locationId, JSON.stringify({
+            nome_anterior: rows[0].nome, nome_atual: payload.name,
+            endereco_alterado: rows[0].endereco_linha !== payload.address
+                || rows[0].cidade !== payload.city || rows[0].uf !== payload.state
+                || String(rows[0].cep || '') !== String(payload.postalCode || '')
+        })]);
+        await connection.commit();
+        return res.status(200).json({ message: 'Local de atendimento atualizado.' });
+    } catch (error) {
+        if (connection) await connection.rollback().catch(() => {});
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ error: 'Já existe um local com este nome no consultório.' });
+        }
+        logFailure('location_update', error);
+        return res.status(500).json({ error: 'Erro ao atualizar local de atendimento.' });
+    } finally { connection?.release(); }
+};
+
 exports.updateLocationStatus = async (req, res) => {
     const locationId = positiveId(req.params.id);
     const status = req.body?.status;

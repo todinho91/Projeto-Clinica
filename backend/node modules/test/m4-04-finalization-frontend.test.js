@@ -48,6 +48,15 @@ test('indicadores do consultório respeitam fuso local e contam apenas dados ret
     });
 });
 
+test('consulta de CEP no local preserva alterações manuais feitas durante a resposta', () => {
+    const snapshot = { endereco_linha: 'Rua Antiga, Centro', cidade: 'Cidade Antiga', uf: 'PR' };
+    const edited = { ...snapshot, cidade: 'Cidade digitada' };
+    assert.deepEqual(core.mergePracticeCepAddress(snapshot, edited, {
+        logradouro: 'Rua Nova', bairro: 'Bairro Novo', cidade: 'Cidade Nova', uf: 'sp'
+    }), { endereco_linha: 'Rua Nova, Bairro Novo', cidade: 'Cidade digitada', uf: 'SP' });
+    assert.deepEqual(core.mergePracticeCepAddress(snapshot, snapshot, null), snapshot);
+});
+
 test('painel profissional apresenta indicadores reais e sem dados financeiros fictícios', async () => {
     const page = await fs.readFile(path.join(root, 'consultorio.html'), 'utf8');
     const main = await fs.readFile(path.join(root, 'js', 'main.js'), 'utf8');
@@ -57,6 +66,19 @@ test('painel profissional apresenta indicadores reais e sem dados financeiros fi
     assert.match(main, /\/pacientes\?status=ativo&pagina=1&limite=1/);
     assert.match(main, /\/consultas\/minha-agenda/);
     assert.doesNotMatch(page, /R\$\s*0,00|Saldo fictício|Receita estimada/i);
+});
+
+test('locais permitem edição e CEP assistido sem perder preenchimento manual', async () => {
+    const [page, main] = await Promise.all([
+        fs.readFile(path.join(root, 'consultorio.html'), 'utf8'),
+        fs.readFile(path.join(root, 'js', 'main.js'), 'utf8')
+    ]);
+    assert.match(page, /id="cancel-location-edit"/);
+    assert.match(page, /id="location-cep-status"/);
+    assert.match(main, /\/consultorio\/locais\/\$\{editingLocationId\}[\s\S]*method: editingLocationId \? 'PUT' : 'POST'/);
+    assert.match(main, /\/pacientes\/cep\/\$\{digits\}/);
+    assert.match(main, /mergePracticeCepAddress\(snapshot, read\(\), address\)/);
+    assert.match(main, /Editar local/);
 });
 
 test('troca de contexto depende da quantidade de vínculos, não do nome do papel', () => {

@@ -456,6 +456,28 @@ test('MySQL 8 valida fluxo completo, concorrência, rollback e isolamento de con
             body: { nome: 'Unidade A', endereco_linha: 'Rua A, 1', cidade: 'São Paulo', uf: 'SP' }
         }, locationA);
         assert.equal(locationA.statusCode, 201);
+        const updateLocation = response();
+        await controllers.practice.updateLocation({
+            userId: ownerA, tenant: { clinicId: clinicA, role: 'profissional' },
+            params: { id: String(locationA.body.id) },
+            body: { nome: 'Unidade A atualizada', endereco_linha: 'Rua Atualizada, 2', cidade: 'Campinas', uf: 'SP', cep: '13010000' }
+        }, updateLocation);
+        assert.equal(updateLocation.statusCode, 200);
+        const [[updatedLocation]] = await setup.execute(`
+            SELECT nome, endereco_linha, cidade, uf, cep, status
+            FROM consultorio_locais WHERE clinica_id = ? AND id = ?
+        `, [clinicA, locationA.body.id]);
+        assert.deepEqual(updatedLocation, {
+            nome: 'Unidade A atualizada', endereco_linha: 'Rua Atualizada, 2',
+            cidade: 'Campinas', uf: 'SP', cep: '13010000', status: 'ativo'
+        });
+        const crossTenantEdit = response();
+        await controllers.practice.updateLocation({
+            userId: ownerB, tenant: { clinicId: clinicB, role: 'profissional' },
+            params: { id: String(locationA.body.id) },
+            body: { nome: 'Tentativa externa', endereco_linha: 'Rua X, 3', cidade: 'Londrina', uf: 'PR' }
+        }, crossTenantEdit);
+        assert.equal(crossTenantEdit.statusCode, 404);
         const crossTenant = response();
         await controllers.practice.updateLocationStatus({
             userId: ownerB, tenant: { clinicId: clinicB, role: 'profissional' },
