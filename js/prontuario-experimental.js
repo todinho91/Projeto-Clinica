@@ -25,6 +25,10 @@
             current(ticket){return ticket.id===sequence&&!ticket.signal.aborted;}
         };
     }
+    function localDate(value){
+        const match=String(value??'').match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+        return match?`${match[3]}/${match[2]}/${match[1]} às ${match[4]}:${match[5]}`:'—';
+    }
     function mount(win){
         const doc=win.document, el=id=>doc.getElementById(id), entry=el('prontuario-experimental-link');
         const page=el('workspace'); if(!page&&!entry)return;
@@ -64,14 +68,17 @@
         function clearRecord(){
             record=null;editable=false;dirty=false;conflicted=false;conflictLatest=null;versionPage=1;historyPage=1;
             for(const field of [...fields,'motivo','texto'])el(field).value='';
-            for(const id of ['estado','paciente'])el(id).textContent='';
+            for(const id of ['estado','paciente','profissional','especialidade','data-atendimento','contexto-clinica'])el(id).textContent='';
             for(const id of ['versoes','historico'])el(id).replaceChildren();
             for(const id of ['editor','adendo','criar','mais-versoes','mais-historico','conflito'])el(id).hidden=true;
         }
         function clearAll(message){
             gate.clear();clearRecord();selected=null;appointments=[];busy=false;loaded=false;masked=false;
+            el('clinical-nav').dataset.ready='false';
             el('consulta').replaceChildren(new win.Option('Selecione uma consulta',''));
-            page.hidden=true;el('contexto').textContent='';el('recarregar').disabled=false;status(message);
+            page.hidden=true;el('contexto').textContent='';el('clinic-name').textContent='';el('clinic-kind').textContent='';
+            el('profissional').textContent='—';el('especialidade').textContent='—';el('data-atendimento').textContent='—';el('contexto-clinica').textContent='—';
+            el('recarregar').disabled=false;status(message);
         }
         function controls(){
             const draft=record?.estado==='rascunho'&&editable;
@@ -149,7 +156,11 @@
         async function openAppointment(row){
             const ticket=gate.begin();clearRecord();selected=row;busy=true;controls();
             try{
-                el('paciente').textContent=row.nome_paciente+' · '+String(row.inicio_local||'');
+                el('paciente').textContent=row.nome_paciente;
+                el('profissional').textContent=row.nome_profissional||'—';
+                el('especialidade').textContent=row.nome_especialidade||'Não informada';
+                el('data-atendimento').textContent=localDate(row.inicio_local||row.inicio_em)+(row.timezone?' ('+row.timezone+')':'');
+                el('contexto-clinica').textContent=session.activeClinic.nome||'—';
                 const found=await request(ticket,'/prontuarios/consultas/'+row.id);
                 editable=found.editavel===true;
                 if(found.registro)await detail(ticket,found.registro.id,editable);
@@ -168,6 +179,12 @@
                 appointments=rows.filter(a=>validId(a.id)&&validId(a.paciente_id)&&eligible(a));
                 for(const a of appointments)el('consulta').append(new win.Option(String(a.inicio_local||'')+' · '+a.nome_paciente,String(a.id)));
                 el('contexto').textContent=session.activeClinic.nome||'Contexto profissional';
+                el('clinic-name').textContent=session.activeClinic.nome||'Clínica';
+                el('clinic-kind').textContent=session.activeClinic.tipo_contexto==='consultorio'?'Consultório profissional':'Área profissional';
+                const switchState=win.VitalisCore.workspaceSwitchState(session.clinics,session.activeClinic);
+                el('trocar-clinica').hidden=!switchState.visible;
+                el('trocar-clinica').textContent=switchState.label;
+                el('clinical-nav').dataset.ready='true';
                 loaded=true;page.hidden=masked||doc.hidden;status(appointments.length?'Selecione um atendimento.':'Nenhum atendimento elegível.');
             }catch(e){error(ticket,e);}finally{if(gate.current(ticket))el('recarregar').disabled=false;}
         }
@@ -204,6 +221,27 @@
         });
         for(const id of ['editor','adendo'])el(id).addEventListener('submit',event=>event.preventDefault());
         el('recarregar').addEventListener('click',()=>{if((!dirty&&!conflicted)||win.confirm('Descartar alterações não salvas da tela?'))load();});
+        const sidebar=el('vitalis-sidebar'), menuButton=el('abrir-menu'), mobileMenu=win.matchMedia('(max-width: 991.98px)');
+        const syncMenu=()=>{sidebar.inert=mobileMenu.matches&&sidebar.dataset.open!=='true';};
+        const closeMenu=(restoreFocus=false)=>{sidebar.dataset.open='false';menuButton.setAttribute('aria-expanded','false');syncMenu();if(restoreFocus&&mobileMenu.matches)menuButton.focus();};
+        mobileMenu.addEventListener?.('change',syncMenu);syncMenu();
+        menuButton.addEventListener('click',()=>{
+            const open=sidebar.dataset.open!=='true';sidebar.dataset.open=String(open);menuButton.setAttribute('aria-expanded',String(open));syncMenu();
+            if(open&&mobileMenu.matches)sidebar.querySelector('a[href]')?.focus();
+        });
+        sidebar.addEventListener('keydown',event=>{
+            if(!mobileMenu.matches||sidebar.dataset.open!=='true')return;
+            if(event.key==='Escape'){event.preventDefault();closeMenu(true);return;}
+            if(event.key!=='Tab')return;
+            const items=[...sidebar.querySelectorAll('a[href],button:not(:disabled)')].filter(item=>!item.hidden);
+            if(!items.length)return;
+            const first=items[0],last=items.at(-1);
+            if(event.shiftKey&&doc.activeElement===first){event.preventDefault();last.focus();}
+            else if(!event.shiftKey&&doc.activeElement===last){event.preventDefault();first.focus();}
+        });
+        el('fechar-menu').addEventListener('click',()=>closeMenu(true));
+        sidebar.querySelectorAll('a').forEach(link=>link.addEventListener('click',closeMenu));
+        el('logout-button').addEventListener('click',()=>{if(dirty&&!win.confirm('Sair e apagar o texto local não salvo?'))return;hide();session.clear();win.location.assign('login.html');});
         el('descartar-local').addEventListener('click',()=>{
             if(!busy&&selected&&win.confirm('Descartar somente o texto local não salvo e carregar o servidor?'))openAppointment(selected);
         });
@@ -272,5 +310,5 @@
         win.setInterval(verify,5000);
         load();
     }
-    return {mount,clinicalPayload,eligible,contextGate,loopback};
+    return {mount,clinicalPayload,eligible,contextGate,loopback,localDate};
 });
