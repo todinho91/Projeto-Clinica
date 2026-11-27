@@ -96,7 +96,7 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
         await waitStatus(ownerPage,'Atendimento carregado');
         assert.equal((await ownerPage.locator('#clinic-name').textContent()).trim(),ownerSession.clinic.clinica.nome);
         await click(ownerPage,'criar');await waitVersion(ownerPage,1);
-        await click(ownerPage,'descartar');await waitVersion(ownerPage,2);
+        await click(ownerPage,'descartar');await ownerPage.locator('.vitalis-confirm-button.primary').click();await waitVersion(ownerPage,2);
         await checkLayout(ownerPage);
         await resetScroll(ownerPage);
         await ownerPage.screenshot({path:path.join(artifacts,'consultorio-autonomo-360-prontuario.png')});
@@ -248,7 +248,8 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
                 await page.locator('#fechar-menu').click();assert.equal(await page.evaluate(()=>document.activeElement?.id),'abrir-menu');
                 await page.screenshot({path:path.join(artifacts,'tablet-768x1024-prontuario.png'),fullPage:true});
                 await page.locator('#consulta').selectOption(String(discardAp));await waitStatus(page,'Atendimento carregado');
-                await click(page,'criar');await waitVersion(page,1);await click(page,'descartar');await waitVersion(page,2);
+                await click(page,'criar');await waitVersion(page,1);await click(page,'descartar');
+                await page.locator('.vitalis-confirm-button.primary').click();await waitVersion(page,2);
                 assert.match(await page.locator('#estado').textContent(),/descartado/);
                 assert.equal(await page.locator('#editor').isVisible(),false);
             }else{
