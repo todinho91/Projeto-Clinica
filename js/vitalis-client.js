@@ -100,33 +100,33 @@
         if (owner) return {
             overview: true, patients: true, specialties: true, availability: true,
             appointments: true, calendar: true, team: true, settings: true,
-            professionals: false, clinicalDashboard: true
+            professionals: false, clinicalDashboard: true, clinicalRecords: true
         };
         if (practice && role === 'secretaria') return {
             overview: true, patients: true, specialties: false,
             availability: clinic?.permissoes?.gerenciar_disponibilidade === true,
             appointments: true, calendar: true, team: false, settings: false,
-            professionals: false, clinicalDashboard: false
+            professionals: false, clinicalDashboard: false, clinicalRecords: false
         };
         if (role === 'administrador') return {
             overview: true, patients: true, specialties: true, availability: true,
             appointments: true, calendar: true, team: true, settings: true,
-            professionals: true, clinicalDashboard: false
+            professionals: true, clinicalDashboard: false, clinicalRecords: false
         };
         if (role === 'secretaria') return {
             overview: true, patients: true, specialties: true, availability: true,
             appointments: true, calendar: true, team: true, settings: false,
-            professionals: true, clinicalDashboard: false
+            professionals: true, clinicalDashboard: false, clinicalRecords: false
         };
         if (role === 'profissional') return {
             overview: true, patients: false, specialties: false, availability: true,
             appointments: false, calendar: true, team: false, settings: false,
-            professionals: false, clinicalDashboard: true
+            professionals: false, clinicalDashboard: true, clinicalRecords: true
         };
         return {
             overview: role === 'paciente', patients: false, specialties: false,
             availability: false, appointments: false, calendar: false, team: false,
-            settings: false, professionals: false, clinicalDashboard: false
+            settings: false, professionals: false, clinicalDashboard: false, clinicalRecords: false
         };
     }
 
@@ -137,6 +137,7 @@
         const items = owner ? [
             ['overview', 'consultorio.html', 'bi-house-heart', 'Meu consultório'],
             ['clinicalDashboard', 'dashboard-medico.html', 'bi-person-badge', 'Meus atendimentos'],
+            ['clinicalRecords', 'prontuario-experimental.html', 'bi-journal-medical', 'Prontuários'],
             ['patients', 'pacientes.html', 'bi-person-vcard', 'Pacientes'],
             ['specialties', 'especialidades.html', 'bi-tags', 'Minhas especialidades'],
             ['availability', 'disponibilidade.html', 'bi-calendar-week', 'Minha disponibilidade'],
@@ -147,6 +148,7 @@
         ] : [
             ['overview', dashboardForRole(clinic?.papel, clinic), 'bi-grid-1x2-fill',
                 practice ? 'Visão do consultório' : 'Visão geral'],
+            ['clinicalRecords', 'prontuario-experimental.html', 'bi-journal-medical', 'Prontuários'],
             ['patients', 'pacientes.html', 'bi-person-vcard', 'Pacientes'],
             ['professionals', 'profissionais.html', 'bi-person-badge', 'Profissionais'],
             ['availability', 'disponibilidade.html', 'bi-calendar-week', 'Disponibilidade'],
@@ -176,7 +178,8 @@
             'calendario.html': 'calendar',
             'equipe.html': 'team',
             'configuracoes-clinica.html': 'settings',
-            'disponibilidade.html': 'availability'
+            'disponibilidade.html': 'availability',
+            'prontuario-experimental.html': 'clinicalRecords'
         }[page];
         if (pageCapability) return capabilities[pageCapability] === true;
         const allowed = {

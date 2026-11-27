@@ -29,6 +29,32 @@
         const match=String(value??'').match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
         return match?`${match[3]}/${match[2]}/${match[1]} às ${match[4]}:${match[5]}`:'—';
     }
+    function renderNavigation(doc,core,clinic,page='prontuario-experimental.html'){
+        const navigation=doc.getElementById('clinical-nav');
+        if(!navigation||!core?.roleCanAccessPage(clinic?.papel,page,clinic))return false;
+        const glyphs={
+            'consultorio.html':'⌂','dashboard-medico.html':'◷','prontuario-experimental.html':'▣',
+            'pacientes.html':'♙','profissionais.html':'♙','especialidades.html':'▤',
+            'disponibilidade.html':'◫','agenda.html':'▦','calendario.html':'▦',
+            'equipe.html':'♧','configuracoes-clinica.html':'⚙'
+        };
+        const fragment=doc.createDocumentFragment();
+        for(const item of core.workspaceNavigation(clinic)){
+            const link=doc.createElement('a');
+            link.href=item.href;
+            const icon=doc.createElement('span');
+            icon.setAttribute('aria-hidden','true');
+            icon.textContent=glyphs[item.href]||'•';
+            link.append(icon,doc.createTextNode(` ${item.label}`));
+            if(item.href===page){link.classList.add('active');link.setAttribute('aria-current','page');}
+            fragment.append(link);
+        }
+        navigation.replaceChildren(fragment);
+        const brand=doc.querySelector('.vitalis-brand');
+        const home=core.dashboardForRole(clinic?.papel,clinic);
+        if(brand&&home)brand.href=home;
+        return true;
+    }
     function mount(win){
         const doc=win.document, el=id=>doc.getElementById(id), entry=el('prontuario-experimental-link');
         const page=el('workspace'); if(!page&&!entry)return;
@@ -38,7 +64,9 @@
         }
         const session=win.VitalisCore.createSession(win.sessionStorage);
         const validContext=()=>loopback(win.location.hostname)&&['http:','https:'].includes(win.location.protocol)
-            &&session.activeClinic?.papel==='profissional'&&session.clinicToken&&session.identityToken;
+            &&session.activeClinic?.papel==='profissional'
+            &&win.VitalisCore.roleCanAccessPage('profissional','prontuario-experimental.html',session.activeClinic)
+            &&session.clinicToken&&session.identityToken;
         const context=()=>JSON.stringify([session.activeClinic?.id,session.activeClinic?.papel,session.clinicToken,session.identityToken]);
         let initial=context();
         const gate=contextGate();
@@ -175,6 +203,7 @@
             try{
                 const capability=await request(ticket,'/prontuarios/capacidade');
                 if(capability.experimental!==true)throw Error('Ambiente inválido.');
+                if(!renderNavigation(doc,win.VitalisCore,session.activeClinic))throw Error('Acesso profissional não autorizado.');
                 const rows=await request(ticket,'/consultas/minha-agenda');
                 appointments=rows.filter(a=>validId(a.id)&&validId(a.paciente_id)&&eligible(a));
                 for(const a of appointments)el('consulta').append(new win.Option(String(a.inicio_local||'')+' · '+a.nome_paciente,String(a.id)));
@@ -240,7 +269,7 @@
             else if(!event.shiftKey&&doc.activeElement===last){event.preventDefault();first.focus();}
         });
         el('fechar-menu').addEventListener('click',()=>closeMenu(true));
-        sidebar.querySelectorAll('a').forEach(link=>link.addEventListener('click',closeMenu));
+        sidebar.addEventListener('click',event=>{if(event.target.closest('a[href]'))closeMenu();});
         el('logout-button').addEventListener('click',()=>{if(dirty&&!win.confirm('Sair e apagar o texto local não salvo?'))return;hide();session.clear();win.location.assign('login.html');});
         el('descartar-local').addEventListener('click',()=>{
             if(!busy&&selected&&win.confirm('Descartar somente o texto local não salvo e carregar o servidor?'))openAppointment(selected);
@@ -310,5 +339,5 @@
         win.setInterval(verify,5000);
         load();
     }
-    return {mount,clinicalPayload,eligible,contextGate,loopback,localDate};
+    return {mount,clinicalPayload,eligible,contextGate,loopback,localDate,renderNavigation};
 });

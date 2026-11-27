@@ -17,7 +17,7 @@ function mountStatic(app){
     }
     app.get('/__browser-bootstrap',(req,res)=>res.set('Cache-Control','no-store').type('html').send('<!doctype html><html lang="pt-BR"><title>Fixture sintética</title><body>Fixture</body></html>'));
 }
-async function runBrowser({setup,doctor,secretary,clinicA,clinicB,ap,apB,apOther,discardAp,password}){
+async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,apB,apOwn,apOther,discardAp,password}){
     const playwright=require(process.env.CLINICAL_PLAYWRIGHT_MODULE);
     const browser=await playwright.chromium.launch({headless:true});
     const artifacts=path.join(process.env.RUNNER_TEMP,'vitalis-clinical-visual');
@@ -73,6 +73,39 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,ap,apB,apOther
         await waitStatus(staffPage,'Acesso restrito');
         assert.equal(await staffPage.locator('#workspace').isVisible(),false);
         await staff.close();
+        // The same verified physician works in their autonomous practice as well as clinics.
+        // The practice has two synthetic locations; location-to-appointment attribution is
+        // deliberately not asserted here because the appointment schema does not yet model it.
+        const ownerContext=await context({width:360,height:800});
+        const ownerSession=await login(ownerContext,'medico-a@example.test',clinicOwn);
+        const ownerAuth={Authorization:'Bearer '+ownerSession.clinic.token};
+        const locations=await ownerContext.request.get(origin+'/api/consultorio/contexto',{headers:ownerAuth});
+        assert.equal(locations.status(),200);
+        assert.equal((await locations.json()).locais.length,2);
+        const ownerPage=await openSession(ownerContext,ownerSession);
+        await waitStatus(ownerPage,'Selecione um atendimento');
+        assert.equal(await ownerPage.locator('#clinical-nav a[href="prontuario-experimental.html"][aria-current="page"]').count(),1);
+        assert.equal(await ownerPage.locator('#clinical-nav a[href="consultorio.html"]').count(),1);
+        assert.equal(await ownerPage.locator('#consulta option[value="'+apOwn+'"]').count(),1);
+        await ownerPage.locator('#abrir-menu').click();
+        assert.equal(await ownerPage.locator('#clinical-nav a[aria-current="page"]').isVisible(),true);
+        await ownerPage.locator('#fechar-menu').click();
+        await ownerPage.locator('#consulta').selectOption(String(apOwn));
+        await waitStatus(ownerPage,'Atendimento carregado');
+        assert.equal((await ownerPage.locator('#clinic-name').textContent()).trim(),ownerSession.clinic.clinica.nome);
+        await click(ownerPage,'criar');await waitVersion(ownerPage,1);
+        await click(ownerPage,'descartar');await waitVersion(ownerPage,2);
+        await checkLayout(ownerPage);
+        await ownerPage.screenshot({path:path.join(artifacts,'consultorio-autonomo-360-prontuario.png'),fullPage:true});
+        const secretarySession=await login(ownerContext,'secretaria@example.test',clinicOwn);
+        const secretaryClinical=await ownerContext.request.get(origin+'/api/prontuarios/capacidade',{
+            headers:{Authorization:'Bearer '+secretarySession.clinic.token}
+        });
+        assert.equal(secretaryClinical.status(),403,'secretária do consultório não acessa API clínica');
+        const secretaryPracticePage=await openSession(ownerContext,secretarySession);
+        await waitStatus(secretaryPracticePage,'Acesso restrito');
+        assert.equal(await secretaryPracticePage.locator('#workspace').isVisible(),false);
+        await ownerContext.close();
         for(const [label,viewport,clinic,appointment,foreign] of [
             ['desktop',{width:1366,height:768},clinicA,ap,apB],
             ['mobile',{width:360,height:800},clinicB,apB,ap]

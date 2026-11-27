@@ -56,4 +56,9 @@ test('identidade visual e navegação clínica respeitam a capacidade autorizada
     assert.match(html,/id="clinical-nav" data-ready="false"/);
     assert.ok(js.indexOf("el('clinical-nav').dataset.ready='true'")>js.indexOf("if(capability.experimental!==true)"));
     assert.ok(js.includes("el('clinical-nav').dataset.ready='false'"));
+    assert.match(js,/function renderNavigation\(doc,core,clinic/);
+    assert.match(js,/core\.workspaceNavigation\(clinic\)/);
+    assert.match(js,/roleCanAccessPage\('profissional','prontuario-experimental\.html'/);
+    assert.match(js,/navigation\.replaceChildren\(fragment\)/);
+    assert.doesNotMatch(js,/link\.innerHTML/);
 });

@@ -53,6 +53,7 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
         }
         const va = await member(a, doctor, 'profissional'), vb = await member(b, doctor, 'profissional'), vo = await member(own, doctor, 'profissional');
         const vOther = await member(a, other, 'profissional'), vAdmin = await member(a, admin, 'administrador'), vSecretary = await member(a, secretary, 'secretaria'), vPatient = await member(a, patientUser, 'paciente');
+        await member(own, secretary, 'secretaria');
         await setup.execute("INSERT INTO operadores_plataforma (usuario_id, status) VALUES (?, 'ativo')", [operator]);
         await setup.execute("INSERT INTO identidades_profissionais (usuario_id,tipo_profissional,conselho_tipo,conselho_numero,conselho_uf,status_verificacao) VALUES (?,'Médico','CRM','FICTICIO-A','SP','verificada')", [doctor]);
         await setup.execute("INSERT INTO consultorios_profissionais (clinica_id,titular_usuario_id,status) VALUES (?,?,'ativo')", [own,doctor]);
@@ -75,6 +76,7 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
         const apOther = await appointment(a,patientA,px,other,'2020-01-01','realizada');
         const apB = await appointment(b,patientB,pb,doctor,'2020-01-01','realizada');
         const apOwn = await appointment(own,patientOwn,po,doctor,'2020-01-01','realizada');
+        await setup.execute("INSERT INTO consultorio_locais (clinica_id,nome,endereco_linha,cidade,uf,status) VALUES (?, 'Local Fictício Centro', 'Rua Sintética, 100', 'Cidade Fictícia', 'PR', 'ativo'), (?, 'Local Fictício Norte', 'Avenida de Teste, 200', 'Cidade Fictícia', 'PR', 'ativo')",[own,own]);
         const cancelled = await appointment(a,patientA,pa,doctor,'2020-01-02','cancelada');
         const future = await appointment(a,patientA,pa,doctor,'2099-01-01','agendada');
         const noShow = await appointment(a,patientA,pa,doctor,'2020-01-03','nao_compareceu');
@@ -138,7 +140,7 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
             const hash=await require('bcryptjs').hash(password,10);
             await setup.execute('UPDATE usuarios SET senha_hash=? WHERE id IN (?,?)',[hash,doctor,secretary]);
             await require('../support/clinical-browser-fixture').runBrowser({
-                setup,doctor,secretary,clinicA:a,clinicB:b,ap,apB,apOther,discardAp,password
+                setup,doctor,secretary,clinicA:a,clinicB:b,clinicOwn:own,ap,apB,apOwn,apOther,discardAp,password
             });
             return;
         }

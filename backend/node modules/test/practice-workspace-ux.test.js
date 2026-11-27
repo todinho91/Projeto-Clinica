@@ -48,7 +48,7 @@ test('menu do titular é único, completo e derivado das capacidades do consult�
     };
     const items = core.workspaceNavigation(owner);
     assert.deepEqual(items.map((item) => item.href), [
-        'consultorio.html', 'dashboard-medico.html', 'pacientes.html',
+        'consultorio.html', 'dashboard-medico.html', 'prontuario-experimental.html', 'pacientes.html',
         'especialidades.html', 'disponibilidade.html', 'agenda.html',
         'calendario.html', 'equipe.html', 'configuracoes-clinica.html'
     ]);
@@ -69,6 +69,8 @@ test('secretária do consultório recebe somente capacidades administrativas del
     assert.equal(core.roleCanAccessPage('secretaria', 'disponibilidade.html', secretary), false);
     assert.equal(core.roleCanAccessPage('secretaria', 'equipe.html', secretary), false);
     assert.equal(core.roleCanAccessPage('secretaria', 'especialidades.html', secretary), false);
+    assert.equal(core.roleCanAccessPage('secretaria', 'prontuario-experimental.html', secretary), false);
+    assert.equal(core.workspaceNavigation(secretary).some((item) => item.href === 'prontuario-experimental.html'), false);
 
     const delegated = {
         ...secretary, permissoes: { gerenciar_disponibilidade: true }
@@ -87,6 +89,8 @@ test('clínica institucional preserva menus por papel sem herdar poderes do titu
         .some((item) => item.href === 'configuracoes-clinica.html'), false);
     assert.equal(core.roleCanAccessPage('profissional', 'pacientes.html', professional), false);
     assert.equal(core.roleCanAccessPage('profissional', 'equipe.html', professional), false);
+    assert.ok(core.workspaceNavigation(professional).some((item) => item.href === 'prontuario-experimental.html'));
+    assert.equal(core.roleCanAccessPage('secretaria', 'prontuario-experimental.html', secretary), false);
 });
 
 test('alterar disponibilidade exige delegação explícita no consultório', () => {
