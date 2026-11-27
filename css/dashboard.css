@@ -156,6 +156,10 @@ html { scroll-behavior: smooth; }
 /* M3-04: consultório do profissional autônomo */
 .vitalis-professional-start { max-width: 1120px; }
 .vitalis-practice-shortcuts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+.vitalis-practice-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem; margin-bottom: .45rem; }
+.vitalis-practice-metrics article { display: grid; gap: .3rem; min-width: 0; padding: 1rem; border: 1px solid var(--vitalis-border); border-radius: 14px; background: #fff; box-shadow: 0 10px 30px rgb(44 62 80 / 5%); }
+.vitalis-practice-metrics span { color: var(--vitalis-muted); font-size: .82rem; }
+.vitalis-practice-metrics strong { color: var(--vitalis-navy); font-size: 1.55rem; line-height: 1.2; }
 .vitalis-practice-shortcuts a { display: grid; min-width: 0; gap: .28rem; padding: 1.15rem; color: var(--vitalis-text); text-decoration: none; border: 1px solid var(--vitalis-border); border-radius: 16px; background: #fff; box-shadow: 0 10px 30px rgb(44 62 80 / 5%); }
 .vitalis-practice-shortcuts a:hover, .vitalis-practice-shortcuts a:focus-visible { border-color: #9ac8fb; box-shadow: 0 12px 32px rgb(22 119 255 / 12%); outline: 0; }
 .vitalis-practice-shortcuts i { color: var(--vitalis-blue); font-size: 1.35rem; }
@@ -589,6 +593,7 @@ html, body.vitalis-dashboard-body {
 
 @media (max-width: 991.98px) {
     .vitalis-practice-shortcuts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .vitalis-practice-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .vitalis-practice-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -596,6 +601,10 @@ html, body.vitalis-dashboard-body {
     .vitalis-professional-start { padding: 1rem; }
     .vitalis-professional-start .vitalis-provisioning-grid,
     .vitalis-practice-shortcuts { grid-template-columns: minmax(0, 1fr); }
+    .vitalis-practice-metrics { gap: .55rem; }
+    .vitalis-practice-metrics article { padding: .8rem; }
+    .vitalis-practice-metrics span { font-size: .75rem; }
+    .vitalis-practice-metrics strong { font-size: 1.35rem; }
     .vitalis-platform-topbar { align-items: stretch; flex-direction: column; padding: .75rem 1rem; }
     .vitalis-platform-topbar .vitalis-brand { padding: .25rem 0; }
     .vitalis-practice-page .vitalis-main { padding: .75rem; }

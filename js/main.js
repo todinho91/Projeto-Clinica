@@ -577,9 +577,29 @@ async function setupPracticePage() {
     const list = document.getElementById('practice-locations');
     const status = document.getElementById('practice-status');
     const form = document.getElementById('practice-location-form');
+    const metricsStatus = document.getElementById('practice-metrics-status');
+    async function loadMetrics(context) {
+        try {
+            const [patients, appointments] = await Promise.all([
+                apiRequest('/pacientes?status=ativo&pagina=1&limite=1'),
+                apiRequest('/consultas/minha-agenda')
+            ]);
+            const summary = VitalisCore.practiceDashboardSummary(
+                patients, appointments, context.consultorio.timezone, new Date()
+            );
+            document.getElementById('practice-patients-count').textContent = String(summary.activePatients);
+            document.getElementById('practice-today-count').textContent = String(summary.todayAppointments);
+            document.getElementById('practice-upcoming-count').textContent = String(summary.upcomingAppointments);
+            document.getElementById('practice-completed-count').textContent = String(summary.completedAppointments);
+            metricsStatus.textContent = '';
+        } catch {
+            metricsStatus.textContent = 'Indicadores temporariamente indisponíveis.';
+        }
+    }
     async function load() {
         try {
             const data = await apiRequest('/consultorio/contexto');
+            await loadMetrics(data);
             document.querySelectorAll('[data-practice-timezone]').forEach((item) => {
                 item.textContent = data.consultorio.timezone;
             });
@@ -1478,6 +1498,22 @@ function setupLoginPage() {
             if (returnTo && /^aceitar-convite\.html\?token=[A-Za-z0-9_-]+$/.test(returnTo)) {
                 window.location.assign(returnTo);
                 return;
+            }
+            if (Array.isArray(data.clinicas) && data.clinicas.length === 0) {
+                const capabilities = await apiRequest('/plataforma/capacidades', {}, 'identity');
+                if (!capabilities.provisionar_clinicas) {
+                    try {
+                        await apiRequest('/profissionais/identidade', {}, 'identity');
+                        window.location.assign('vitalis-profissional.html');
+                        return;
+                    } catch (identityError) {
+                        if (identityError.code === 'PROFESSIONAL_IDENTITY_NOT_FOUND') {
+                            window.location.assign('vitalis-profissional.html');
+                            return;
+                        }
+                        throw identityError;
+                    }
+                }
             }
             const entry = VitalisCore.clinicEntryDecision(data.clinicas);
             if (entry.mode === 'direct') {

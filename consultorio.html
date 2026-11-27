@@ -28,6 +28,13 @@
     <header class="vitalis-topbar"><button class="btn vitalis-menu-button d-lg-none" data-bs-toggle="offcanvas" data-bs-target="#vitalis-sidebar" aria-label="Abrir menu"><i class="bi bi-list"></i></button><div class="vitalis-topbar-title"><span>Consultório ativo</span><strong data-clinic-name>Consultório</strong></div></header>
     <main class="vitalis-main">
       <section class="vitalis-welcome"><div><p class="vitalis-eyebrow">Vitalis Profissional</p><h1>Olá, <span data-user-name>profissional</span></h1><p>Você está administrando seu próprio consultório como titular verificado.</p></div></section>
+      <section class="vitalis-practice-metrics" aria-label="Indicadores do consultório" aria-live="polite">
+        <article><span>Pacientes ativos</span><strong id="practice-patients-count">—</strong></article>
+        <article><span>Consultas hoje</span><strong id="practice-today-count">—</strong></article>
+        <article><span>Próximos atendimentos</span><strong id="practice-upcoming-count">—</strong></article>
+        <article><span>Atendimentos concluídos</span><strong id="practice-completed-count">—</strong></article>
+      </section>
+      <p id="practice-metrics-status" class="form-text" role="status" aria-live="polite"></p>
       <section class="vitalis-practice-shortcuts" aria-label="Atalhos">
         <a href="pacientes.html"><i class="bi bi-person-plus-fill"></i><strong>Cadastrar paciente</strong><span>Dados isolados neste consultório</span></a>
         <a href="prontuario-experimental.html"><i class="bi bi-journal-medical"></i><strong>Prontuário clínico</strong><span>Atendimentos sob sua responsabilidade</span></a>

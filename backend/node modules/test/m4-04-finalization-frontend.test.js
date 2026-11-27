@@ -23,6 +23,42 @@ test('login entra direto com vínculo único e mantém seleção para múltiplos
     assert.match(login, /window\.location\.assign\('select-clinic\.html'\)/);
 });
 
+test('primeiro acesso sem vínculo institucional encaminha ao fluxo profissional verificado', async () => {
+    const main = await fs.readFile(path.join(root, 'js', 'main.js'), 'utf8');
+    const login = main.slice(main.indexOf('function setupLoginPage()'), main.indexOf('async function setupClinicSelectionPage()'));
+    assert.match(login, /data\.clinicas\.length === 0[\s\S]*\/plataforma\/capacidades/);
+    assert.match(login, /\/profissionais\/identidade[\s\S]*window\.location\.assign\('vitalis-profissional\.html'\)/);
+    assert.match(login, /PROFESSIONAL_IDENTITY_NOT_FOUND[\s\S]*vitalis-profissional\.html/);
+    assert.match(login, /clinicEntryDecision\(data\.clinicas\)/);
+});
+
+test('indicadores do consultório respeitam fuso local e contam apenas dados retornados pela API', () => {
+    const summary = core.practiceDashboardSummary(
+        { paginacao: { total: 7 } },
+        [
+            { status: 'confirmada', inicio_local: '2026-11-26T09:00:00', futura: true },
+            { status: 'cancelada', inicio_local: '2026-11-26T10:00:00', futura: false },
+            { status: 'realizada', inicio_local: '2026-11-25T10:00:00', futura: false },
+            { status: 'agendada', inicio_local: '2026-11-27T10:00:00', futura: true }
+        ],
+        'America/Sao_Paulo', new Date('2026-11-27T02:00:00.000Z')
+    );
+    assert.deepEqual(summary, {
+        activePatients: 7, todayAppointments: 1, upcomingAppointments: 2, completedAppointments: 1
+    });
+});
+
+test('painel profissional apresenta indicadores reais e sem dados financeiros fictícios', async () => {
+    const page = await fs.readFile(path.join(root, 'consultorio.html'), 'utf8');
+    const main = await fs.readFile(path.join(root, 'js', 'main.js'), 'utf8');
+    for (const id of ['practice-patients-count', 'practice-today-count', 'practice-upcoming-count', 'practice-completed-count']) {
+        assert.match(page, new RegExp(`id="${id}"`));
+    }
+    assert.match(main, /\/pacientes\?status=ativo&pagina=1&limite=1/);
+    assert.match(main, /\/consultas\/minha-agenda/);
+    assert.doesNotMatch(page, /R\$\s*0,00|Saldo fictício|Receita estimada/i);
+});
+
 test('troca de contexto depende da quantidade de vínculos, não do nome do papel', () => {
     assert.deepEqual(core.workspaceSwitchState(
         [{ id: 17, papel: 'secretaria' }],
