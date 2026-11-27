@@ -86,9 +86,13 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,ap,apB,apOther
             page.on('console',m=>{if(m.text().includes(marker))consoleLeak=true;});
             page.on('dialog',d=>d.accept());
             await waitStatus(page,'Selecione um atendimento');
+            assert.equal(await page.locator('#clinical-nav').getAttribute('data-ready'),'true');
+            assert.equal(await page.locator('.vitalis-brand-mark svg').count(),1);
+            if(label==='desktop')assert.equal(await page.locator('#clinical-nav a[aria-current="page"]').isVisible(),true);
             if(viewport.width<=991){
                 await page.locator('#abrir-menu').click();
                 assert.equal(await page.locator('#abrir-menu').getAttribute('aria-expanded'),'true');
+                assert.equal(await page.locator('#clinical-nav a[aria-current="page"]').isVisible(),true);
                 await page.locator('#fechar-menu').click();
                 assert.equal(await page.locator('#abrir-menu').getAttribute('aria-expanded'),'false');
                 assert.equal(await page.evaluate(()=>document.activeElement?.id),'abrir-menu');

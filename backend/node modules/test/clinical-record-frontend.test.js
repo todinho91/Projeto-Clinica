@@ -48,3 +48,12 @@ test('mascara a tela, revalida no retorno e limita espera de rede',()=>{
     assert.match(js,/AbortSignal\.timeout\(8000\)/);
     assert.match(js,/win\.top!==win\.self/);
 });
+
+test('identidade visual e navegação clínica respeitam a capacidade autorizada',()=>{
+    const html=readFileSync(path.join(base,'prontuario-experimental.html'),'utf8');
+    const js=readFileSync(path.join(base,'js/prontuario-experimental.js'),'utf8');
+    assert.match(html,/class="vitalis-brand-mark"[^>]*><svg/);
+    assert.match(html,/id="clinical-nav" data-ready="false"/);
+    assert.ok(js.indexOf("el('clinical-nav').dataset.ready='true'")>js.indexOf("if(capability.experimental!==true)"));
+    assert.ok(js.includes("el('clinical-nav').dataset.ready='false'"));
+});

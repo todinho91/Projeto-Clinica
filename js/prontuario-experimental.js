@@ -74,6 +74,7 @@
         }
         function clearAll(message){
             gate.clear();clearRecord();selected=null;appointments=[];busy=false;loaded=false;masked=false;
+            el('clinical-nav').dataset.ready='false';
             el('consulta').replaceChildren(new win.Option('Selecione uma consulta',''));
             page.hidden=true;el('contexto').textContent='';el('clinic-name').textContent='';el('clinic-kind').textContent='';
             el('profissional').textContent='—';el('especialidade').textContent='—';el('data-atendimento').textContent='—';el('contexto-clinica').textContent='—';
@@ -183,6 +184,7 @@
                 const switchState=win.VitalisCore.workspaceSwitchState(session.clinics,session.activeClinic);
                 el('trocar-clinica').hidden=!switchState.visible;
                 el('trocar-clinica').textContent=switchState.label;
+                el('clinical-nav').dataset.ready='true';
                 loaded=true;page.hidden=masked||doc.hidden;status(appointments.length?'Selecione um atendimento.':'Nenhum atendimento elegível.');
             }catch(e){error(ticket,e);}finally{if(gate.current(ticket))el('recarregar').disabled=false;}
         }
