@@ -87,6 +87,7 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
         assert.equal(await ownerPage.locator('#clinical-nav a[href="prontuario-experimental.html"][aria-current="page"]').count(),1);
         assert.equal(await ownerPage.locator('#clinical-nav a[href="consultorio.html"]').count(),1);
         assert.equal(await ownerPage.locator('#consulta option[value="'+apOwn+'"]').count(),1);
+        ownerPage.on('dialog',dialog=>dialog.accept());
         await ownerPage.locator('#abrir-menu').click();
         assert.equal(await ownerPage.locator('#clinical-nav a[aria-current="page"]').isVisible(),true);
         await ownerPage.locator('#fechar-menu').click();
