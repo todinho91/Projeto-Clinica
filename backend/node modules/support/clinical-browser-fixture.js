@@ -197,7 +197,8 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
             assert.equal(await page.locator('#salvar').isDisabled(),true);
             await click(page,'revisar-conflito');await waitStatus(page,'Histórico atualizado');
             assert.match(await page.locator('#versoes').textContent(),/Versão concorrente sintética/);
-            await click(page,'reaplicar');await waitStatus(page,'Edição retomada');
+            await click(page,'reaplicar');await page.locator('.vitalis-confirm-dialog').waitFor({state:'visible'});
+            await page.locator('.vitalis-confirm-button.primary').click();await waitStatus(page,'Edição retomada');
             assert.equal(await page.locator('#queixa').inputValue(),marker+' edição local');
             const current=await c.request.get(origin+'/api/prontuarios/consultas/'+appointment,{headers:auth});
             assert.equal(Number((await current.json()).registro.versao_atual),3,'sem reenvio automático');
