@@ -106,7 +106,8 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
         });
         assert.equal(secretaryClinical.status(),403,'secretária do consultório não acessa API clínica');
         const secretaryPracticePage=await openSession(ownerContext,secretarySession);
-        await waitStatus(secretaryPracticePage,'Acesso restrito');
+            await secretaryPracticePage.locator('#access-notice').getByText('O prontuário é restrito ao profissional responsável').waitFor({timeout:15000});
+            assert.match(new URL(secretaryPracticePage.url()).pathname,/dashboard-secretaria\.html$/);
         assert.equal(await secretaryPracticePage.locator('#workspace').isVisible(),false);
         await ownerContext.close();
         for(const [label,viewport,clinic,appointment,foreign] of [
