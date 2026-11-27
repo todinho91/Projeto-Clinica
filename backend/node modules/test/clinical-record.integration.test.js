@@ -144,7 +144,11 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
             });
             return;
         }
-        assert.deepEqual((await request(ta,'GET','/capacidade')).body,{experimental:true});
+        assert.deepEqual((await request(ta,'GET','/capacidade')).body,{experimental:true,identificacao_profissional:true});
+        const [[profileNumber]]=await setup.execute('SELECT conselho_numero FROM profissionais WHERE clinica_id=? AND usuario_id=?',[a,doctor]);
+        await setup.execute('UPDATE profissionais SET conselho_numero=NULL WHERE clinica_id=? AND usuario_id=?',[a,doctor]);
+        assert.equal((await request(ta,'GET','/capacidade')).body.identificacao_profissional,false);
+        await setup.execute('UPDATE profissionais SET conselho_numero=? WHERE clinica_id=? AND usuario_id=?',[profileNumber.conselho_numero,a,doctor]);
         assert.equal((await request(ta,'GET','/consultas/'+ap)).body.registro,null);
         assert.equal((await request(tb,'GET','/consultas/'+ap)).status,404);
         assert.equal((await request(tx,'GET','/consultas/'+ap)).status,404);
@@ -213,6 +217,12 @@ test('MySQL 8: upgrade 015, API clínica, versões, concorrência, isolamento e 
         await setup.execute('UPDATE prontuario_chaves SET ativa=NULL WHERE clinica_id=? AND ativa=1',[a]);
         const addendum = await request(ta,'POST','/'+id+'/adendos',{versao:3,conteudo:{texto:'Adendo fictício',motivo:'Correção fictícia'}});
         assert.equal(addendum.status,200);
+        const finalDetail = await request(ta,'GET','/'+id);
+        assert.equal(finalDetail.status,200);
+        assert.equal(finalDetail.body.versao_atual.tipo,'adendo');
+        assert.equal(finalDetail.body.versao_finalizada.tipo,'finalizacao');
+        assert.equal(finalDetail.body.versao_finalizada.conteudo.evolucao,clinical.conteudo.evolucao);
+        assert.equal(finalDetail.body.versao_finalizada.autor_snapshot.nome_exibicao,'Médico Fictício');
         const history = await request(ta,'GET','/'+id+'/versoes');
         assert.equal(history.status,200);
         assert.deepEqual(history.body.itens.map(v=>v.tipo),['adendo','finalizacao','rascunho','rascunho']);

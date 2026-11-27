@@ -426,3 +426,39 @@
         roleCanAccessPage
     };
 }));
+
+if (typeof window !== 'undefined' && window.document) {
+    let active = Promise.resolve();
+    function confirmOnce(message) {
+        return new Promise((resolve) => {
+            const dialog = document.createElement('dialog');
+            dialog.className = 'vitalis-confirm-dialog';
+            dialog.setAttribute('aria-labelledby', 'vitalis-confirm-title');
+            dialog.setAttribute('aria-describedby', 'vitalis-confirm-message');
+            const card = document.createElement('div'); card.className = 'vitalis-confirm-card';
+            const eyebrow = document.createElement('p'); eyebrow.className = 'vitalis-eyebrow'; eyebrow.textContent = 'Vitalis · confirmação';
+            const title = document.createElement('h2'); title.id = 'vitalis-confirm-title'; title.textContent = 'Confirmar ação';
+            const text = document.createElement('p'); text.id = 'vitalis-confirm-message'; text.className = 'vitalis-confirm-message'; text.textContent = String(message);
+            const actions = document.createElement('div'); actions.className = 'vitalis-confirm-actions';
+            const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'vitalis-confirm-button secondary'; cancel.textContent = 'Cancelar';
+            const accept = document.createElement('button'); accept.type = 'button'; accept.className = 'vitalis-confirm-button primary'; accept.textContent = 'Confirmar';
+            actions.append(cancel, accept); card.append(eyebrow, title, text, actions); dialog.append(card); document.body.append(dialog);
+            let settled = false;
+            const finish = (value) => {
+                if (settled) return; settled = true;
+                dialog.close(); dialog.remove(); resolve(value);
+            };
+            cancel.addEventListener('click', () => finish(false));
+            accept.addEventListener('click', () => finish(true));
+            dialog.addEventListener('cancel', (event) => { event.preventDefault(); finish(false); });
+            dialog.showModal(); cancel.focus();
+        });
+    }
+    window.VitalisConfirm = window.VitalisConfirm || {
+        ask(message) {
+            const next = active.then(() => confirmOnce(message));
+            active = next.then(() => undefined, () => undefined);
+            return next;
+        }
+    };
+}

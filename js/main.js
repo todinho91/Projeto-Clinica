@@ -66,7 +66,7 @@ async function requestAppointmentConfirmation(appointment, statusElement, afterS
         : usesWhatsApp
         ? 'Preparar uma solicitação de confirmação pelo WhatsApp?'
         : 'Disponibilizar a solicitação no painel Vitalis do paciente?';
-    if (!window.confirm(prompt) || pendingConfirmationRequests.has(appointment.id)) return;
+    if (!await window.VitalisConfirm.ask(prompt) || pendingConfirmationRequests.has(appointment.id)) return;
     pendingConfirmationRequests.add(appointment.id);
     const popup = usesWhatsApp
         ? window.open('about:blank', 'vitalis_whatsapp_confirmation') : null;
@@ -101,7 +101,7 @@ async function registerManualConfirmation(appointment, answer, statusElement, af
         : answer === 'confirmada'
         ? 'Registrar que o paciente confirmou presença diretamente com a clínica?'
         : 'Registrar que o paciente informou que não poderá comparecer?';
-    if (!window.confirm(message)) return;
+    if (!await window.VitalisConfirm.ask(message)) return;
     try {
         const result = await apiRequest(`/consultas/${appointment.id}/confirmacoes/manual`, {
             method: 'POST', body: JSON.stringify({
@@ -475,7 +475,7 @@ async function setupProfessionalReviewPage() {
                     button.className = `btn btn-sm ${css}`; button.textContent = label;
                     button.addEventListener('click', async () => {
                         const verb = nextStatus === 'verificada' ? 'verificar' : 'suspender';
-                        if (!window.confirm(`Deseja ${verb} o registro de ${identity.nome}?`)) return;
+                        if (!await window.VitalisConfirm.ask(`Deseja ${verb} o registro de ${identity.nome}?`)) return;
                         button.disabled = true;
                         try {
                             const data = await apiRequest(
@@ -551,7 +551,7 @@ async function setupProfessionalStartPage() {
     });
     practiceForm.addEventListener('submit', async (event) => {
         event.preventDefault();
-        if (!window.confirm('Criar seu consultório profissional com estes dados?')) return;
+        if (!await window.VitalisConfirm.ask('Criar seu consultório profissional com estes dados?')) return;
         try {
             const data = await apiRequest('/consultorios', {
                 method: 'POST', body: JSON.stringify({
@@ -663,7 +663,7 @@ async function setupAppointmentConfirmationPage() {
         return;
     }
     async function respond(answer) {
-        if (!window.confirm(answer === 'confirmada'
+        if (!await window.VitalisConfirm.ask(answer === 'confirmada'
             ? 'Confirmar que pretende comparecer?' : 'Informar que não poderá comparecer?')) return;
         setBusy(true);
         try {
@@ -699,7 +699,7 @@ async function setupClinicSettingsPage() {
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         const workspace = clinic.tipo_contexto === 'consultorio' ? 'consultório' : 'clínica';
-        if (!window.confirm(`Salvar nome e fuso horário do ${workspace} ativo?`)) return;
+        if (!await window.VitalisConfirm.ask(`Salvar nome e fuso horário do ${workspace} ativo?`)) return;
         try {
             const data = await apiRequest('/clinica/configuracoes', {
                 method: 'PATCH',
@@ -807,7 +807,7 @@ async function setupClinicProvisioningPage() {
                 resend.className = 'btn btn-sm btn-outline-primary mt-2';
                 resend.textContent = 'Gerar novo convite';
                 resend.addEventListener('click', async () => {
-                    if (!window.confirm(`Invalidar o convite anterior e gerar outro para ${clinic.administrador_email}?`)) return;
+                    if (!await window.VitalisConfirm.ask(`Invalidar o convite anterior e gerar outro para ${clinic.administrador_email}?`)) return;
                     try {
                         const data = await apiRequest(
                             `/plataforma/clinicas/${clinic.id}/convites/${clinic.convite_id}/reenviar`,
@@ -853,7 +853,7 @@ async function setupClinicProvisioningPage() {
         event.preventDefault();
         const clinicName = document.getElementById('provisionamento-nome').value.trim();
         const adminEmail = document.getElementById('provisionamento-admin-email').value.trim();
-        if (!window.confirm(`Criar ${clinicName} e convidar ${adminEmail} como primeiro administrador?`)) return;
+        if (!await window.VitalisConfirm.ask(`Criar ${clinicName} e convidar ${adminEmail} como primeiro administrador?`)) return;
         try {
             const data = await apiRequest('/plataforma/clinicas', {
                 method: 'POST',
@@ -1025,7 +1025,7 @@ async function setupAvailabilityPage() {
                 cancel.className = 'btn btn-sm btn-outline-danger mt-2';
                 cancel.textContent = 'Cancelar bloqueio';
                 cancel.addEventListener('click', async () => {
-                    if (!window.confirm('Cancelar este bloqueio e preservar seu histórico?')) return;
+                    if (!await window.VitalisConfirm.ask('Cancelar este bloqueio e preservar seu histórico?')) return;
                     try {
                         await runMutation(renderedProfessionalId, async (professionalId) => {
                             const data = await apiRequest(`/disponibilidade/profissionais/${professionalId}/bloqueios/${block.id}/cancelar`, { method: 'PATCH' });
@@ -1229,7 +1229,7 @@ async function setupEquipePage() {
                         option.value = role; option.textContent = roleLabels[role]; option.selected = role === member.papel;
                         select.append(option);
                     });
-                    select.addEventListener('change', () => {
+                    select.addEventListener('change', async () => {
                         const nextRole = select.value;
                         if (VitalisCore.isLastActiveAdministrator(member, members)) {
                             showMessage(
@@ -1240,7 +1240,7 @@ async function setupEquipePage() {
                             load();
                             return;
                         }
-                        if (!window.confirm(`Alterar o papel de ${member.nome} para ${roleLabels[nextRole]}?`)) {
+                        if (!await window.VitalisConfirm.ask(`Alterar o papel de ${member.nome} para ${roleLabels[nextRole]}?`)) {
                             select.value = member.papel;
                             return;
                         }
@@ -1313,16 +1313,16 @@ async function setupEquipePage() {
                     || (VitalisCore.isPracticeOwner(clinic) && member.papel === 'secretaria');
                 if (canManageMember && member.status === 'convite_pendente') {
                     if (member.convite_id && member.convite_status === 'pendente') {
-                        addButton('Reenviar', 'btn-outline-primary', () => {
-                            if (window.confirm(`Reenviar o convite para ${member.email}? O link anterior será invalidado.`)) {
+                        addButton('Reenviar', 'btn-outline-primary', async () => {
+                            if (await window.VitalisConfirm.ask(`Reenviar o convite para ${member.email}? O link anterior será invalidado.`)) {
                                 action(
                                     `/equipe/convites/${member.convite_id}/reenviar`, 'POST', undefined,
                                     `Novo convite criado para ${member.nome}.`
                                 ).catch((error) => showMessage(status, error.message));
                             }
                         });
-                        addButton('Revogar', 'btn-outline-danger', () => {
-                            if (window.confirm(`Revogar o convite de ${member.nome}? O link deixará de funcionar imediatamente.`)) {
+                        addButton('Revogar', 'btn-outline-danger', async () => {
+                            if (await window.VitalisConfirm.ask(`Revogar o convite de ${member.nome}? O link deixará de funcionar imediatamente.`)) {
                                 action(
                                     `/equipe/convites/${member.convite_id}/revogar`, 'POST', undefined,
                                     `Convite de ${member.nome} revogado.`
@@ -1343,8 +1343,8 @@ async function setupEquipePage() {
                     const isLastAdministrator = VitalisCore.isLastActiveAdministrator(member, members);
                     if (!isLastAdministrator) {
                         const actionLabel = practiceSecretary ? 'Desativar acesso' : 'Desativar';
-                        addButton(actionLabel, 'btn-outline-danger', () => {
-                            if (window.confirm(`${actionLabel} de ${member.nome}? As sessões desse vínculo serão encerradas e o histórico será preservado.`)) {
+                        addButton(actionLabel, 'btn-outline-danger', async () => {
+                            if (await window.VitalisConfirm.ask(`${actionLabel} de ${member.nome}? As sessões desse vínculo serão encerradas e o histórico será preservado.`)) {
                                 action(
                                     `/equipe/vinculos/${member.id}/status`, 'PATCH', {status:'inativo'},
                                     `Acesso de ${member.nome} desativado. O histórico foi preservado.`
@@ -1364,9 +1364,9 @@ async function setupEquipePage() {
                     input.setAttribute('aria-label', `Permitir que ${member.nome} altere a disponibilidade`);
                     const label = document.createElement('span');
                     label.textContent = 'Gerenciar disponibilidade';
-                    input.addEventListener('change', () => {
+                    input.addEventListener('change', async () => {
                         const next = input.checked;
-                        if (!window.confirm(next
+                        if (!await window.VitalisConfirm.ask(next
                             ? `Permitir que ${member.nome} altere horários e bloqueios?`
                             : `Remover de ${member.nome} a permissão de alterar horários?`)) {
                             input.checked = !next;
@@ -1385,8 +1385,8 @@ async function setupEquipePage() {
                     delegation.append(input, label);
                     actions.append(delegation);
                 }
-                if (canManageMember && member.status === 'inativo') addButton('Reativar', 'btn-outline-success', () => {
-                    if (window.confirm(`Reativar o acesso de ${member.nome} como ${roleLabels[member.papel]}?`)) {
+                if (canManageMember && member.status === 'inativo') addButton('Reativar', 'btn-outline-success', async () => {
+                    if (await window.VitalisConfirm.ask(`Reativar o acesso de ${member.nome} como ${roleLabels[member.papel]}?`)) {
                         action(
                             `/equipe/vinculos/${member.id}/status`, 'PATCH', {status:'ativo'},
                             `Acesso de ${member.nome} reativado.`
@@ -2019,6 +2019,17 @@ async function setupAdministracaoDashboard() {
         ? 'Gestão do consultório'
         : clinic.papel === 'administrador' ? 'Administração da clínica' : 'Painel da secretaria';
     const summaryStatus = document.getElementById('resumo-status');
+    const noticeParams = new URLSearchParams(window.location.search);
+    if (noticeParams.get('aviso') === 'acesso-clinico-restrito') {
+        const notice = document.getElementById('access-notice');
+        if (notice) {
+            notice.textContent = 'O prontuário é restrito ao profissional responsável. Você voltou ao painel autorizado da secretaria.';
+            notice.hidden = false;
+        }
+        noticeParams.delete('aviso');
+        const query = noticeParams.toString();
+        window.history.replaceState(null, '', window.location.pathname + (query ? '?' + query : '') + window.location.hash);
+    }
     try {
         const [professionals, appointments] = await Promise.all([
             apiRequest('/profissionais'),
@@ -2216,7 +2227,7 @@ async function setupCalendarPage() {
                     window.location.assign(`agenda.html?reagendar=${item.id}&data=${item.inicio_local.slice(0, 10)}`);
                 } },
                 { text: 'Cancelar consulta', icon: 'bi-x-circle', action: async () => {
-                    if (!window.confirm('Cancelar esta consulta? O histórico será preservado.')) return;
+                    if (!await window.VitalisConfirm.ask('Cancelar esta consulta? O histórico será preservado.')) return;
                     try {
                         await apiRequest(`/consultas/${item.id}/status`, {
                             method: 'PUT', body: JSON.stringify({ status: 'cancelada', versao: item.versao })
@@ -2577,7 +2588,7 @@ async function setupAppointmentsPage() {
 
     async function mutate(path, options, confirmation) {
         if (!mutationLock.tryBegin()) return;
-        if (confirmation && !window.confirm(confirmation)) { mutationLock.end(); return; }
+        if (confirmation && !await window.VitalisConfirm.ask(confirmation)) { mutationLock.end(); return; }
         setBusy(true);
         try {
             const result = await apiRequest(path, options);
@@ -3174,7 +3185,7 @@ async function setupPatientsPage() {
         const confirmation = archive
             ? `Arquivar ${patient.nome}? Novos agendamentos serão bloqueados, mas consultas e históricos serão preservados.`
             : `Reativar ${patient.nome} para permitir novos agendamentos?`;
-        if (!window.confirm(confirmation)) {
+        if (!await window.VitalisConfirm.ask(confirmation)) {
             mutationLock.end();
             return;
         }
@@ -3541,7 +3552,7 @@ async function setupGestaoProfissionaisPage() {
             statusButton.setAttribute('aria-label', `${statusButton.textContent} ${professional.nome}`);
             statusButton.addEventListener('click', async () => {
                 const nextStatus = professional.status === 'ativo' ? 'inativo' : 'ativo';
-                if (!window.confirm(`${statusButton.textContent} o profissional ${professional.nome}?`)) return;
+                if (!await window.VitalisConfirm.ask(`${statusButton.textContent} o profissional ${professional.nome}?`)) return;
                 try {
                     const result = await apiRequest(`/profissionais/${professional.id}/status`, {
                         method: 'PATCH',
@@ -3695,7 +3706,7 @@ async function setupGestaoEspecialidadesPage() {
             statusButton.setAttribute('aria-label', `${statusButton.textContent} ${specialty.nome}`);
             statusButton.addEventListener('click', async () => {
                 const nextStatus = specialty.status === 'ativa' ? 'inativa' : 'ativa';
-                if (!window.confirm(`${statusButton.textContent} a especialidade ${specialty.nome}? Os vínculos existentes serão preservados.`)) return;
+                if (!await window.VitalisConfirm.ask(`${statusButton.textContent} a especialidade ${specialty.nome}? Os vínculos existentes serão preservados.`)) return;
                 try {
                     const result = await apiRequest(`/especialidades/${specialty.id}/status`, {
                         method: 'PATCH',

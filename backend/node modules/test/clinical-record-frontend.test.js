@@ -62,3 +62,46 @@ test('identidade visual e navegação clínica respeitam a capacidade autorizada
     assert.match(js,/navigation\.replaceChildren\(fragment\)/);
     assert.doesNotMatch(js,/link\.innerHTML/);
 });
+test('histórico recolhido e leitura final preservam distinção entre registro e adendos',()=>{
+    const html=readFileSync(path.join(base,'prontuario-experimental.html'),'utf8');
+    const js=readFileSync(path.join(base,'js/prontuario-experimental.js'),'utf8');
+    assert.match(html,/<details id="historico-alteracoes"[^>]*hidden/);
+    assert.match(html,/id="registro-finalizado-bloco"[^>]*hidden/);
+    assert.match(html,/id="complementacoes-bloco"[^>]*hidden/);
+    assert.match(html,/<summary>Histórico de alterações<\/summary>/);
+    assert.match(js,/versao_finalizada/);
+    assert.match(js,/fieldLabels\[key\]/);
+    assert.match(js,/Mais histórico e complementações/);
+    assert.doesNotMatch(js,/win\.confirm\(/);
+});
+test('finalização mostra validação junto aos campos e oferece modal acessível',()=>{
+    const html=readFileSync(path.join(base,'prontuario-experimental.html'),'utf8');
+    const js=readFileSync(path.join(base,'js/prontuario-experimental.js'),'utf8');
+    const client=readFileSync(path.join(base,'js/vitalis-client.js'),'utf8');
+    assert.match(client,/createElement\('dialog'\)/);
+    assert.match(client,/aria-describedby/);assert.match(client,/showModal\(\)/);
+    assert.match(client,/event\.preventDefault\(\); finish\(false\)/);
+    assert.match(html,/id="finalization-errors"[^>]*role="alert"/);
+    assert.match(html,/id="erro-evolucao"/);assert.match(html,/id="erro-conduta"/);assert.match(html,/id="erro-identificacao"/);
+    assert.match(js,/e\.code==='RECORD_INCOMPLETE'/);
+    assert.match(js,/VitalisConfirm\.ask/);
+});
+test('acesso direto da secretaria volta ao painel administrativo sem abrir a área clínica',()=>{
+    const js=readFileSync(path.join(base,'js/prontuario-experimental.js'),'utf8');
+    const admin=readFileSync(path.join(base,'dashboard-secretaria.html'),'utf8');
+    const main=readFileSync(path.join(base,'js/main.js'),'utf8');
+    assert.match(js,/session\.activeClinic\?\.papel==='secretaria'/);
+    assert.match(js,/page\.hidden=true/);
+    assert.match(js,/aviso=acesso-clinico-restrito/);
+    assert.match(admin,/id="access-notice"[^>]*role="status"/);
+    assert.match(main,/O prontuário é restrito ao profissional responsável/);
+});
+test('confirmações compartilhadas não usam diálogos nativos do navegador',()=>{
+    const main=readFileSync(path.join(base,'js/main.js'),'utf8');
+    const client=readFileSync(path.join(base,'js/vitalis-client.js'),'utf8');
+    assert.doesNotMatch(main,/window\.confirm\s*\(/);
+    assert.match(client,/window\.VitalisConfirm = window\.VitalisConfirm \|\|/);
+    assert.match(client,/active\.then\(\(\) => confirmOnce\(message\)\)/);
+    assert.match(client,/cancel\.focus\(\)/);
+    assert.match(client,/dialog\.remove\(\)/);
+});

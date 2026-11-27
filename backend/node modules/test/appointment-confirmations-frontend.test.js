@@ -19,7 +19,7 @@ async function loadConfirmationFrontend({ apiResults = [], confirm = true, popup
     const queue = [...apiResults];
     const context = {
         window: {
-            confirm: () => confirm,
+            VitalisConfirm: { ask: async () => confirm },
             open: (...args) => {
                 const popup = popupFactory ? popupFactory(...args) : null;
                 popups.push(popup);
