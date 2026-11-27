@@ -71,8 +71,8 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
         await unauth.close();
         const staff=await context({width:360,height:800});
         const staffPage=await openSession(staff,await login(staff,'secretaria@example.test',clinicA));
-        await staffPage.waitForURL(/dashboard-secretaria\.html\?aviso=acesso-clinico-restrito/,{timeout:15000});
         await staffPage.locator('#access-notice').getByText('O prontuário é restrito ao profissional responsável').waitFor({timeout:15000});
+        assert.match(new URL(staffPage.url()).pathname,/dashboard-secretaria\.html$/,'secretaria redirecionada ao painel autorizado');
         assert.equal(await staffPage.locator('#workspace').isVisible(),false);
         await staff.close();
         // The same verified physician works in their autonomous practice as well as clinics.
