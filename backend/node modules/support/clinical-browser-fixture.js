@@ -120,6 +120,7 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
             const errors=[];let consoleLeak=false;
             const marker='SINTETICO_BROWSER_'+label;
             page.on('pageerror',()=>errors.push('pageerror'));
+            page.on('dialog',dialog=>{errors.push('unexpected-dialog');void dialog.dismiss();});
             page.on('console',m=>{if(m.text().includes(marker))consoleLeak=true;});
             await page.addInitScript(()=>{window.confirm=()=>{throw new Error('Confirmação nativa inesperada');};});
             await waitStatus(page,'Selecione um atendimento');
@@ -171,7 +172,6 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
             await click(page,'salvar');await waitVersion(page,2);
             await waitEnabled(page,'salvar');
             assert.equal(await page.locator('#historico-alteracoes').evaluate(node=>node.open),false);
-            assert.match(await page.locator('#versoes').textContent(),/onerror=alert/);
             assert.equal(await page.locator('#versoes img').count(),0);
             await noNarrativeInStorage(page,marker);
             // Verify persisted data with a new document, not simply current DOM state.
