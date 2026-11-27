@@ -51,6 +51,13 @@ test('titular do consultório usa painel próprio sem promover profissionais ins
     assert.equal(core.dashboardForRole('profissional', practice), 'consultorio.html');
     assert.equal(core.roleCanAccessPage('profissional', 'pacientes.html', practice), true);
     assert.equal(core.roleCanAccessPage('profissional', 'equipe.html', practice), true);
+    assert.equal(core.roleCanAccessPage('profissional', 'prontuario-experimental.html', practice), true);
+    assert.equal(core.roleCanAccessPage('secretaria', 'prontuario-experimental.html', {
+        tipo_contexto: 'consultorio', titular: false, papel: 'secretaria'
+    }), false);
+    assert.equal(core.roleCanAccessPage('administrador', 'prontuario-experimental.html', {
+        tipo_contexto: 'clinica', titular: false, papel: 'administrador'
+    }), false);
     assert.equal(core.roleCanAccessPage('profissional', 'pacientes.html', {
         tipo_contexto: 'clinica', titular: false, papel: 'profissional'
     }), false);
