@@ -8,7 +8,7 @@ const clinicalPage='/prontuario-experimental.html';
 const CSP="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; form-action 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 function mountStatic(app){
     // Whitelist only the files required for the clinical screen, never expose the repo or uploads.
-    for(const file of ['prontuario-experimental.html','css/dashboard.css','css/prontuario-experimental.css','js/prontuario-experimental.js','js/vitalis-client.js']){
+    for(const file of ['prontuario-experimental.html','dashboard-secretaria.html','css/dashboard.css','css/prontuario-experimental.css','css/style.css','js/prontuario-experimental.js','js/vitalis-client.js','js/main.js']){
         app.get('/'+file,(req,res)=>{
             res.set({'Content-Security-Policy':CSP,'X-Frame-Options':'DENY','X-Content-Type-Options':'nosniff',
                 'Cache-Control':'no-store, private, max-age=0','Referrer-Policy':'no-referrer'});
@@ -53,7 +53,7 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
     }
     const waitStatus=(p,text)=>p.waitForFunction(t=>document.getElementById('status').textContent.includes(t),text,{timeout:15000});
     const waitVersion=(p,n)=>p.waitForFunction(n=>document.getElementById('estado').textContent.endsWith('versão '+n)&&
-        document.getElementById('status').textContent.includes('Atendimento carregado')&&!document.getElementById('consulta').disabled,n,{timeout:15000});
+        !document.getElementById('consulta').disabled,n,{timeout:15000});
     const waitEnabled=(p,id)=>p.waitForFunction(id=>!document.getElementById(id).disabled&&!document.getElementById(id).hidden,id,{timeout:15000});
     const click=async(p,id)=>{await waitEnabled(p,id);await p.locator('#'+id).click();};
     const checkLayout=async p=>assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true,'sem rolagem horizontal');
@@ -71,7 +71,8 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
         await unauth.close();
         const staff=await context({width:360,height:800});
         const staffPage=await openSession(staff,await login(staff,'secretaria@example.test',clinicA));
-        await waitStatus(staffPage,'Acesso restrito');
+        await staffPage.waitForURL(/dashboard-secretaria\.html\?aviso=acesso-clinico-restrito/,{timeout:15000});
+        await staffPage.locator('#access-notice').getByText('O prontuário é restrito ao profissional responsável').waitFor({timeout:15000});
         assert.equal(await staffPage.locator('#workspace').isVisible(),false);
         await staff.close();
         // The same verified physician works in their autonomous practice as well as clinics.
@@ -88,7 +89,6 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
         assert.equal(await ownerPage.locator('#clinical-nav a[href="prontuario-experimental.html"][aria-current="page"]').count(),1);
         assert.equal(await ownerPage.locator('#clinical-nav a[href="consultorio.html"]').count(),1);
         assert.equal(await ownerPage.locator('#consulta option[value="'+apOwn+'"]').count(),1);
-        ownerPage.on('dialog',dialog=>dialog.accept());
         await ownerPage.locator('#abrir-menu').click();
         assert.equal(await ownerPage.locator('#clinical-nav a[aria-current="page"]').isVisible(),true);
         await ownerPage.locator('#fechar-menu').click();
@@ -120,7 +120,7 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
             const marker='SINTETICO_BROWSER_'+label;
             page.on('pageerror',()=>errors.push('pageerror'));
             page.on('console',m=>{if(m.text().includes(marker))consoleLeak=true;});
-            page.on('dialog',d=>d.accept());
+            await page.addInitScript(()=>{window.confirm=()=>{throw new Error('Confirmação nativa inesperada');};});
             await waitStatus(page,'Selecione um atendimento');
             assert.equal(await page.locator('#clinical-nav').getAttribute('data-ready'),'true');
             assert.equal(await page.locator('.vitalis-brand-mark svg').count(),1);
@@ -153,7 +153,10 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
             // Blank form screenshots: no clinical narratives, only fixtures.
             await resetScroll(page);
             await page.screenshot({path:path.join(artifacts,label+'-formulario-vazio.png')});
-            await click(page,'finalizar');await waitStatus(page,'Registro incompleto');
+            await click(page,'finalizar');await waitStatus(page,'campos obrigatórios');
+            assert.match(await page.locator('#erro-evolucao').textContent(),/evolução/i);
+            assert.match(await page.locator('#erro-conduta').textContent(),/conduta/i);
+            assert.equal(await page.evaluate(()=>document.activeElement?.id),'evolucao');
             await page.locator('#queixa').fill(marker+' <img src=x onerror=alert(1)>');
             await page.locator('#evolucao').fill('Evolução sintética');
             await page.locator('#conduta').fill('Conduta sintética');
@@ -166,6 +169,7 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
             assert.match(await page.locator('#queixa').inputValue(),/SINTETICO_BROWSER_/);
             await click(page,'salvar');await waitVersion(page,2);
             await waitEnabled(page,'salvar');
+            assert.equal(await page.locator('#historico-alteracoes').evaluate(node=>node.open),false);
             assert.match(await page.locator('#versoes').textContent(),/onerror=alert/);
             assert.equal(await page.locator('#versoes img').count(),0);
             await noNarrativeInStorage(page,marker);
@@ -197,26 +201,59 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
             const current=await c.request.get(origin+'/api/prontuarios/consultas/'+appointment,{headers:auth});
             assert.equal(Number((await current.json()).registro.versao_atual),3,'sem reenvio automático');
             await click(page,'salvar');await waitVersion(page,4);
-            await click(page,'finalizar');await waitVersion(page,5);
+            await click(page,'finalizar');
+            await page.locator('.vitalis-confirm-dialog').waitFor({state:'visible'});
+            await page.locator('.vitalis-confirm-button.secondary').click();
+            assert.equal(await page.locator('.vitalis-confirm-dialog').count(),0);
+            assert.equal(await page.evaluate(()=>document.activeElement?.id),'finalizar');
+            await click(page,'finalizar');await page.locator('.vitalis-confirm-dialog').waitFor({state:'visible'});
+            await page.keyboard.press('Escape');
+            assert.equal(await page.locator('.vitalis-confirm-dialog').count(),0);
+            assert.match(await page.locator('#estado').textContent(),/Rascunho em edição/);
+            await click(page,'finalizar');await page.locator('.vitalis-confirm-dialog').waitFor({state:'visible'});
+            await page.locator('.vitalis-confirm-button.primary').click();await waitVersion(page,5);
             await page.locator('#adendo').waitFor({state:'visible'});
             assert.equal(await page.locator('#editor').isVisible(),false);
             await page.locator('#motivo').fill('Motivo sintético');await page.locator('#texto').fill('Adendo sintético');
             await click(page,'adicionar');await waitVersion(page,6);
-            assert.match(await page.locator('#versoes').textContent(),/Finalizado/);
-            assert.match(await page.locator('#versoes').textContent(),/Adendo sintético/);
+            const lookupFinal=await c.request.get(origin+'/api/prontuarios/consultas/'+appointment,{headers:auth});
+            const recordId=(await lookupFinal.json()).registro.id;
+            let version=6;
+            for(let i=0;i<11;i++){
+                const response=await c.request.post(origin+'/api/prontuarios/'+recordId+'/adendos',{headers:auth,data:{versao:version,conteudo:{texto:'Adendo sintético '+(i+1),motivo:'Complementação de teste '+(i+1)}}});
+                assert.equal(response.status(),200,'adendo sintético '+(i+1));version++;
+            }
+            await page.reload();await waitStatus(page,'Selecione um atendimento');
+            await page.locator('#consulta').selectOption(String(appointment));await waitVersion(page,17);
+            assert.equal(await page.locator('#registro-finalizado-bloco').isVisible(),true);
+            assert.match(await page.locator('#registro-finalizado').textContent(),/Registro clínico finalizado/);
+            assert.match(await page.locator('#registro-finalizado').textContent(),/Evolução sintética/);
+            assert.match(await page.locator('#complementacoes').textContent(),/Adendo sintético/);
+            assert.equal(await page.locator('#historico-alteracoes').evaluate(node=>node.open),false);
+            assert.equal(await page.locator('#complementacoes article').count(),10,'primeira página apresenta até dez adendos');
+            await click(page,'mais-versoes');
+            assert.equal(await page.locator('#complementacoes article').count(),12,'a paginação alcança todos os adendos');
+            assert.equal(await page.locator('#versoes article').count()>0,true,'versões anteriores acessíveis no histórico');
+            assert.doesNotMatch(await page.locator('#registro-finalizado').textContent(),/Adendo sintético/,'adendos não substituem o texto final original');
             await resetScroll(page);
-            await page.screenshot({path:path.join(artifacts,label+'-historico-sintetico.png')});
+            await page.screenshot({path:path.join(artifacts,label==='desktop'?'desktop-1366x768-prontuario.png':'mobile-360x800-prontuario.png'),fullPage:true});
             const [[appointmentState]]=await setup.execute('SELECT status FROM consultas WHERE id=?',[appointment]);
             assert.equal(appointmentState.status,'realizada');
             await noNarrativeInStorage(page,marker);await checkLayout(page);
             if(label==='desktop'){
-                await page.setViewportSize({width:1024,height:768});await checkLayout(page);
+                await page.setViewportSize({width:1024,height:768});await checkLayout(page);await resetScroll(page);
+                await page.screenshot({path:path.join(artifacts,'tablet-1024x768-prontuario.png'),fullPage:true});
+                await page.setViewportSize({width:768,height:1024});await checkLayout(page);await resetScroll(page);
+                await page.locator('#abrir-menu').click();assert.equal(await page.locator('#clinical-nav a[aria-current="page"]').isVisible(),true);
+                await page.locator('#fechar-menu').click();assert.equal(await page.evaluate(()=>document.activeElement?.id),'abrir-menu');
+                await page.screenshot({path:path.join(artifacts,'tablet-768x1024-prontuario.png'),fullPage:true});
                 await page.locator('#consulta').selectOption(String(discardAp));await waitStatus(page,'Atendimento carregado');
                 await click(page,'criar');await waitVersion(page,1);await click(page,'descartar');await waitVersion(page,2);
                 assert.match(await page.locator('#estado').textContent(),/descartado/);
                 assert.equal(await page.locator('#editor').isVisible(),false);
             }else{
-                await page.setViewportSize({width:390,height:844});await checkLayout(page);
+                await page.setViewportSize({width:390,height:844});await checkLayout(page);await resetScroll(page);
+                await page.screenshot({path:path.join(artifacts,'mobile-390x844-prontuario.png'),fullPage:true});
             }
             // Revocation on the actual backend; poll interval is 5s, deadline allows request/CI overhead.
             await setup.execute("UPDATE clinica_usuarios SET status='inativo',sessao_versao=sessao_versao+1 WHERE clinica_id=? AND usuario_id=?",[clinic,doctor]);

@@ -189,7 +189,8 @@ function page(query) {
     return { number, limit, offset: (number - 1) * limit };
 }
 
-exports.capability = endpoint(async () => ({body:{experimental:true}}));
+exports.capability = endpoint(async (_connection, ctx) => ({body:{experimental:true,
+    identificacao_profissional:Boolean(ctx.author.conselho_tipo&&ctx.author.conselho_numero)}}));
 
 exports.byAppointment = endpoint(async (connection,ctx,req) => {
     const id=positiveId(req.params.consultaId); if(!id) invalid();
@@ -229,8 +230,19 @@ exports.detail = endpoint(async (connection, ctx, req) => {
     const { row, appt } = await record(connection, ctx, id);
     if (!canRead(row.estado, appt.status, appt.iniciado)) missing();
     const version = await currentVersion(connection, ctx, row);
+    let finalizedVersion = null;
+    if (row.estado === 'finalizado') {
+        const finalization = await first(connection,
+            "SELECT v.versao, v.versao_anterior, v.tipo, v.autor_usuario_id, v.schema_version, v.criado_em, " +
+            "e.chave_id, e.conteudo_cifrado, e.iv, e.auth_tag, e.aad_version " +
+            "FROM prontuario_versoes v LEFT JOIN prontuario_envelopes e ON e.clinica_id=v.clinica_id AND e.registro_id=v.registro_id AND e.versao=v.versao " +
+            "WHERE v.clinica_id = ? AND v.registro_id = ? AND v.tipo = 'finalizacao' ORDER BY v.versao LIMIT 1",
+            [ctx.clinicId, id]);
+        if (!finalization) reject(500, 'RECORD_INTEGRITY', 'Registro indisponível.');
+        finalizedVersion = await decodeVersion(connection, ctx, row, finalization);
+    }
     await audit(connection, ctx, 'prontuario_lido', 'prontuario', id, version.versao);
-    return { body: { registro: row, versao_atual: version } };
+    return { body: { registro: row, versao_atual: version, versao_finalizada: finalizedVersion } };
 });
 
 exports.timeline = endpoint(async (connection, ctx, req) => {
