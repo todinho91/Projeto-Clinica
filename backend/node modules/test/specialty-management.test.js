@@ -201,11 +201,90 @@ test('ativação e desativação são lógicas, preservam vínculos e auditam', 
     }
 });
 
+test('exclusão segura remove somente especialidade sem dependências e audita', async (t) => {
+    const executions = [];
+    const connection = transactionConnection(async (sql, params) => {
+        executions.push({ sql, params });
+        if (/SELECT id, nome FROM especialidades/.test(sql)) return [[{ id: 3, nome: 'Teste' }]];
+        if (/FROM consultas/.test(sql)) return [[]];
+        if (/FROM profissional_especialidades/.test(sql)) return [[]];
+        if (/DELETE FROM especialidades/.test(sql)) return [{ affectedRows: 1 }];
+        return [{ affectedRows: 1 }];
+    });
+    const commit = t.mock.method(connection, 'commit');
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+
+    await controller.deleteSpecialty({
+        params: { id: '3' }, userId: 7, auth: { membershipVersion: 1 },
+        tenant: { clinicId: 11, role: 'administrador' }
+    }, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(commit.mock.callCount(), 1);
+    assert.ok(executions.some(({ sql }) => /INSERT INTO auditoria/.test(sql)));
+    assert.ok(executions.some(({ sql, params }) => /DELETE FROM especialidades/.test(sql)
+        && params[0] === 11 && params[1] === 3));
+    assert.equal(executions.some(({ sql }) => /ON DELETE CASCADE/i.test(sql)), false);
+});
+
+test('exclusão bloqueia consultas ou vínculos e preserva os registros', async (t) => {
+    for (const dependency of ['consultas', 'professional']) {
+        let deleted = false;
+        const connection = transactionConnection(async (sql) => {
+            if (/SELECT id, nome FROM especialidades/.test(sql)) return [[{ id: 3, nome: 'Teste' }]];
+            if (/FROM consultas/.test(sql)) return dependency === 'consultas' ? [[{ id: 91 }]] : [[]];
+            if (/FROM profissional_especialidades/.test(sql)) return dependency === 'professional' ? [[{ profissional_id: 44 }]] : [[]];
+            if (/DELETE FROM especialidades/.test(sql)) { deleted = true; return [{ affectedRows: 1 }]; }
+            return [{ affectedRows: 1 }];
+        });
+        t.mock.method(pool, 'getConnection', async () => connection);
+        const res = response();
+        await controller.deleteSpecialty({
+            params: { id: '3' }, userId: 7, auth: { membershipVersion: 1 },
+            tenant: { clinicId: 11, role: 'administrador' }
+        }, res);
+        assert.equal(res.statusCode, 409);
+        assert.equal(deleted, false);
+        assert.match(res.body.error, /Não é possível excluir/);
+        pool.getConnection.mock.restore();
+    }
+});
+
+test('exclusão do consultório remove transacionalmente apenas a associação automática do titular', async (t) => {
+    const statements = [];
+    const connection = {
+        execute: async (sql, params) => {
+            statements.push({ sql, params });
+            if (/FROM clinica_usuarios cu/.test(sql)) return [[{
+                papel: 'profissional', consultorio_id: 11, titular_profissional_id: 44, consultorio_titular: 1
+            }]];
+            if (/SELECT id, nome FROM especialidades/.test(sql)) return [[{ id: 3, nome: 'Teste' }]];
+            if (/FROM consultas/.test(sql)) return [[]];
+            if (/FROM profissional_especialidades/.test(sql)) return [[{ profissional_id: 44 }]];
+            if (/DELETE FROM especialidades/.test(sql)) return [{ affectedRows: 1 }];
+            return [{ affectedRows: 1 }];
+        }, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release() {}
+    };
+    const commit = t.mock.method(connection, 'commit');
+    t.mock.method(pool, 'getConnection', async () => connection);
+    const res = response();
+    await controller.deleteSpecialty({
+        params: { id: '3' }, userId: 7, auth: { membershipVersion: 1 },
+        tenant: { clinicId: 11, role: 'profissional' }
+    }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(commit.mock.callCount(), 1);
+    assert.ok(statements.some(({ sql, params }) => /DELETE FROM profissional_especialidades/.test(sql)
+        && params[0] === 11 && params[1] === 44 && params[2] === 3));
+});
+
 test('rotas de especialidades permitem somente administrador e secretaria', () => {
     for (const [path, method] of [
         ['/especialidades/gestao', 'get'],
         ['/especialidades', 'post'],
         ['/especialidades/:id', 'put'],
+        ['/especialidades/:id', 'delete'],
         ['/especialidades/:id/status', 'patch']
     ]) {
         const layer = router.stack.find((item) => item.route?.path === path && item.route.methods[method]);

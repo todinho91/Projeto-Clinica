@@ -176,6 +176,14 @@ test('MySQL 8 valida ciclo completo, histórico e isolamento de especialidades',
             VALUES (?, ?, ?)
         `, [data.clinicA, data.professionalA, specialtyA]);
 
+        const linkedDelete = response();
+        await specialtyController.deleteSpecialty({ params: { id: String(specialtyA) }, ...adminARequest }, linkedDelete);
+        assert.equal(linkedDelete.statusCode, 409);
+        const [[keptAfterDeleteRefusal]] = await connection.execute(
+            'SELECT COUNT(*) AS total FROM especialidades WHERE clinica_id=? AND id=?', [data.clinicA, specialtyA]
+        );
+        assert.equal(Number(keptAfterDeleteRefusal.total), 1);
+
         const deactivateResponse = response();
         await specialtyController.updateSpecialtyStatus({
             params: { id: String(specialtyA) }, body: { status: 'inativa' },
@@ -251,6 +259,23 @@ test('MySQL 8 valida ciclo completo, histórico e isolamento de especialidades',
             'especialidade_criada', 'especialidade_atualizada',
             'especialidade_status_alterado', 'especialidade_status_alterado'
         ]);
+
+        const disposableResponse = response();
+        await specialtyController.createSpecialty({ body: { nome: 'Especialidade Removível' }, ...adminARequest }, disposableResponse);
+        assert.equal(disposableResponse.statusCode, 201);
+        const disposableId = disposableResponse.body.id;
+        const deleteResponse = response();
+        await specialtyController.deleteSpecialty({ params: { id: String(disposableId) }, ...adminARequest }, deleteResponse);
+        assert.equal(deleteResponse.statusCode, 200);
+        const [[deletedCount]] = await connection.execute(
+            'SELECT COUNT(*) AS total FROM especialidades WHERE clinica_id=? AND id=?', [data.clinicA, disposableId]
+        );
+        assert.equal(Number(deletedCount.total), 0);
+        const [[deleteAudit]] = await connection.execute(
+            "SELECT acao FROM auditoria WHERE clinica_id=? AND entidade_tipo='especialidade' AND entidade_id=?",
+            [data.clinicA, disposableId]
+        );
+        assert.equal(deleteAudit.acao, 'especialidade_excluida');
     } finally {
         if (pool) await pool.end();
         await connection.end();

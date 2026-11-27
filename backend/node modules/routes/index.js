@@ -177,6 +177,11 @@ router.put(
     workspaceManager('administrador', 'secretaria'),
     especialidadeController.updateSpecialty
 );
+router.delete(
+    '/especialidades/:id',
+    workspaceManager('administrador', 'secretaria'),
+    especialidadeController.deleteSpecialty
+);
 router.patch(
     '/especialidades/:id/status',
     workspaceManager('administrador', 'secretaria'),
