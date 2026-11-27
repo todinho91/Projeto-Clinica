@@ -377,6 +377,27 @@
         };
     }
 
+    function practiceDashboardSummary(patientResponse, appointments, timeZone, currentDate = new Date()) {
+        const now = currentDate instanceof Date ? currentDate : new Date(currentDate);
+        if (!Number.isFinite(now.getTime()) || typeof timeZone !== 'string'
+            || !Array.isArray(appointments) || !Number.isFinite(Number(patientResponse?.paginacao?.total))) {
+            throw new Error('Dados do resumo do consultório inválidos.');
+        }
+        const parts = new Intl.DateTimeFormat('en-CA', {
+            timeZone, year: 'numeric', month: '2-digit', day: '2-digit'
+        }).formatToParts(now);
+        const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+        const today = `${values.year}-${values.month}-${values.day}`;
+        return {
+            activePatients: Number(patientResponse.paginacao.total),
+            todayAppointments: appointments.filter((item) => item.status !== 'cancelada'
+                && typeof item.inicio_local === 'string' && item.inicio_local.slice(0, 10) === today).length,
+            upcomingAppointments: appointments.filter((item) => ['agendada', 'confirmada'].includes(item.status)
+                && item.futura === true).length,
+            completedAppointments: appointments.filter((item) => item.status === 'realizada').length
+        };
+    }
+
     function dashboardAgenda(appointments, currentDate = new Date(), limit = 5) {
         const now = currentDate instanceof Date ? currentDate : new Date(currentDate);
         if (!Array.isArray(appointments) || !Number.isFinite(now.getTime()) || !Number.isInteger(limit) || limit < 1) {
@@ -412,6 +433,7 @@
         dashboardForRole,
         dashboardAgenda,
         dashboardSummary,
+        practiceDashboardSummary,
         formatCep,
         mergePatientCepAddress,
         formatCpf,
