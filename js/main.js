@@ -3600,7 +3600,25 @@ async function setupGestaoProfissionaisPage() {
                     showMessage(listStatus, error.message);
                 }
             });
-            actions.append(editButton, statusButton);
+            const deleteButton = document.createElement('button');
+            deleteButton.type = 'button';
+            deleteButton.className = 'btn btn-sm btn-outline-danger';
+            deleteButton.innerHTML = '<i class="bi bi-trash3" aria-hidden="true"></i> Excluir';
+            deleteButton.setAttribute('aria-label', `Excluir ${specialty.nome}`);
+            deleteButton.addEventListener('click', async () => {
+                const extra = clinic.tipo_contexto === 'consultorio'
+                    ? ' O vínculo automático do titular será removido na mesma operação.' : '';
+                if (!await window.VitalisConfirm.ask(`Excluir ${specialty.nome}? A operação só será permitida sem consultas ou vínculos dependentes.${extra}`)) return;
+                try {
+                    const result = await apiRequest(`/especialidades/${specialty.id}`, { method: 'DELETE' });
+                    if (editingId === specialty.id) resetForm();
+                    await loadData();
+                    showMessage(listStatus, result.message, 'success');
+                } catch (error) {
+                    showMessage(listStatus, error.message);
+                }
+            });
+            actions.append(editButton, statusButton, deleteButton);
             if (professional.acesso_status !== 'ativo') {
                 const invitationLink = document.createElement('a');
                 invitationLink.className = 'btn btn-sm btn-outline-primary';

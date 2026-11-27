@@ -213,5 +213,75 @@ exports.updateSpecialtyStatus = async (req, res) => {
     }
 };
 
+exports.deleteSpecialty = async (req, res) => {
+    const specialtyId = positiveId(req.params.id);
+    if (!specialtyId) return res.status(400).json({ error: 'Especialidade inválida.' });
+    const clinicId = req.tenant.clinicId;
+    let connection;
+    try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        const actor = await lockAuthorizedManager(connection, req);
+        if (!actor) {
+            await connection.rollback();
+            return res.status(403).json({ error: 'Responsável não autorizado ou sessão desatualizada.' });
+        }
+        const [specialties] = await connection.execute(`
+            SELECT id, nome FROM especialidades
+            WHERE clinica_id = ? AND id = ? FOR UPDATE
+        `, [clinicId, specialtyId]);
+        if (!specialties.length) {
+            await connection.rollback();
+            return res.status(404).json({ error: 'Especialidade não encontrada na clínica ativa.' });
+        }
+        const [appointments] = await connection.execute(`
+            SELECT id FROM consultas
+            WHERE clinica_id = ? AND especialidade_id = ? LIMIT 1 FOR UPDATE
+        `, [clinicId, specialtyId]);
+        if (appointments.length) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'Não é possível excluir: existem consultas vinculadas. Desative a especialidade para preservar o histórico.' });
+        }
+        const [associations] = await connection.execute(`
+            SELECT profissional_id FROM profissional_especialidades
+            WHERE clinica_id = ? AND especialidade_id = ? FOR UPDATE
+        `, [clinicId, specialtyId]);
+        const onlyAutomaticOwnerAssociation = actor.isPractice && associations.length === 1
+            && Number(associations[0].profissional_id) === actor.professionalId;
+        if (associations.length && !onlyAutomaticOwnerAssociation) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'Não é possível excluir: existem profissionais vinculados. Remova os vínculos operacionais ou desative a especialidade.' });
+        }
+        if (onlyAutomaticOwnerAssociation) {
+            await connection.execute(`
+                DELETE FROM profissional_especialidades
+                WHERE clinica_id = ? AND profissional_id = ? AND especialidade_id = ?
+            `, [clinicId, actor.professionalId, specialtyId]);
+        }
+        const [deleted] = await connection.execute(`
+            DELETE FROM especialidades WHERE clinica_id = ? AND id = ?
+        `, [clinicId, specialtyId]);
+        if (deleted.affectedRows !== 1) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'A especialidade mudou durante a operação. Atualize a lista e tente novamente.' });
+        }
+        await audit(connection, req, 'especialidade_excluida', specialtyId, {
+            nome: specialties[0].nome,
+            associacao_titular_removida: onlyAutomaticOwnerAssociation
+        });
+        await connection.commit();
+        return res.status(200).json({ message: 'Especialidade excluída com segurança.' });
+    } catch (error) {
+        if (connection) await connection.rollback().catch(() => {});
+        if (error.code === 'ER_ROW_IS_REFERENCED_2' || error.code === 'ER_NO_REFERENCED_ROW_2') {
+            return res.status(409).json({ error: 'Há registros vinculados à especialidade. O histórico foi preservado.' });
+        }
+        console.error('Erro ao excluir especialidade:', error);
+        return res.status(500).json({ error: 'Erro ao excluir especialidade.' });
+    } finally {
+        connection?.release();
+    }
+};
+
 exports.specialtyPayload = specialtyPayload;
 exports.lockAuthorizedManager = lockAuthorizedManager;
