@@ -57,7 +57,6 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
     const waitEnabled=(p,id)=>p.waitForFunction(id=>!document.getElementById(id).disabled&&!document.getElementById(id).hidden,id,{timeout:15000});
     const click=async(p,id)=>{await waitEnabled(p,id);await p.locator('#'+id).click();};
     const checkLayout=async p=>assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true,'sem rolagem horizontal');
-    const captureStyle='.clinical-actions{position:static!important}.vitalis-topbar{position:static!important}';
     const noNarrativeInStorage=async(p,marker)=>assert.equal(await p.evaluate(m=>JSON.stringify([Object.entries(sessionStorage),Object.entries(localStorage),location.href]).includes(m),marker),false);
     try{
         const unauth=await context({width:1366,height:768});
@@ -98,7 +97,8 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
         await click(ownerPage,'criar');await waitVersion(ownerPage,1);
         await click(ownerPage,'descartar');await waitVersion(ownerPage,2);
         await checkLayout(ownerPage);
-        await ownerPage.screenshot({path:path.join(artifacts,'consultorio-autonomo-360-prontuario.png'),fullPage:true,style:captureStyle});
+        await ownerPage.evaluate(()=>window.scrollTo(0,0));
+        await ownerPage.screenshot({path:path.join(artifacts,'consultorio-autonomo-360-prontuario.png')});
         const secretarySession=await login(ownerContext,'secretaria@example.test',clinicOwn);
         const secretaryClinical=await ownerContext.request.get(origin+'/api/prontuarios/capacidade',{
             headers:{Authorization:'Bearer '+secretarySession.clinic.token}
@@ -150,7 +150,8 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
             await click(page,'criar');await waitVersion(page,1);
             await waitEnabled(page,'salvar');await checkLayout(page);
             // Blank form screenshots: no clinical narratives, only fixtures.
-            await page.screenshot({path:path.join(artifacts,label+'-formulario-vazio.png'),fullPage:true,style:captureStyle});
+            await page.evaluate(()=>window.scrollTo(0,0));
+            await page.screenshot({path:path.join(artifacts,label+'-formulario-vazio.png')});
             await click(page,'finalizar');await waitStatus(page,'Registro incompleto');
             await page.locator('#queixa').fill(marker+' <img src=x onerror=alert(1)>');
             await page.locator('#evolucao').fill('Evolução sintética');
@@ -202,7 +203,8 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
             await click(page,'adicionar');await waitVersion(page,6);
             assert.match(await page.locator('#versoes').textContent(),/Finalizado/);
             assert.match(await page.locator('#versoes').textContent(),/Adendo sintético/);
-            await page.screenshot({path:path.join(artifacts,label+'-historico-sintetico.png'),fullPage:true,style:captureStyle});
+            await page.locator('#versoes').scrollIntoViewIfNeeded();
+            await page.screenshot({path:path.join(artifacts,label+'-historico-sintetico.png')});
             const [[appointmentState]]=await setup.execute('SELECT status FROM consultas WHERE id=?',[appointment]);
             assert.equal(appointmentState.status,'realizada');
             await noNarrativeInStorage(page,marker);await checkLayout(page);
