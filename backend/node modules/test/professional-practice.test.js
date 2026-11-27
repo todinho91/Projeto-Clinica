@@ -179,6 +179,55 @@ test('titular cria local somente no tenant autenticado e registra auditoria', as
     assert.ok(executions.some(({ sql }) => /local_atendimento_criado/.test(sql)));
 });
 
+test('titular edita local sob bloqueio transacional, mantém status e audita sem aceitar outro tenant', async (t) => {
+    const executions = [];
+    const conn = connection(async (sql, params) => {
+        executions.push({ sql, params });
+        if (/FROM consultorios_profissionais cp/.test(sql)) return [[{
+            clinica_id: 20, titular_usuario_id: 7, status: 'ativo', clinica_status: 'ativa',
+            vinculo_status: 'ativo', papel: 'profissional', usuario_status: 'ativo',
+            profissional_status: 'ativo', profissional_id: 30
+        }]];
+        if (/FROM consultorio_locais/.test(sql)) return [[{
+            id: 41, nome: 'Unidade antiga', endereco_linha: 'Rua Antiga, 1',
+            cidade: 'São Paulo', uf: 'SP', cep: '01001000', status: 'inativo'
+        }]];
+        if (/UPDATE consultorio_locais SET nome/.test(sql)) return [{ affectedRows: 1 }];
+        return [{ affectedRows: 1 }];
+    });
+    const commit = t.mock.method(conn, 'commit');
+    t.mock.method(pool, 'getConnection', async () => conn);
+    const res = response();
+    await controller.updateLocation({
+        userId: 7, tenant: { clinicId: 20, role: 'profissional' }, params: { id: '41' },
+        body: { nome: 'Unidade nova', endereco_linha: 'Rua Nova, 2', cidade: 'Campinas', uf: 'SP', cep: '13010000', clinica_id: 999 }
+    }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(commit.mock.callCount(), 1);
+    assert.ok(executions.some(({ sql }) => /SELECT id, nome, endereco_linha, cidade, uf, cep, status[\s\S]*FOR UPDATE/.test(sql)));
+    const update = executions.find(({ sql }) => /UPDATE consultorio_locais SET nome/.test(sql));
+    assert.deepEqual(update.params, ['Unidade nova', 'Rua Nova, 2', 'Campinas', 'SP', '13010000', 20, 41]);
+    assert.equal(update.params.includes(999), false);
+    assert.ok(executions.some(({ sql, params }) => /local_atendimento_atualizado/.test(sql)
+        && params[0] === 20 && params[2] === 41));
+});
+
+test('rota de edição de local mantém autorização profissional com verificação do titular no backend', () => {
+    const router = require('../routes');
+    const layer = router.stack.find((item) => item.route?.path === '/consultorio/locais/:id'
+        && item.route.methods.put);
+    assert.ok(layer);
+    let nextCalled = false;
+    layer.route.stack[0].handle({ tenant: { role: 'profissional' } }, response(), () => { nextCalled = true; });
+    assert.equal(nextCalled, true);
+    const denied = response();
+    layer.route.stack[0].handle({ tenant: { role: 'secretaria' } }, denied, () => {});
+    assert.equal(denied.statusCode, 403);
+    const source = readFileSync(path.join(__dirname, '..', 'controllers', 'consultorioController.js'), 'utf8');
+    const update = source.slice(source.indexOf('exports.updateLocation ='), source.indexOf('exports.updateLocationStatus ='));
+    assert.match(update, /ownerContext\(connection, clinicId, req\.userId, true\)/);
+});
+
 test('interface do consultório é responsiva e não anuncia catálogo fictício', () => {
     const root = path.join(__dirname, '..', '..', '..');
     const practice = readFileSync(path.join(root, 'consultorio.html'), 'utf8');

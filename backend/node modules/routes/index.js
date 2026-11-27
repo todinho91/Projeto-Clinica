@@ -101,6 +101,7 @@ router.post('/prontuarios/:id/descartar-rascunho', authorize('profissional'), pr
 
 router.get('/consultorio/contexto', authorize('profissional'), consultorioController.context);
 router.post('/consultorio/locais', authorize('profissional'), consultorioController.createLocation);
+router.put('/consultorio/locais/:id', authorize('profissional'), consultorioController.updateLocation);
 router.patch(
     '/consultorio/locais/:id/status',
     authorize('profissional'),
