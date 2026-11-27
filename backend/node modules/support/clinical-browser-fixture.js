@@ -236,6 +236,7 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
             await page.locator('#historico-alteracoes > summary').click();
             assert.equal(await page.locator('#historico-alteracoes').evaluate(node=>node.open),true);
             await click(page,'mais-versoes');
+            await page.waitForFunction(()=>document.querySelectorAll('#complementacoes article').length===12,{timeout:15000});
             assert.equal(await page.locator('#complementacoes article').count(),12,'a paginação alcança todos os adendos');
             assert.equal(await page.locator('#versoes article').count()>0,true,'versões anteriores acessíveis no histórico');
             assert.doesNotMatch(await page.locator('#registro-finalizado').textContent(),/Adendo sintético/,'adendos não substituem o texto final original');
