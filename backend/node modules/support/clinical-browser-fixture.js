@@ -233,10 +233,13 @@ async function runBrowser({setup,doctor,secretary,clinicA,clinicB,clinicOwn,ap,a
             assert.match(await page.locator('#complementacoes').textContent(),/Adendo sintético/);
             assert.equal(await page.locator('#historico-alteracoes').evaluate(node=>node.open),false);
             assert.equal(await page.locator('#complementacoes article').count(),10,'primeira página apresenta até dez adendos');
+            await page.locator('#historico-alteracoes > summary').click();
+            assert.equal(await page.locator('#historico-alteracoes').evaluate(node=>node.open),true);
             await click(page,'mais-versoes');
             assert.equal(await page.locator('#complementacoes article').count(),12,'a paginação alcança todos os adendos');
             assert.equal(await page.locator('#versoes article').count()>0,true,'versões anteriores acessíveis no histórico');
             assert.doesNotMatch(await page.locator('#registro-finalizado').textContent(),/Adendo sintético/,'adendos não substituem o texto final original');
+            await page.locator('#historico-alteracoes > summary').click();
             await resetScroll(page);
             await page.screenshot({path:path.join(artifacts,label==='desktop'?'desktop-1366x768-prontuario.png':'mobile-360x800-prontuario.png'),fullPage:true});
             const [[appointmentState]]=await setup.execute('SELECT status FROM consultas WHERE id=?',[appointment]);
